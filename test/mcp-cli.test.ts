@@ -145,7 +145,11 @@ async function driveMcp(cwd: string, env: NodeJS.ProcessEnv, requests: object[])
 
   for (const req of requests) child.stdin.write(`${JSON.stringify(req)}\n`);
   await done;
+  // Kill AND wait for the exit: on Windows the caller's rmSync(dir) fails with EPERM
+  // while the dying server still holds its cwd / memory.db handles.
+  const exited = new Promise<void>((resolveExit) => child.once("close", () => resolveExit()));
   child.kill();
+  await exited;
   return responses;
 }
 

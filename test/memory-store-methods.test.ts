@@ -20,7 +20,8 @@ function tmpStore(suffix = ""): { store: MemoryStore; path: string; dir: string 
 // ---------------------------------------------------------------------------
 
 test("(mergeProject-1) basic move: all obs from src re-keyed to dst", () => {
-  const { dir } = tmpStore("merge1");
+  const { store: unusedStore, dir } = tmpStore("merge1");
+  unusedStore.close(); // Windows: an open handle on memory.db turns the teardown rmSync into EPERM
   try {
     // Seed 5 observations under "src"
     const src = new MemoryStore(join(dir, "memory.db"), "src");
@@ -53,7 +54,8 @@ test("(mergeProject-1) basic move: all obs from src re-keyed to dst", () => {
 });
 
 test("(mergeProject-2) dryRun: counts returned but DB unchanged", () => {
-  const { dir } = tmpStore("merge2");
+  const { store: unusedStore, dir } = tmpStore("merge2");
+  unusedStore.close(); // Windows: an open handle on memory.db turns the teardown rmSync into EPERM
   try {
     // Seed 3 observations under "from-key"
     const src = new MemoryStore(join(dir, "memory.db"), "from-key");
@@ -98,7 +100,8 @@ test("(mergeProject-3) from === to throws", () => {
 });
 
 test("(mergeProject-4) topic collision: colliding from-row is superseded, to-row preserved", () => {
-  const { dir } = tmpStore("merge4");
+  const { store: unusedStore, dir } = tmpStore("merge4");
+  unusedStore.close(); // Windows: an open handle on memory.db turns the teardown rmSync into EPERM
   try {
     // Create src observation with a topic_key
     const src = new MemoryStore(join(dir, "memory.db"), "src");

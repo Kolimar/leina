@@ -46,6 +46,10 @@ function runDevinHook(
   // break these assertions — a contaminated environment must not change the outcome.
   const baseEnv = { ...process.env };
   delete baseEnv.DEVIN_PROJECT_DIR;
+  // Suppress the SessionStart self-heal's REAL detached `leina build`: these tests assert
+  // hook I/O, not the autobuild, and on Windows that detached child's cwd (the tmp project
+  // dir) makes the teardown rmSync fail with EPERM while it is still alive.
+  baseEnv.LEINA_DISABLE_AUTOBUILD = "1";
   // spawnSync (not execFileSync) so stderr is captured on BOTH exit 0 and non-zero. The
   // advisory path always exits 0 with the nudge on stderr — execFileSync's "success" branch
   // discards stderr, which silently broke these assertions during the hard→soft migration.
