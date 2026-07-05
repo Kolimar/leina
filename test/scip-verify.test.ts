@@ -32,18 +32,38 @@ function runCli(args: string[]): RunResult {
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", code: r.status ?? 1 };
 }
 
-// Availability is derived from the CLI's own detection (`scip status`), not
-// from running `<tool> --version`: the CLI resolves indexers by PATH lookup
-// (`commandExists`), and the two methods can disagree — on GitHub's ubuntu
-// runners `rust-analyzer` exists on PATH as a rustup shim whose `--version`
-// exits non-zero when the component is missing, so a version-based guard
-// would run the "not installed" assertions against an "already available"
-// CLI answer. Asking the CLI keeps the skip logic and the assertions on the
-// same source of truth by construction.
+// Two guards per tool, one per test POLARITY — because detection and
+// functionality can disagree. On GitHub's ubuntu runners `rust-analyzer`
+// exists on PATH as a rustup shim: `commandExists` finds it (so `scip status`
+// says "found"), but `rust-analyzer --version` exits non-zero and
+// `rust-analyzer scip` produces no index.
+//
+//  - NEGATIVE-branch tests ("not installed"/"not found") skip unless the CLI
+//    itself reports NOT found (`has*` below, from `scip status` — the same
+//    source of truth the assertions run against).
+//  - POSITIVE-branch tests ('ok' against the real fixture) skip unless the
+//    tool actually WORKS: the CLI finds it AND `<tool> --version` exits 0
+//    (`works*` below).
+//
+// In the shim environment has*=true and works*=false, so BOTH polarities
+// skip — correct, because that environment is genuinely ambiguous: the CLI
+// answers "found" but the tool cannot produce an index.
 const statusStdout = runCli(["scip", "status"]).stdout;
 const hasScipGo = /(^|\n)go: found/.test(statusStdout);
 const hasRustAnalyzer = /(^|\n)rust: found/.test(statusStdout);
 const hasScipPython = /(^|\n)python: found/.test(statusStdout);
+
+// Functional probe for the positive branch (reintroduced from the pre-e063099
+// `toolAvailable`, now REQUIRING exit 0 and combined with CLI detection
+// instead of replacing it). `go` needs no `works*` guard today: there is no
+// positive 'ok' test for it (indexing the fixture additionally requires the
+// full go toolchain, so a version probe alone could not guard one anyway).
+function toolWorks(bin: string): boolean {
+  const r = spawnSync(bin, ["--version"], { stdio: "ignore" });
+  return r.status === 0;
+}
+const worksRustAnalyzer = hasRustAnalyzer && toolWorks("rust-analyzer");
+const worksScipPython = hasScipPython && toolWorks("scip-python");
 
 // ---------------------------------------------------------------------------
 // scip status
@@ -169,8 +189,8 @@ test("(SC-6b) scip verify rust: salida contiene 'skip' cuando rust-analyzer no e
   assert.ok(r.stdout.includes("skip"), `stdout debe contener 'skip'. stdout: ${r.stdout}`);
 });
 
-test("(SC-6c) scip verify rust: con rust-analyzer disponible, corre contra el fixture real y reporta 'ok'", {
-  skip: hasRustAnalyzer ? false : "rust-analyzer no disponible en este sandbox — se omite",
+test("(SC-6c) scip verify rust: con rust-analyzer FUNCIONAL, corre contra el fixture real y reporta 'ok'", {
+  skip: worksRustAnalyzer ? false : "rust-analyzer no funcional en este sandbox (ausente o shim) — se omite",
 }, () => {
   const r = runCli(["scip", "verify", "rust"]);
   assert.strictEqual(r.code, 0, `debe salir 0. stderr: ${r.stderr}`);
@@ -186,8 +206,8 @@ test("(SC-6d) scip verify python: salida contiene 'skip' cuando scip-python no e
   assert.ok(r.stdout.includes("skip"), `stdout debe contener 'skip'. stdout: ${r.stdout}`);
 });
 
-test("(SC-6e) scip verify python: con scip-python disponible, corre contra el fixture real y reporta 'ok'", {
-  skip: hasScipPython ? false : "scip-python no disponible en este sandbox — se omite",
+test("(SC-6e) scip verify python: con scip-python FUNCIONAL, corre contra el fixture real y reporta 'ok'", {
+  skip: worksScipPython ? false : "scip-python no funcional en este sandbox (ausente o shim) — se omite",
 }, () => {
   const r = runCli(["scip", "verify", "python"]);
   assert.strictEqual(r.code, 0, `debe salir 0. stderr: ${r.stderr}`);
@@ -229,8 +249,8 @@ test("(SC-8b) ScipExtractor('rust').verify() retorna VerificationCheck con statu
   }
   assert.ok(check.status === "ok" || check.status === "skip" || check.status === "fail");
   if (check.status === "skip") assert.strictEqual(check.result, undefined);
-  if (hasRustAnalyzer) {
-    assert.strictEqual(check.status, "ok", "con rust-analyzer disponible, verify() contra el fixture real debe dar 'ok'");
+  if (worksRustAnalyzer) {
+    assert.strictEqual(check.status, "ok", "con rust-analyzer funcional, verify() contra el fixture real debe dar 'ok'");
   }
 });
 
@@ -245,7 +265,7 @@ test("(SC-8c) ScipExtractor('python').verify() retorna VerificationCheck con sta
   }
   assert.ok(check.status === "ok" || check.status === "skip" || check.status === "fail");
   if (check.status === "skip") assert.strictEqual(check.result, undefined);
-  if (hasScipPython) {
-    assert.strictEqual(check.status, "ok", "con scip-python disponible, verify() contra el fixture real debe dar 'ok'");
+  if (worksScipPython) {
+    assert.strictEqual(check.status, "ok", "con scip-python funcional, verify() contra el fixture real debe dar 'ok'");
   }
 });
