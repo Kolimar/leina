@@ -209,9 +209,12 @@ test("(bg-7) missing .leina dir (init case) → lock dir created → spawned", (
 // agent-gate.test.ts (gate-autobuild-4) for the end-to-end regression).
 // ---------------------------------------------------------------------------
 
-// pid 1 stands in for "a live foreign process" in every test below: signalling it with
-// process.kill(1, 0) reliably throws EPERM (never ESRCH) for a non-root test runner,
-// which holderIsAlive() treats as "alive" — exactly like a real foreign build holder.
+// A "live foreign holder" needs a pid that exists on EVERY platform and is not
+// our own: process.ppid (the test runner's parent, alive for the duration of the
+// run). pid 1 would also work on unix via the EPERM-counts-as-alive rule, but
+// Windows has no pid 1 — holderIsAlive() would report it dead and every waiter
+// would reclaim immediately instead of polling (broke fg-6/7/8 on the CI runners).
+const FOREIGN_LIVE_PID = process.ppid;
 
 test("(fg-1) empty/absent lock → acquires immediately, never sleeps", () => {
   const root = makeTmpRoot();
@@ -263,7 +266,7 @@ test("(fg-4) TTL-expired lock (live pid, stale startedAt) → reclaims immediate
   const root = makeTmpRoot();
   try {
     const base = 1_000_000_000;
-    writeLock(buildLockPath(root), 1, base); // pid 1: alive (EPERM), but stale by TTL
+    writeLock(buildLockPath(root), FOREIGN_LIVE_PID, base); // alive, but stale by TTL
     const now = () => base + 16 * 60_000 + 1; // > 15min TTL
     let slept = 0;
     const result = acquireForegroundBuildLock(root, { now, sleep: () => { slept++; } });
@@ -291,7 +294,7 @@ test("(fg-6) live foreign holder releases mid-wait → polls, then acquires", ()
   const root = makeTmpRoot();
   const lockPath = buildLockPath(root);
   try {
-    writeLock(lockPath, 1, Date.now()); // pid 1 — alive foreign holder
+    writeLock(lockPath, FOREIGN_LIVE_PID, Date.now()); // alive foreign holder
     let sleeps = 0;
     const sleep = (): void => {
       sleeps++;
@@ -313,7 +316,7 @@ test("(fg-7) live foreign holder never releases → times out, reporting its pid
   const root = makeTmpRoot();
   try {
     const base = 1_000_000_000;
-    writeLock(buildLockPath(root), 1, base);
+    writeLock(buildLockPath(root), FOREIGN_LIVE_PID, base);
     let virtualNow = base;
     const now = (): number => virtualNow;
     let sleeps = 0;
@@ -321,7 +324,7 @@ test("(fg-7) live foreign holder never releases → times out, reporting its pid
     const result = acquireForegroundBuildLock(root, { now, sleep, waitMs: 2_000 });
     assert.ok(typeof result === "object" && "timeout" in result && result.timeout === true, "gives up");
     if (typeof result === "object" && "timeout" in result) {
-      assert.equal(result.holderPid, 1, "reports the live holder's pid for the CLI message");
+      assert.equal(result.holderPid, FOREIGN_LIVE_PID, "reports the live holder's pid for the CLI message");
       assert.equal(result.holderStartedAt, base, "reports startedAt so the CLI can compute age");
     }
     assert.ok(sleeps >= 1, "polled at least once before giving up");
@@ -333,7 +336,7 @@ test("(fg-7) live foreign holder never releases → times out, reporting its pid
 test("(fg-8) waitMs=0 against a live foreign holder → fails fast, never sleeps", () => {
   const root = makeTmpRoot();
   try {
-    writeLock(buildLockPath(root), 1, Date.now());
+    writeLock(buildLockPath(root), FOREIGN_LIVE_PID, Date.now());
     let slept = 0;
     const result = acquireForegroundBuildLock(root, { waitMs: 0, sleep: () => { slept++; } });
     assert.ok(typeof result === "object" && "timeout" in result && result.timeout === true);
