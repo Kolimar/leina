@@ -1,7 +1,7 @@
 // cli/background-build.ts — fire-and-forget detached graph build helper.
 // Serialized via a best-effort lock file; fail-open on every error path.
 
-import { closeSync, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
+import { closeSync, constants as fsConstants, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { deriveCliCommand } from "../application/install/command.ts";
@@ -59,15 +59,20 @@ function holderIsAlive(data: { pid: number; startedAt: number } | null, now: () 
 /**
  * Acquire the build lock and return an open fd, or null if a live build already holds it.
  *
- * The lock path is touched EXACTLY ONCE — a single `openSync(…, "a+")` that creates the file if
- * absent and opens it otherwise. Inspection (fstat/read), reclaim (ftruncate) and the eventual
+ * The lock path is touched EXACTLY ONCE — a single `openSync(…, O_RDWR|O_CREAT)` that creates the
+ * file if absent and opens it otherwise. Inspection (fstat/read), reclaim (ftruncate) and the eventual
  * write all happen through that one fd, so there is no second path resolution to race against
  * (avoids the TOCTOU pattern CWE-367 / js/file-system-race). The trade-off is a weaker mutual
  * exclusion than O_EXCL: two simultaneous callers could both build, which is harmless for an
  * idempotent best-effort background build.
  */
+// O_RDWR|O_CREAT (create-if-absent, read+write, never truncates on open). NOT "a+":
+// an append-mode fd cannot be ftruncate'd on Windows (EPERM), which broke every
+// reclaim path (stale/dead/corrupt lock) on the windows CI runners.
+const LOCK_OPEN_FLAGS = fsConstants.O_RDWR | fsConstants.O_CREAT;
+
 function acquireLock(lockPath: string, now: () => number): number | null {
-  const fd = openSync(lockPath, "a+"); // create-if-absent, read+write, never truncates
+  const fd = openSync(lockPath, LOCK_OPEN_FLAGS);
   if (fstatSync(fd).size > 0) {
     if (holderIsAlive(parseLock(readFileSync(fd, "utf8")), now)) {
       closeSync(fd);
@@ -141,7 +146,7 @@ export function acquireForegroundBuildLock(
 
   const deadline = now() + waitMs;
   for (;;) {
-    const fd = openSync(lockPath, "a+");
+    const fd = openSync(lockPath, LOCK_OPEN_FLAGS);
     const size = fstatSync(fd).size;
     if (size === 0) {
       writeSelfLock(fd, now());
@@ -173,6 +178,7 @@ export function acquireForegroundBuildLock(
 
 function writeSelfLock(fd: number, startedAt: number): void {
   const content = JSON.stringify({ pid: process.pid, startedAt });
+  ftruncateSync(fd, 0); // drop any previous content so the overwrite can never leave a tail
   writeSync(fd, content, 0);
   closeSync(fd);
 }
