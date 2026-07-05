@@ -32,7 +32,14 @@ import {
   shareVersionFile,
   shareWorkflowsDir,
 } from "../src/infrastructure/install/share-paths.ts";
-import { linkOrCopy, copyTree } from "../src/infrastructure/install/symlinks.ts";
+import {
+  __setSymlinkImplForTests,
+  copyTree,
+  linkOrCopy,
+  normalizeLinkTarget,
+  symlinkTypeFor,
+  unlinkIfManaged,
+} from "../src/infrastructure/install/symlinks.ts";
 import {
   buildClaudeAgentArtifact,
   buildDevinAgentArtifact,
@@ -54,7 +61,9 @@ function withTmpHome<T>(fn: (homeDir: string) => T): T {
   process.env.LEINA_HOME = join(home, ".leina");
   process.env.HOME = home;
   process.env.USERPROFILE = home;
-  delete process.env.APPDATA;
+  // Point APPDATA into the sandbox so devinConfigRoot() resolves to <home>/.config/devin
+  // on Windows too — the exact path these tests assert on every platform.
+  process.env.APPDATA = join(home, ".config");
   try {
     return fn(home);
   } finally {
@@ -95,9 +104,9 @@ test("(sym-a) linkOrCopy creates a symlink first time; unchanged on rerun", () =
     mkdirSync(src, { recursive: true });
     writeFileSync(join(src, "marker.md"), "hi");
     const first = linkOrCopy(src, dest);
-    if (process.platform !== "win32")
+    // Directories link as junctions on win32 (no privilege needed), so the same
+    // assertions hold on every platform — lstat reports junctions as symlinks.
     assert.equal(first.action, "symlinked");
-    if (process.platform !== "win32")
     assert.ok(lstatSync(dest).isSymbolicLink(), "destination is a symlink");
     const second = linkOrCopy(src, dest);
     assert.equal(second.action, "unchanged", "second run is a no-op");
@@ -119,10 +128,66 @@ test("(sym-b) linkOrCopy refuses to clobber wrong target; backs up and replaces"
     assert.equal(result.action, "backed-up-and-replaced");
     assert.ok(result.backup && existsSync(result.backup), "previous symlink backed up");
     assert.equal(
-      resolve(readlinkSync(dest)),
+      resolve(normalizeLinkTarget(readlinkSync(dest))),
       resolve(src),
       "destination now points to the requested source",
     );
+  });
+});
+
+test("(sym-w1) symlinkTypeFor: directories become junctions on win32 (no privilege/Developer Mode needed), dir symlinks elsewhere", () => {
+  assert.equal(symlinkTypeFor(true, "win32"), "junction");
+  assert.equal(symlinkTypeFor(false, "win32"), "file");
+  assert.equal(symlinkTypeFor(true, "linux"), "dir");
+  assert.equal(symlinkTypeFor(true, "darwin"), "dir");
+  assert.equal(symlinkTypeFor(false, "linux"), "file");
+});
+
+test("(sym-w2) normalizeLinkTarget strips Windows extended-length prefixes so junction targets compare equal", () => {
+  assert.equal(normalizeLinkTarget("\\\\?\\C:\\Users\\x\\.leina\\share\\skills\\a"), "C:\\Users\\x\\.leina\\share\\skills\\a");
+  assert.equal(normalizeLinkTarget("\\\\?\\UNC\\srv\\share\\dir"), "\\\\srv\\share\\dir");
+  assert.equal(normalizeLinkTarget("/home/u/.leina/share/skills/a"), "/home/u/.leina/share/skills/a");
+});
+
+test("(sym-w3) EPERM from symlink creation falls back to a real copy (Windows file links without Developer Mode)", () => {
+  withTmpHome((home) => {
+    const src = join(home, "src");
+    const dest = join(home, "dest");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, "marker.md"), "hi");
+    __setSymlinkImplForTests(() => {
+      const e = new Error("EPERM: operation not permitted, symlink") as NodeJS.ErrnoException;
+      e.code = "EPERM";
+      throw e;
+    });
+    try {
+      const result = linkOrCopy(src, dest);
+      assert.equal(result.action, "copied", "EPERM degrades to a copy, not a failure");
+      assert.ok(!lstatSync(dest).isSymbolicLink(), "fallback produced a real directory");
+      assert.equal(readFileSync(join(dest, "marker.md"), "utf8"), "hi", "contents copied");
+      // Deactivate/uninstall must never delete the copy: it is not a managed symlink.
+      assert.equal(unlinkIfManaged(dest, src), false, "copy fallback is left alone by unlinkIfManaged");
+      assert.ok(existsSync(join(dest, "marker.md")), "copy untouched after unlinkIfManaged");
+    } finally {
+      __setSymlinkImplForTests(null);
+    }
+  });
+});
+
+test("(sym-w4) unexpected symlink errors still throw (only EPERM/EACCES/ENOTSUP degrade to copy)", () => {
+  withTmpHome((home) => {
+    const src = join(home, "src");
+    mkdirSync(src, { recursive: true });
+    __setSymlinkImplForTests(() => {
+      const e = new Error("EINVAL: invalid argument, symlink") as NodeJS.ErrnoException;
+      e.code = "EINVAL";
+      throw e;
+    });
+    try {
+      assert.throws(() => linkOrCopy(src, join(home, "dest")), /EINVAL/);
+    } finally {
+      __setSymlinkImplForTests(null);
+    }
   });
 });
 
@@ -522,7 +587,7 @@ test("(alias-a) install-global deprecation notice goes to stderr; stdout has the
       HOME: home,
       USERPROFILE: home,
     };
-    delete env.APPDATA;
+    env.APPDATA = join(home, ".config");
     const { status, stdout, stderr } = spawnCli(["install-global"], env);
     assert.equal(status, 0, "exit code 0");
     assert.match(stderr, /install-global.*deprecated.*activate/, "deprecation on stderr");
@@ -541,7 +606,7 @@ test("(alias-b) install-global and activate produce the same on-disk result (sym
       HOME: home1,
       USERPROFILE: home1,
     };
-    delete env1.APPDATA;
+    env1.APPDATA = join(home1, ".config");
     withTmpHome((home2) => {
       const env2: NodeJS.ProcessEnv = {
         ...process.env,
@@ -549,7 +614,7 @@ test("(alias-b) install-global and activate produce the same on-disk result (sym
         HOME: home2,
         USERPROFILE: home2,
       };
-      delete env2.APPDATA;
+      env2.APPDATA = join(home2, ".config");
       const r1 = spawnCli(["activate", "--no-user-hooks"], env1);
       const r2 = spawnCli(["install-global", "--no-user-hooks"], env2);
       assert.equal(r1.status, 0, "activate exits 0");

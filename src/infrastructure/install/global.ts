@@ -23,7 +23,6 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   realpathSync,
   rmSync,
   statSync,
@@ -48,7 +47,7 @@ import {
 import { buildDevinArtifactsFromAgents } from "../../application/install/devin-skills.ts";
 import { CLI_EXEC_GRANT, grantCliExecPermission } from "../../application/install/permissions.ts";
 import { portWorkflows, rewriteAssetPaths } from "../../application/install/port.ts";
-import { copyTree, linkOrCopy, unlinkIfManaged, type LinkResult } from "./symlinks.ts";
+import { copyTree, linkOrCopy, resolveLinkTarget, unlinkIfManaged, type LinkResult } from "./symlinks.ts";
 import {
   deserializeSelection,
   sameSelection,
@@ -283,7 +282,7 @@ export function sweepDanglingHostLinks(): number {
       const p = join(dir, name);
       try {
         if (!lstatSync(p).isSymbolicLink()) continue;
-        const target = resolve(dirname(p), readlinkSync(p));
+        const target = resolveLinkTarget(p);
         if (target.startsWith(share) && !existsSync(target)) {
           rmSync(p, { force: true });
           removed++;
@@ -512,8 +511,7 @@ function inspectLink(
   if (lst.isSymbolicLink()) {
     // Dangling symlink: the link node exists but its target is gone.
     if (!existsSync(dest)) return { ...base, state: "broken" };
-    const target = resolve(dirname(dest), readlinkSync(dest));
-    return { ...base, state: target === resolve(src) ? "ok" : "wrong-target" };
+    return { ...base, state: resolveLinkTarget(dest) === resolve(src) ? "ok" : "wrong-target" };
   }
   // A real directory/file (not a symlink) is the Windows copy fallback — the files are
   // present but do NOT auto-propagate share updates. A copy made before the last populate

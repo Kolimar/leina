@@ -30,7 +30,9 @@ function withTmpHome<T>(fn: (homeDir: string) => T): T {
   process.env.LEINA_HOME = join(home, ".leina");
   process.env.HOME = home;
   process.env.USERPROFILE = home;
-  delete process.env.APPDATA;
+  // Point APPDATA into the sandbox so devinConfigRoot() resolves to <home>/.config/devin
+  // on Windows too — the exact path these tests assert on every platform.
+  process.env.APPDATA = join(home, ".config");
   try {
     return fn(home);
   } finally {

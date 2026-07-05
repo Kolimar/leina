@@ -41,7 +41,9 @@ function makeSandbox(): {
     HOME: home,
     USERPROFILE: home,
   };
-  delete env.APPDATA;
+  // Point APPDATA into the sandbox so devinConfigRoot() resolves to <home>/.config/devin
+  // on Windows too — the exact path these tests assert on every platform.
+  env.APPDATA = join(home, ".config");
   return {
     env,
     home,
