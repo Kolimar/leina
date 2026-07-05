@@ -880,8 +880,17 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       return this._searchLike(query, scope, type, limit);
     }
 
-    // FTS5 branch — unchanged from the original: BM25 ranking + native snippet.
+    // FTS5 branch: BM25 ranking + native snippet, behind the SAME deterministic
+    // precedence the LIKE branch applies (exact topic_key > literal query in title >
+    // literal query in content). BM25 alone is NOT enough here: porter stemming maps
+    // e.g. "validation" and "valid" to the same root, so `validation_rules` and
+    // `valid_names` produce near-identical scores whose order then depends on the
+    // bundled SQLite build (pf-2 flipped between ubuntu/macos/windows runners on CI).
+    // The CASE rank pins the exact match first on every platform; BM25 and recency
+    // only break ties within the same precedence band.
     const matchQuery = sanitizeMatchQuery(query);
+    const normalizedQuery = query.trim().toLowerCase();
+    const topicForm = normalizedQuery.replaceAll(/\s+/g, "_");
     const sql = `
       SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope,
              snippet(obs_fts, 1, '[', ']', ' … ', 12) AS snippet,
@@ -893,13 +902,22 @@ export class SQLiteMemoryRepository implements MemoryRepository {
          AND o.superseded_by IS NULL
          AND (? IS NULL OR o.scope = ?)
          AND (? IS NULL OR o.type = ?)
-       ORDER BY score, o.updated_at DESC
+       ORDER BY CASE
+             WHEN lower(coalesce(o.topic_key, '')) = ? THEN 0
+             WHEN instr(lower(o.title), ?) > 0 THEN 1
+             WHEN instr(lower(o.content), ?) > 0 THEN 2
+             ELSE 3
+           END,
+           score, o.updated_at DESC
        LIMIT ?
     `;
 
     let rows = this.db
       .prepare(sql)
-      .all(matchQuery, this.projectKey, scope, scope, type, type, limit) as unknown as SearchRow[];
+      .all(
+        matchQuery, this.projectKey, scope, scope, type, type,
+        topicForm, normalizedQuery, normalizedQuery, limit,
+      ) as unknown as SearchRow[];
 
     // Zero exact hits → one prefix-match retry for recall (cross-language roots, suffix
     // typos). Only on empty results, so precision of the primary path is untouched.
@@ -908,7 +926,10 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       if (fallback !== null) {
         rows = this.db
           .prepare(sql)
-          .all(fallback, this.projectKey, scope, scope, type, type, limit) as unknown as SearchRow[];
+          .all(
+            fallback, this.projectKey, scope, scope, type, type,
+            topicForm, normalizedQuery, normalizedQuery, limit,
+          ) as unknown as SearchRow[];
       }
     }
 
