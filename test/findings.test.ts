@@ -7,6 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import type { AuditPath } from "../src/application/audit/reachability.ts";
 import type { SourceSinkCatalogResult } from "../src/application/audit/source-sink-catalog.ts";
 import type { GraphNode } from "../src/domain/graph/model.ts";
@@ -82,8 +83,9 @@ const EMPTY_CATALOG: SourceSinkCatalogResult = {
 
 test("(findings-arch) domain/findings/model.ts has no imports from app/cli/infra", async () => {
   const { readFileSync } = await import("node:fs");
+  // fileURLToPath, NOT URL.pathname — pathname yields "/D:/…" on Windows (ENOENT).
   const src = readFileSync(
-    new URL("../src/domain/findings/model.ts", import.meta.url).pathname,
+    fileURLToPath(new URL("../src/domain/findings/model.ts", import.meta.url)),
     "utf8",
   );
   const importLines = src.split("\n").filter((l) => l.trim().startsWith("import"));

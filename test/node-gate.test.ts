@@ -19,7 +19,10 @@ import {
 } from "../src/cli/node-gate.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
-const GATE = fileURLToPath(new URL("../src/cli/node-gate.ts", import.meta.url));
+// GATE is interpolated into an ESM `import` inside a child script, so it must stay a
+// file:// URL: a raw Windows path ("D:\…") is rejected by the loader with
+// ERR_UNSUPPORTED_ESM_URL_SCHEME ("protocol 'd:'").
+const GATE = new URL("../src/cli/node-gate.ts", import.meta.url).href;
 
 // ---------------------------------------------------------------------------
 // (ng-a) Pure version comparison

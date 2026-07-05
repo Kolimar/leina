@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   detectWorkspaceMode,
@@ -69,7 +69,8 @@ test("(SC-02) 3 child repos without workspace.json → workspace mode (child-git
     assert.equal(det.mode, "workspace");
     assert.equal(det.source, "child-git-auto");
     assert.equal(det.members.length, 3);
-    const names = det.members.map((m) => m.dir.split("/").pop());
+    // basename, not split("/"): member dirs use the platform separator ("\" on Windows).
+    const names = det.members.map((m) => basename(m.dir));
     assert.ok(names.includes("service-a"));
     assert.ok(names.includes("service-b"));
     assert.ok(names.includes("service-c"));
@@ -125,7 +126,8 @@ test("(SC-05) workspace.json exclude omits the listed repo", () => {
     const det = detectWorkspaceMode(root, {});
     assert.equal(det.mode, "workspace");
     assert.equal(det.members.length, 2);
-    const names = det.members.map((m) => m.dir.split("/").pop());
+    // basename, not split("/"): member dirs use the platform separator ("\" on Windows).
+    const names = det.members.map((m) => basename(m.dir));
     assert.ok(!names.includes("legacy-repo"), "legacy-repo must be excluded");
     assert.ok(names.includes("service-a"));
     assert.ok(names.includes("service-b"));

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 // ---------------------------------------------------------------------------
 // R10: Aislamiento de tests — setup/teardown global con LEINA_HOME temporal
@@ -80,7 +81,8 @@ function makeTestEvent(): LeinaEvent {
 // ---------------------------------------------------------------------------
 
 test("(R1-S1.1) domain/events: ningún archivo importa application/, infrastructure/ o cli/", () => {
-  const domainDir = new URL("../src/domain/events", import.meta.url).pathname;
+  // fileURLToPath, NOT URL.pathname — pathname yields "/D:/…" on Windows (ENOENT).
+  const domainDir = fileURLToPath(new URL("../src/domain/events", import.meta.url));
   const files = ["model.ts", "store.ts", "sink.ts", "redactor.ts"];
   const forbidden = /application\/|infrastructure\/|cli\//;
   for (const file of files) {

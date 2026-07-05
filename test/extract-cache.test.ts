@@ -80,5 +80,7 @@ test("(xc-2) TreesitterExtractor: second run reuses unchanged files and reports 
 });
 
 test("(xc-3) cache path lives under .leina and survives a graph clear", () => {
-  assert.match(extractCachePath("/repo"), /\/repo\/\.leina\/extract-cache\.db$/);
+  // Normalize to "/" so the assertion holds on Windows, where join() emits "\".
+  const normalized = extractCachePath("/repo").replaceAll("\\", "/");
+  assert.match(normalized, /\/repo\/\.leina\/extract-cache\.db$/);
 });

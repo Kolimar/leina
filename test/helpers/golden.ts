@@ -8,9 +8,12 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
-const GOLDEN_DIR = new URL("../fixtures/golden/", import.meta.url).pathname;
+// fileURLToPath, NOT URL.pathname: on Windows the pathname of a file URL is
+// "/D:/…", which path.join/mkdir then mangle into "D:\D:\…" (ENOENT on CI).
+const GOLDEN_DIR = fileURLToPath(new URL("../fixtures/golden/", import.meta.url));
 
 export const FAKE_VIS =
   "/* vis-network stub (golden) */\n" +
