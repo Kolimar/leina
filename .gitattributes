@@ -1,0 +1,10 @@
+# Normalize every text file to LF in the working tree on ALL platforms.
+# The golden tests (test/fixtures/golden/*) assert byte-identical output; a
+# Windows checkout with core.autocrlf=true would otherwise rewrite them to CRLF.
+* text=auto eol=lf
+
+# Binary vendored assets — never EOL-converted, never diffed as text.
+*.wasm binary
+*.scip binary
+*.tgz binary
+*.png binary
