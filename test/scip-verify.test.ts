@@ -32,14 +32,18 @@ function runCli(args: string[]): RunResult {
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", code: r.status ?? 1 };
 }
 
-function toolAvailable(tool: string): boolean {
-  const r = spawnSync(tool, ["--version"], { stdio: "ignore" });
-  return r.status === 0 || (r.status === null && r.error === undefined);
-}
-
-const hasScipGo = toolAvailable("scip-go");
-const hasRustAnalyzer = toolAvailable("rust-analyzer");
-const hasScipPython = toolAvailable("scip-python");
+// Availability is derived from the CLI's own detection (`scip status`), not
+// from running `<tool> --version`: the CLI resolves indexers by PATH lookup
+// (`commandExists`), and the two methods can disagree — on GitHub's ubuntu
+// runners `rust-analyzer` exists on PATH as a rustup shim whose `--version`
+// exits non-zero when the component is missing, so a version-based guard
+// would run the "not installed" assertions against an "already available"
+// CLI answer. Asking the CLI keeps the skip logic and the assertions on the
+// same source of truth by construction.
+const statusStdout = runCli(["scip", "status"]).stdout;
+const hasScipGo = /(^|\n)go: found/.test(statusStdout);
+const hasRustAnalyzer = /(^|\n)rust: found/.test(statusStdout);
+const hasScipPython = /(^|\n)python: found/.test(statusStdout);
 
 // ---------------------------------------------------------------------------
 // scip status
