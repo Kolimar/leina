@@ -324,3 +324,72 @@ test("(pf-3) short tokens (<4 chars) never trigger the fallback", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// pf-* contract under FORCED LIKE mode — pins the pf suite's behavior on Node
+// builds without FTS5 (where pf-1..pf-3 above run through _searchLike), so a
+// LIKE-branch regression is caught on every Node, not only on FTS5-less CI.
+// ---------------------------------------------------------------------------
+
+test("(pf-like-1) LIKE mode: prefix fallback bridges 'paginacion' → 'pagination' on zero exact hits", () => {
+  __setFts5ProbeForTests(() => false);
+  const dir = mkdtempSync(join(tmpdir(), "leina-pf-like-"));
+  try {
+    const store = new MemoryStore(join(dir, "memory.db"), "pf-test");
+    assert.equal(store.usingLike, true, "store must be in LIKE mode");
+    const { observation } = store.save({
+      title: "Pagination cursor bugfix",
+      content: "Fixed off-by-one in pagination cursor; inclusive end index.",
+      type: "bugfix",
+    });
+    const hits = store.search("paginacion");
+    assert.ok(hits.some((h) => h.id === observation.id), "LIKE prefix retry bridges the ES/EN root");
+    store.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(pf-like-2) LIKE mode: exact match outranks a NEWER partial match (recency only tie-breaks)", async () => {
+  __setFts5ProbeForTests(() => false);
+  const dir = mkdtempSync(join(tmpdir(), "leina-pf-like-"));
+  try {
+    const store = new MemoryStore(join(dir, "memory.db"), "pf-test");
+    assert.equal(store.usingLike, true, "store must be in LIKE mode");
+    const { observation: exact } = store.save({
+      title: "Validation rules", content: "input validation for forms", type: "manual", topicKey: "validation_rules",
+    });
+    // Ensure a strictly newer updated_at so recency-first ordering would flip the result.
+    await new Promise((r) => setTimeout(r, 2));
+    store.save({
+      title: "Valid names", content: "naming validation for slugs", type: "manual", topicKey: "valid_names",
+    });
+    const hits = store.search("validation");
+    assert.equal(hits.length, 2, "both the exact and the partial match are hits");
+    assert.equal(hits[0]?.id, exact.id, "exact title match ranks above the newer content-only match");
+    store.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(pf-like-3) LIKE mode: fallback only fires on zero exact hits; short tokens never retry", () => {
+  __setFts5ProbeForTests(() => false);
+  const dir = mkdtempSync(join(tmpdir(), "leina-pf-like-"));
+  try {
+    const store = new MemoryStore(join(dir, "memory.db"), "pf-test");
+    const { observation: exact } = store.save({
+      title: "Validation rules", content: "input validation for forms", type: "manual",
+    });
+    store.save({ title: "Valid names", content: "validity checker for slugs", type: "manual" });
+    // Exact hit exists → the prefix retry must NOT widen the result set (pf-2 in LIKE mode).
+    const hits = store.search("validation");
+    assert.equal(hits[0]?.id, exact.id, "exact match ranks first, fallback not triggered");
+    assert.ok(!hits.some((h) => h.title === "Valid names"), "prefix-only near-miss stays out");
+    // And tiny tokens never trigger the retry at all (pf-3 in LIKE mode).
+    assert.equal(store.search("xyz").length, 0, "no prefix retry for tiny tokens");
+    store.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

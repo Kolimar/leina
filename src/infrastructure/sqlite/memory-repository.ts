@@ -203,6 +203,20 @@ function buildLikeTokens(query: string): string[] {
     .map((t) => `%${t}%`);
 }
 
+// LIKE-mode counterpart of prefixMatchQuery (same recall fallback, same token policy):
+// each token ≥4 chars contributes two substring patterns — its leading ~60% and a short
+// 4-char prefix — so "paginacion" still lands on "pagination" without FTS5. Returns []
+// when no token is long enough (mirrors prefixMatchQuery returning null).
+function buildLikePrefixTokens(query: string): string[] {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter((t) => t.length >= 4);
+  const patterns = new Set<string>();
+  for (const t of tokens) {
+    patterns.add(`%${t.slice(0, Math.max(4, Math.floor(t.length * 0.6)))}%`);
+    patterns.add(`%${t.slice(0, 4)}%`);
+  }
+  return [...patterns];
+}
+
 // Build a snippet (similar to FTS5's snippet() function) from content by finding the
 // first occurrence of any token and extracting ~80 characters of context around it.
 // The matching word is wrapped with [ and ] to mirror the FTS5 snippet format used by
@@ -910,7 +924,9 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     }));
   }
 
-  // LIKE-mode search: substring token matching, JS snippet, ORDER BY updated_at DESC.
+  // LIKE-mode search: substring token matching, JS snippet, deterministic rank
+  // (exact topic_key > term in title > term in content) with updated_at DESC as the
+  // final tie-break, plus the same zero-hit prefix-retry the FTS5 branch has.
   // No stemming or BM25 — this is a deliberate quality/performance trade-off for
   // Node builds without FTS5. The caller sees the same SearchHit shape as FTS5.
   private _searchLike(
@@ -946,36 +962,68 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       }));
     }
 
+    // Deterministic precedence (mirrors what BM25 gives the FTS5 branch): an exact
+    // topic_key match outranks everything, then the full query term in the TITLE,
+    // then in the CONTENT, and only then recency as the FINAL tie-break. Without
+    // this rank, ORDER BY updated_at DESC alone let a NEWER partial match beat an
+    // OLDER exact one (pf-2: `valid_names` created 1ms later outranked the exact
+    // `validation_rules`).
+    const normalizedQuery = query.trim().toLowerCase();
+    const topicForm = normalizedQuery.replaceAll(/\s+/g, "_");
+    const phrasePattern = `%${normalizedQuery}%`;
+    const rankExpr = `CASE
+          WHEN lower(coalesce(o.topic_key, '')) = ? THEN 0
+          WHEN lower(o.title) LIKE ? THEN 1
+          WHEN lower(o.content) LIKE ? THEN 2
+          ELSE 3
+        END`;
+
     // Build the LIKE filter: (lower(title) LIKE ? OR lower(content) LIKE ?) per token,
     // all tokens joined with OR (any token match is a hit — recall-oriented).
-    const tokenClauses = tokens.map(() => "(lower(o.title) LIKE ? OR lower(o.content) LIKE ?)").join(" OR ");
-    const tokenParams: string[] = tokens.flatMap((t) => [t, t]);
+    const runLike = (patterns: string[]): ObsRow[] => {
+      const clauses = patterns.map(() => "(lower(o.title) LIKE ? OR lower(o.content) LIKE ?)").join(" OR ");
+      const sql = `
+        SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope, o.content
+          FROM observations o
+         WHERE o.project_key = ?
+           AND o.superseded_by IS NULL
+           AND (? IS NULL OR o.scope = ?)
+           AND (? IS NULL OR o.type = ?)
+           AND (${clauses})
+         ORDER BY ${rankExpr}, o.updated_at DESC
+         LIMIT ?
+      `;
+      return this.db
+        .prepare(sql)
+        .all(
+          this.projectKey,
+          scope,
+          scope,
+          type,
+          type,
+          ...patterns.flatMap((p) => [p, p]),
+          topicForm,
+          phrasePattern,
+          phrasePattern,
+          limit,
+        ) as unknown as ObsRow[];
+    };
 
-    const sql = `
-      SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope, o.content
-        FROM observations o
-       WHERE o.project_key = ?
-         AND o.superseded_by IS NULL
-         AND (? IS NULL OR o.scope = ?)
-         AND (? IS NULL OR o.type = ?)
-         AND (${tokenClauses})
-       ORDER BY o.updated_at DESC
-       LIMIT ?
-    `;
+    let rows = runLike(tokens);
+    let matchedTokens = tokens;
 
-    const rows = this.db
-      .prepare(sql)
-      .all(
-        this.projectKey,
-        scope,
-        scope,
-        type,
-        type,
-        ...tokenParams,
-        limit,
-      ) as unknown as ObsRow[];
+    // Zero exact hits → one prefix-match retry for recall (cross-language roots, suffix
+    // typos) — the LIKE twin of the FTS5 branch's prefixMatchQuery fallback. Only on
+    // empty results, so precision of the primary path is untouched.
+    if (rows.length === 0) {
+      const prefixTokens = buildLikePrefixTokens(query);
+      if (prefixTokens.length > 0) {
+        rows = runLike(prefixTokens);
+        matchedTokens = prefixTokens;
+      }
+    }
 
-    const rawTokens = tokens.map((t) => t.replaceAll("%", ""));
+    const rawTokens = matchedTokens.map((t) => t.replaceAll("%", ""));
     return rows.map((r) => {
       // Synthetic score: number of tokens matching in the title (higher = more relevant).
       // Actual ordering is by updated_at DESC; this score is informational only.
@@ -986,7 +1034,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
         title: r.title,
         type: r.type as ObservationType,
         topicKey: r.topic_key ?? undefined,
-        snippet: buildLikeSnippet(r.content, tokens),
+        snippet: buildLikeSnippet(r.content, matchedTokens),
         score,
         updatedAt: r.updated_at,
         scope: r.scope as Scope,
