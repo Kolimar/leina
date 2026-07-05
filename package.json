@@ -1,0 +1,74 @@
+{
+  "name": "leina",
+  "version": "1.0.0",
+  "description": "Linked Engineering Intelligence Network for Agents — queryable code knowledge graph + drift-checked project memory for AI assistants",
+  "author": "Alejandro Alfonzo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kolimar/leina.git"
+  },
+  "homepage": "https://kolimar.github.io/leina/",
+  "bugs": {
+    "url": "https://github.com/Kolimar/leina/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "code-graph",
+    "knowledge-graph",
+    "project-memory",
+    "blast-radius",
+    "impact-analysis",
+    "tree-sitter",
+    "ts-morph",
+    "cli",
+    "mcp",
+    "devin",
+    "claude-code",
+    "spec-driven-development"
+  ],
+  "type": "module",
+  "bin": {
+    "leina": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "assets"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build && npm run check:native-assets",
+    "cli": "node --no-warnings --experimental-strip-types src/cli/index.ts",
+    "check:native-assets": "node --no-warnings --experimental-strip-types scripts/check-native-assets.ts",
+    "vendor-assets": "node --no-warnings --experimental-strip-types scripts/vendor-assets.ts",
+    "vendor:wasm": "node --no-warnings --experimental-strip-types scripts/vendor-wasm.ts",
+    "docs:site": "node --no-warnings --experimental-strip-types scripts/build-docs-site.ts",
+    "docs:site:build": "npm run docs:site",
+    "bench": "node --no-warnings --experimental-strip-types scripts/benchmark.ts",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "audit": "npm audit",
+    "audit:fix": "npm audit fix",
+    "test": "npm run check:native-assets && node --no-warnings --experimental-strip-types --test test/*.test.ts",
+    "test:coverage": "npm run check:native-assets && mkdir -p coverage && node --no-warnings --experimental-strip-types --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-reporter=spec --test-reporter-destination=stdout test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ts-morph": "^28.0.0",
+    "web-tree-sitter": "^0.25.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-security": "^3.0.0",
+    "tree-sitter-wasms": "^0.1.11",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

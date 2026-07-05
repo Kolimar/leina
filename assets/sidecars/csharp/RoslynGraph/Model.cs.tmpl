@@ -1,0 +1,30 @@
+// Output DTOs mirroring GraphNode / GraphEdge in src/core/model.ts. Serialized with
+// camelCase names and null-omission so the JSON matches the TS shape exactly.
+
+using System.Text.Json.Serialization;
+
+namespace RoslynGraph;
+
+internal sealed record Node(
+    string Id,
+    string Label,
+    string FileType,
+    string SourceFile,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceLocation,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Kind
+);
+
+internal sealed record Edge(
+    string Source,
+    string Target,
+    string Relation,
+    string Confidence,
+    string SourceFile,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceLocation,
+    int Weight
+);
+
+internal sealed record Payload(
+    IReadOnlyList<Node> Nodes,
+    IReadOnlyList<Edge> Edges
+);

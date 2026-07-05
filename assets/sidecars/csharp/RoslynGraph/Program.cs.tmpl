@@ -1,0 +1,294 @@
+// codegraph C# semantic sidecar.
+//
+// Mirrors src/extractors/semantic/tsmorph.ts but for C#: builds ONE ad-hoc
+// CSharpCompilation over every .cs file in the project so the SemanticModel can
+// resolve calls across files (overloads, inheritance, generics) the way a real
+// compiler does. Every edge it emits is EXTRACTED (compiler-proven), never guessed.
+//
+// Contract (see src/extractors/semantic/sidecar.ts):
+//   - last CLI arg = project root directory
+//   - prints {"nodes":[...],"edges":[...]} to stdout, exits 0
+//   - errors go to stderr with a non-zero exit
+//
+// Self-contained publish embeds the .NET runtime, so end users run the binary
+// with no .NET SDK or runtime installed.
+
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Basic.Reference.Assemblies;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using RoslynGraph;
+
+// Directories the TS core skips (src/graph/build.ts IGNORE_DIRS) + .NET build dirs.
+var ignoreDirs = new HashSet<string>(StringComparer.Ordinal)
+{
+    "node_modules", ".git", "dist", "build", "out", ".next", "vendor",
+    "__pycache__", ".venv", "venv", "target", "bin", "obj",
+};
+
+if (args.Length == 0)
+{
+    Console.Error.WriteLine("usage: RoslynGraph <project-root>");
+    return 2;
+}
+
+var root = Path.GetFullPath(args[^1]);
+if (!Directory.Exists(root))
+{
+    Console.Error.WriteLine($"not a directory: {root}");
+    return 2;
+}
+
+try
+{
+    var payload = new Builder(root, ignoreDirs).Build();
+    if (Environment.GetEnvironmentVariable("CODEGRAPH_SIDECAR_DEBUG") == "1")
+        Console.Error.WriteLine($"[RoslynGraph] nodes={payload.Nodes.Count} edges={payload.Edges.Count}");
+    var opts = new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+    Console.Out.Write(JsonSerializer.Serialize(payload, opts));
+    return 0;
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"RoslynGraph failed: {ex}");
+    return 1;
+}
+
+internal sealed class Builder
+{
+    private readonly string _root;
+    private readonly HashSet<string> _ignoreDirs;
+
+    private readonly List<Node> _nodes = new();
+    private readonly List<Edge> _edges = new();
+    private readonly HashSet<string> _nodeIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _edgeKeys = new(StringComparer.Ordinal);
+
+    // symbol -> graph id, for both types and methods (keyed by OriginalDefinition).
+    private readonly Dictionary<ISymbol, string> _symbolToId =
+        new(SymbolEqualityComparer.Default);
+
+    public Builder(string root, HashSet<string> ignoreDirs)
+    {
+        _root = root;
+        _ignoreDirs = ignoreDirs;
+    }
+
+    public Payload Build()
+    {
+        var files = EnumerateCsFiles().OrderBy(p => p, StringComparer.Ordinal).ToList();
+
+        var parseOpts = new CSharpParseOptions(LanguageVersion.Latest);
+        var trees = new List<SyntaxTree>(files.Count);
+        var relOf = new Dictionary<SyntaxTree, string>();
+        foreach (var file in files)
+        {
+            string text;
+            try { text = File.ReadAllText(file); }
+            catch { continue; }
+            var tree = CSharpSyntaxTree.ParseText(text, parseOpts, path: file);
+            trees.Add(tree);
+            relOf[tree] = Rel(file);
+        }
+
+        // BCL refs from embedded assemblies (work under single-file publish).
+        var refs = Net80.References.All;
+
+        var compilation = CSharpCompilation.Create(
+            "codegraph",
+            trees,
+            refs,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        // Pass 1a: file + type nodes (all trees first, so cross-file refs resolve).
+        foreach (var tree in trees)
+        {
+            var relPath = relOf[tree];
+            var model = compilation.GetSemanticModel(tree);
+            var fileId = IdGen.MakeId(relPath);
+            AddNode(fileId, relPath, "code", relPath, null, "module");
+
+            foreach (var decl in tree.GetRoot().DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
+            {
+                if (model.GetDeclaredSymbol(decl) is not INamedTypeSymbol sym) continue;
+                var def = (INamedTypeSymbol)sym.OriginalDefinition;
+                if (_symbolToId.ContainsKey(def)) continue; // partial type already registered
+                var classId = IdGen.MakeId(relPath, sym.Name);
+                AddNode(classId, sym.Name, "code", relPath, Loc(decl), KindOf(sym));
+                AddEdge(fileId, classId, "contains", relPath, Loc(decl));
+                _symbolToId[def] = classId;
+            }
+        }
+
+        // Pass 1b: method nodes (need their containing type registered above).
+        foreach (var tree in trees)
+        {
+            var relPath = relOf[tree];
+            var model = compilation.GetSemanticModel(tree);
+            foreach (var decl in tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>())
+            {
+                if (model.GetDeclaredSymbol(decl) is not IMethodSymbol ms) continue;
+                var owner = ms.ContainingType?.OriginalDefinition;
+                if (owner is null || !_symbolToId.TryGetValue(owner, out var classId)) continue;
+                var def = (IMethodSymbol)ms.OriginalDefinition;
+                var methodId = IdGen.MakeId(classId, ms.Name);
+                AddNode(methodId, $"{ms.Name}()", "code", relPath, Loc(decl), "method");
+                AddEdge(classId, methodId, "method", relPath, Loc(decl));
+                _symbolToId[def] = methodId; // overloads collapse to one node (by design)
+            }
+        }
+
+        // Pass 2: heritage + calls + object creation (needs the full symbol map).
+        foreach (var tree in trees)
+        {
+            var relPath = relOf[tree];
+            var model = compilation.GetSemanticModel(tree);
+            var rootNode = tree.GetRoot();
+
+            // Heritage: class base -> extends, interfaces -> implements;
+            // interface bases -> extends. Only edges to in-repo types.
+            foreach (var decl in rootNode.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
+            {
+                if (model.GetDeclaredSymbol(decl) is not INamedTypeSymbol sym) continue;
+                if (!_symbolToId.TryGetValue(sym.OriginalDefinition, out var classId)) continue;
+
+                if (sym.TypeKind == TypeKind.Interface)
+                {
+                    foreach (var iface in sym.Interfaces)
+                        TryHeritageEdge(classId, iface, "extends", relPath, Loc(decl));
+                }
+                else
+                {
+                    var baseType = sym.BaseType;
+                    if (baseType is not null && baseType.SpecialType != SpecialType.System_Object)
+                        TryHeritageEdge(classId, baseType, "extends", relPath, Loc(decl));
+                    foreach (var iface in sym.Interfaces)
+                        TryHeritageEdge(classId, iface, "implements", relPath, Loc(decl));
+                }
+            }
+
+            // Calls.
+            foreach (var call in rootNode.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                var fromId = EnclosingId(model, call.SpanStart);
+                if (fromId is null) continue;
+                var target = ResolveCallTarget(model.GetSymbolInfo(call));
+                if (target is not null)
+                    AddEdge(fromId, target, "calls", relPath, Loc(call));
+            }
+
+            // Object creation: new X() -> references the type node (mirrors ts-morph).
+            foreach (var oc in rootNode.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
+            {
+                var fromId = EnclosingId(model, oc.SpanStart);
+                if (fromId is null) continue;
+                if (model.GetSymbolInfo(oc.Type).Symbol is not INamedTypeSymbol ts) continue;
+                if (_symbolToId.TryGetValue(ts.OriginalDefinition, out var target))
+                    AddEdge(fromId, target, "references", relPath, Loc(oc));
+            }
+        }
+
+        return new Payload(_nodes, _edges);
+    }
+
+    // Resolve a call to the graph id of its target method, if in-repo. Prefers the
+    // bound symbol; falls back to candidates when they all collapse to ONE in-repo
+    // node (overload-resolution failure from an error-typed arg, or overloads that
+    // share a node anyway). One node = unambiguous, so still EXTRACTED-grade.
+    private string? ResolveCallTarget(SymbolInfo info)
+    {
+        if (info.Symbol is IMethodSymbol bound)
+        {
+            var id = MethodNodeId(bound);
+            if (id is not null) return id;
+        }
+        string? only = null;
+        foreach (var cand in info.CandidateSymbols.OfType<IMethodSymbol>())
+        {
+            var id = MethodNodeId(cand);
+            if (id is null) continue;
+            if (only is null) only = id;
+            else if (only != id) return null; // candidates point at different nodes
+        }
+        return only;
+    }
+
+    private string? MethodNodeId(IMethodSymbol ms)
+    {
+        if (ms.MethodKind == MethodKind.ReducedExtension && ms.ReducedFrom is not null)
+            ms = ms.ReducedFrom;
+        return _symbolToId.TryGetValue(ms.OriginalDefinition, out var id) ? id : null;
+    }
+
+    private void TryHeritageEdge(string classId, INamedTypeSymbol other, string relation, string relPath, string loc)
+    {
+        if (_symbolToId.TryGetValue(other.OriginalDefinition, out var target))
+            AddEdge(classId, target, relation, relPath, loc);
+    }
+
+    // Nearest enclosing symbol that owns a graph node (method, or type for
+    // field/initializer calls). Walks the containing-symbol chain like ts-morph
+    // walks syntax parents.
+    private string? EnclosingId(SemanticModel model, int position)
+    {
+        var sym = model.GetEnclosingSymbol(position);
+        while (sym is not null)
+        {
+            if (_symbolToId.TryGetValue(sym.OriginalDefinition, out var id)) return id;
+            sym = sym.ContainingSymbol;
+        }
+        return null;
+    }
+
+    private IEnumerable<string> EnumerateCsFiles()
+    {
+        var stack = new Stack<string>();
+        stack.Push(_root);
+        while (stack.Count > 0)
+        {
+            var dir = stack.Pop();
+            string[] subdirs;
+            try { subdirs = Directory.GetDirectories(dir); }
+            catch { continue; }
+            foreach (var sub in subdirs)
+            {
+                var name = Path.GetFileName(sub);
+                if (_ignoreDirs.Contains(name)) continue;
+                stack.Push(sub);
+            }
+            string[] csFiles;
+            try { csFiles = Directory.GetFiles(dir, "*.cs"); }
+            catch { continue; }
+            foreach (var f in csFiles) yield return f;
+        }
+    }
+
+    private static string KindOf(INamedTypeSymbol sym) =>
+        sym.TypeKind == TypeKind.Interface ? "interface" : "class";
+
+    private string Rel(string abs) =>
+        Path.GetRelativePath(_root, abs).Replace(Path.DirectorySeparatorChar, '/').Replace('\\', '/');
+
+    private static string Loc(SyntaxNode node) =>
+        $"L{node.GetLocation().GetLineSpan().StartLinePosition.Line + 1}";
+
+    private void AddNode(string id, string label, string fileType, string sourceFile, string? loc, string? kind)
+    {
+        if (!_nodeIds.Add(id)) return;
+        _nodes.Add(new Node(id, label, fileType, sourceFile, loc, kind));
+    }
+
+    private void AddEdge(string source, string target, string relation, string sourceFile, string? loc)
+    {
+        if (source == target) return; // no self-loops, matches ts-morph addEdge
+        var key = $"{source} {target} {relation}";
+        if (!_edgeKeys.Add(key)) return;
+        _edges.Add(new Edge(source, target, relation, "EXTRACTED", sourceFile, loc, 1));
+    }
+}

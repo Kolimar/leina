@@ -1,0 +1,7 @@
+Audit complete:
+  sources found: 14
+  sinks found:   0 (+ 8 synthetic)
+  paths found:   0
+  repos in pack: (single-repo)
+  pack written:  /Users/alejandro/Documents/development/ia/leina/.leina/audit-pack.json
+  catalog version: 1.0.0

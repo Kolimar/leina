@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "leina": {
+      "command": "leina",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}

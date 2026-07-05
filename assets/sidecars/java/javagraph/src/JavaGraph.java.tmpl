@@ -1,0 +1,383 @@
+// leina Java semantic sidecar.
+//
+// The Java analog of sidecars/csharp (Roslyn). Builds ONE JavaParser project with
+// a symbol solver over the whole source root, so calls/overloads/inheritance
+// resolve to the exact declaration across files — every emitted edge is EXTRACTED
+// (compiler-grade), never a syntactic guess. Mirrors the two-pass shape of the
+// ts-morph / Roslyn extractors.
+//
+// Contract (see src/extractors/semantic/sidecar.ts):
+//   - last CLI arg = project root directory
+//   - prints {"nodes":[...],"edges":[...]} to stdout, exits 0
+//   - errors go to stderr with a non-zero exit
+//
+// Packaged with a bundled JRE (jpackage) so a non-Java user installs no JVM.
+
+import com.github.javaparser.JavaParser;
+import com.github.javaparser.ParseResult;
+import com.github.javaparser.ParserConfiguration;
+import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.Node;
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
+import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.TypeDeclaration;
+import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.github.javaparser.ast.expr.ObjectCreationExpr;
+import com.github.javaparser.ast.type.ClassOrInterfaceType;
+import com.github.javaparser.resolution.declarations.ResolvedConstructorDeclaration;
+import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
+import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration;
+import com.github.javaparser.symbolsolver.JavaSymbolSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+public final class JavaGraph {
+
+    // Directories the TS core skips (build.ts IGNORE_DIRS) + JVM build dirs.
+    private static final Set<String> IGNORE_DIRS = Set.of(
+            "node_modules", ".git", "dist", "build", "out", ".next", "vendor",
+            "__pycache__", ".venv", "venv", "target", "bin", "obj");
+
+    public static void main(String[] args) {
+        if (args.length == 0) {
+            System.err.println("usage: JavaGraph <project-root>");
+            System.exit(2);
+        }
+        Path root = Paths.get(args[args.length - 1]).toAbsolutePath().normalize();
+        if (!Files.isDirectory(root)) {
+            System.err.println("not a directory: " + root);
+            System.exit(2);
+        }
+        try {
+            String json = new Builder(root).build();
+            System.out.print(json);
+        } catch (Exception ex) {
+            System.err.println("JavaGraph failed: " + ex);
+            ex.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    private static final class Builder {
+        private final Path root;
+        private JavaParser parser;
+
+        private final List<String> nodes = new ArrayList<>();
+        private final List<String> edges = new ArrayList<>();
+        private final Set<String> nodeIds = new HashSet<>();
+        private final Set<String> edgeKeys = new HashSet<>();
+
+        // resolved declaration -> graph id (keyed by qualified name / signature).
+        private final Map<String, String> typeIdByQName = new HashMap<>();
+        private final Map<String, String> methodIdBySig = new HashMap<>();
+
+        private static final boolean DEBUG = "1".equals(System.getenv("LEINA_SIDECAR_DEBUG"));
+        private int dbgCalls, dbgNoFrom, dbgNoSig, dbgExternal, dbgThrew;
+
+        Builder(Path root) {
+            this.root = root;
+        }
+
+        String build() throws IOException {
+            List<Path> files = listJavaFiles();
+
+            // Discover source roots: a type solver must be rooted where the package
+            // hierarchy begins (e.g. module/src/main/java), NOT the repo root — gson
+            // keeps com.google.gson under gson/src/main/java. Infer each root by
+            // stripping the package segments from a file's directory.
+            ParserConfiguration basic = new ParserConfiguration()
+                    .setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_17);
+            JavaParser scout = new JavaParser(basic);
+            Set<Path> sourceRoots = new HashSet<>();
+            for (Path f : files) {
+                try {
+                    ParseResult<CompilationUnit> r = scout.parse(f);
+                    if (r.getResult().isEmpty()) continue;
+                    Path sr = sourceRootOf(f, r.getResult().get());
+                    if (sr != null) sourceRoots.add(sr);
+                } catch (Exception ignore) {
+                    // unparseable: skip
+                }
+            }
+            if (DEBUG) System.err.println("[JavaGraph] source roots: " + sourceRoots.size());
+
+            CombinedTypeSolver typeSolver = new CombinedTypeSolver();
+            typeSolver.add(new ReflectionTypeSolver(false));
+            for (Path sr : sourceRoots) typeSolver.add(new JavaParserTypeSolver(sr.toFile()));
+            ParserConfiguration config = new ParserConfiguration()
+                    .setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_17)
+                    .setSymbolResolver(new JavaSymbolSolver(typeSolver));
+            this.parser = new JavaParser(config);
+
+            List<CompilationUnit> units = new ArrayList<>();
+            for (Path f : files) {
+                try {
+                    ParseResult<CompilationUnit> r = parser.parse(f);
+                    if (r.getResult().isPresent()) units.add(r.getResult().get());
+                } catch (Exception ignore) {
+                    // unparseable file: skip (graceful degrade)
+                }
+            }
+
+            // Pass 1a: file + type nodes (all units first, so cross-file refs resolve).
+            for (CompilationUnit cu : units) {
+                String relPath = rel(cu);
+                if (relPath == null) continue;
+                String fileId = IdGen.makeId(relPath);
+                addNode(fileId, relPath, relPath, null, "module");
+                for (TypeDeclaration<?> td : cu.findAll(TypeDeclaration.class)) {
+                    String qn = tryResolveTypeQName(td);
+                    if (qn == null || typeIdByQName.containsKey(qn)) continue;
+                    String classId = IdGen.makeId(relPath, td.getNameAsString());
+                    String kind = (td instanceof ClassOrInterfaceDeclaration c && c.isInterface())
+                            ? "interface" : "class";
+                    addNode(classId, td.getNameAsString(), relPath, loc(td), kind);
+                    addEdge(fileId, classId, "contains", relPath, loc(td));
+                    typeIdByQName.put(qn, classId);
+                }
+            }
+
+            // Pass 1b: method nodes (need their declaring type registered above).
+            for (CompilationUnit cu : units) {
+                String relPath = rel(cu);
+                if (relPath == null) continue;
+                for (MethodDeclaration md : cu.findAll(MethodDeclaration.class)) {
+                    ResolvedMethodDeclaration rmd = tryResolveMethod(md);
+                    if (rmd == null) continue;
+                    String ownerQN = safeDeclaringTypeQName(rmd);
+                    if (ownerQN == null) continue;
+                    String classId = typeIdByQName.get(ownerQN);
+                    if (classId == null) continue;
+                    String methodId = IdGen.makeId(classId, md.getNameAsString());
+                    addNode(methodId, md.getNameAsString() + "()", relPath, loc(md), "method");
+                    addEdge(classId, methodId, "method", relPath, loc(md));
+                    String sig = safeSignature(rmd);
+                    if (sig != null) methodIdBySig.put(sig, methodId);
+                }
+            }
+
+            // Pass 2: heritage + calls + object creation (full maps available).
+            for (CompilationUnit cu : units) {
+                String relPath = rel(cu);
+                if (relPath == null) continue;
+
+                for (ClassOrInterfaceDeclaration cid : cu.findAll(ClassOrInterfaceDeclaration.class)) {
+                    String qn = tryResolveTypeQName(cid);
+                    String classId = qn == null ? null : typeIdByQName.get(qn);
+                    if (classId == null) continue;
+                    for (ClassOrInterfaceType ext : cid.getExtendedTypes())
+                        heritageEdge(classId, ext, "extends", relPath, loc(ext));
+                    for (ClassOrInterfaceType impl : cid.getImplementedTypes())
+                        heritageEdge(classId, impl, "implements", relPath, loc(impl));
+                }
+
+                for (MethodCallExpr call : cu.findAll(MethodCallExpr.class)) {
+                    dbgCalls++;
+                    String fromId = enclosingId(call);
+                    if (fromId == null) { dbgNoFrom++; continue; }
+                    try {
+                        ResolvedMethodDeclaration rmd = call.resolve();
+                        String sig = safeSignature(rmd);
+                        if (sig == null) { dbgNoSig++; continue; }
+                        String target = methodIdBySig.get(sig);
+                        if (target != null) addEdge(fromId, target, "calls", relPath, loc(call));
+                        else dbgExternal++;
+                    } catch (Exception e) {
+                        dbgThrew++;
+                        if (DEBUG && dbgThrew <= 5) System.err.println("  call.resolve threw: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                    }
+                }
+
+                for (ObjectCreationExpr oce : cu.findAll(ObjectCreationExpr.class)) {
+                    String fromId = enclosingId(oce);
+                    if (fromId == null) continue;
+                    try {
+                        ResolvedConstructorDeclaration rcd = oce.resolve();
+                        String target = typeIdByQName.get(rcd.declaringType().getQualifiedName());
+                        if (target != null) addEdge(fromId, target, "references", relPath, loc(oce));
+                    } catch (Exception ignore) {
+                        // unresolved type: skip
+                    }
+                }
+            }
+
+            if (DEBUG) System.err.printf(
+                    "[JavaGraph] calls=%d noFrom=%d noSig=%d external=%d threw=%d resolved=%d%n",
+                    dbgCalls, dbgNoFrom, dbgNoSig, dbgExternal, dbgThrew,
+                    dbgCalls - dbgNoFrom - dbgNoSig - dbgExternal - dbgThrew);
+            return "{\"nodes\":[" + String.join(",", nodes)
+                    + "],\"edges\":[" + String.join(",", edges) + "]}";
+        }
+
+        private void heritageEdge(String classId, ClassOrInterfaceType t, String relation, String relPath, String loc) {
+            try {
+                String qn = t.resolve().asReferenceType().getQualifiedName();
+                String target = typeIdByQName.get(qn);
+                if (target != null) addEdge(classId, target, relation, relPath, loc);
+            } catch (Exception ignore) {
+                // external base type: skip
+            }
+        }
+
+        // Nearest enclosing graph node: the containing method, or the containing
+        // type for calls in field initializers / constructors (no method node).
+        private String enclosingId(Node node) {
+            Optional<Node> cur = node.getParentNode();
+            while (cur.isPresent()) {
+                Node n = cur.get();
+                if (n instanceof MethodDeclaration md) {
+                    ResolvedMethodDeclaration rmd = tryResolveMethod(md);
+                    String sig = rmd == null ? null : safeSignature(rmd);
+                    if (sig != null) {
+                        String id = methodIdBySig.get(sig);
+                        if (id != null) return id;
+                    }
+                } else if (n instanceof TypeDeclaration<?> td) {
+                    String qn = tryResolveTypeQName(td);
+                    if (qn != null) {
+                        String id = typeIdByQName.get(qn);
+                        if (id != null) return id;
+                    }
+                }
+                cur = n.getParentNode();
+            }
+            return null;
+        }
+
+        private List<Path> listJavaFiles() throws IOException {
+            try (Stream<Path> s = Files.walk(root)) {
+                return s.filter(Files::isRegularFile)
+                        .filter(p -> p.toString().endsWith(".java"))
+                        .filter(p -> {
+                            for (Path part : root.relativize(p)) {
+                                if (IGNORE_DIRS.contains(part.toString())) return false;
+                            }
+                            return true;
+                        })
+                        .sorted()
+                        .collect(Collectors.toList());
+            }
+        }
+
+        // Source root = the file's directory minus its package segments, so that
+        // package a.b.C resolves to <sourceRoot>/a/b/C.java.
+        private Path sourceRootOf(Path file, CompilationUnit cu) {
+            Path dir = file.toAbsolutePath().normalize().getParent();
+            if (dir == null) return null;
+            String pkg = cu.getPackageDeclaration().map(pd -> pd.getNameAsString()).orElse("");
+            if (!pkg.isEmpty()) {
+                int segs = pkg.split("\\.").length;
+                for (int i = 0; i < segs && dir != null; i++) dir = dir.getParent();
+            }
+            return dir;
+        }
+
+        private String rel(CompilationUnit cu) {
+            Optional<Path> sp = cu.getStorage().map(s -> s.getPath());
+            if (sp.isEmpty()) return null;
+            return root.relativize(sp.get()).toString().replace('\\', '/');
+        }
+
+        private static String tryResolveTypeQName(TypeDeclaration<?> td) {
+            try {
+                ResolvedReferenceTypeDeclaration r = td.resolve();
+                return r.getQualifiedName();
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        private static ResolvedMethodDeclaration tryResolveMethod(MethodDeclaration md) {
+            try {
+                return md.resolve();
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        private static String safeDeclaringTypeQName(ResolvedMethodDeclaration rmd) {
+            try {
+                return rmd.declaringType().getQualifiedName();
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        // getQualifiedSignature() resolves parameter types lazily and can throw
+        // when one is external/unresolvable; never let that crash the run.
+        private static String safeSignature(ResolvedMethodDeclaration rmd) {
+            try {
+                return rmd.getQualifiedSignature();
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        private static String loc(Node n) {
+            return n.getBegin().map(p -> "L" + p.line).orElse(null);
+        }
+
+        private void addNode(String id, String label, String sourceFile, String loc, String kind) {
+            if (!nodeIds.add(id)) return;
+            StringBuilder sb = new StringBuilder("{");
+            sb.append("\"id\":").append(jsonStr(id));
+            sb.append(",\"label\":").append(jsonStr(label));
+            sb.append(",\"fileType\":\"code\"");
+            sb.append(",\"sourceFile\":").append(jsonStr(sourceFile));
+            if (loc != null) sb.append(",\"sourceLocation\":").append(jsonStr(loc));
+            if (kind != null) sb.append(",\"kind\":").append(jsonStr(kind));
+            sb.append("}");
+            nodes.add(sb.toString());
+        }
+
+        private void addEdge(String source, String target, String relation, String sourceFile, String loc) {
+            if (source.equals(target)) return; // no self-loops
+            String key = source + " " + target + " " + relation;
+            if (!edgeKeys.add(key)) return;
+            StringBuilder sb = new StringBuilder("{");
+            sb.append("\"source\":").append(jsonStr(source));
+            sb.append(",\"target\":").append(jsonStr(target));
+            sb.append(",\"relation\":").append(jsonStr(relation));
+            sb.append(",\"confidence\":\"EXTRACTED\"");
+            sb.append(",\"sourceFile\":").append(jsonStr(sourceFile));
+            if (loc != null) sb.append(",\"sourceLocation\":").append(jsonStr(loc));
+            sb.append(",\"weight\":1");
+            sb.append("}");
+            edges.add(sb.toString());
+        }
+
+        private static String jsonStr(String s) {
+            StringBuilder sb = new StringBuilder("\"");
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                switch (c) {
+                    case '"' -> sb.append("\\\"");
+                    case '\\' -> sb.append("\\\\");
+                    case '\n' -> sb.append("\\n");
+                    case '\r' -> sb.append("\\r");
+                    case '\t' -> sb.append("\\t");
+                    default -> {
+                        if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
+                        else sb.append(c);
+                    }
+                }
+            }
+            return sb.append("\"").toString();
+        }
+    }
+}

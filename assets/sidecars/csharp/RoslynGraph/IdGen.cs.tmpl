@@ -1,0 +1,44 @@
+// Byte-for-byte port of src/core/id.ts. The graph core dedups and queries by id,
+// so an id produced here MUST equal the id the TS core would produce for the same
+// label, or sidecar nodes won't line up with the rest of the graph.
+//
+//   normalizeLabel: NFKC normalize + lowercase + collapse non-alphanumerics to "_"
+//                   + trim leading/trailing "_"
+//   makeId:         normalize each part, drop empties, join with ":"
+
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
+
+namespace RoslynGraph;
+
+internal static partial class IdGen
+{
+    // [^\p{L}\p{N}]+  — runs of anything that is not a Unicode letter or number.
+    [GeneratedRegex(@"[^\p{L}\p{N}]+", RegexOptions.CultureInvariant)]
+    private static partial Regex NonAlnum();
+
+    // ^_+|_+$ — leading/trailing underscores left after the collapse above.
+    [GeneratedRegex(@"^_+|_+$", RegexOptions.CultureInvariant)]
+    private static partial Regex EdgeUnderscores();
+
+    public static string NormalizeLabel(string label)
+    {
+        var nfkc = label.Normalize(NormalizationForm.FormKC).ToLowerInvariant();
+        var collapsed = NonAlnum().Replace(nfkc, "_");
+        return EdgeUnderscores().Replace(collapsed, "");
+    }
+
+    public static string MakeId(params string[] parts)
+    {
+        var sb = new StringBuilder();
+        foreach (var p in parts)
+        {
+            var n = NormalizeLabel(p);
+            if (n.Length == 0) continue;
+            if (sb.Length > 0) sb.Append(':');
+            sb.Append(n);
+        }
+        return sb.ToString();
+    }
+}

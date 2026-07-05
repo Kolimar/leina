@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # OSes: the install layer has per-OS behaviour worth keeping honest —
+        # symlink→copy fallback and shell-interop diagnosis on Windows, and the
+        # macOS /var→/private/var tmpdir realpath quirk.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # 22 = minimum supported (node:sqlite without flags; FTS5-degraded memory search).
+        # 24 = recommended (full FTS5).
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+        # Lint config is OS-independent; once is enough.
+        if: matrix.os == 'ubuntu-latest'
+      - run: npm test

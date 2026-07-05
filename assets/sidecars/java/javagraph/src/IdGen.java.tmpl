@@ -1,0 +1,35 @@
+// Byte-for-byte port of src/core/id.ts (and sidecars/csharp IdGen.cs). The graph
+// core dedups and queries by id, so ids produced here MUST equal what the TS core
+// produces for the same label.
+//
+//   normalizeLabel: NFKC normalize + lowercase + collapse non-alphanumerics to "_"
+//                   + trim leading/trailing "_"
+//   makeId:         normalize each part, drop empties, join with ":"
+//
+// Note on regex: Java's \p{L} and \p{N} are Unicode general categories by default
+// (unlike \w/\d), so [^\p{L}\p{N}]+ matches the same chars as the JS /u/ version.
+
+import java.text.Normalizer;
+import java.util.Locale;
+
+final class IdGen {
+    private IdGen() {}
+
+    static String normalizeLabel(String label) {
+        String nfkc = Normalizer.normalize(label, Normalizer.Form.NFKC)
+                .toLowerCase(Locale.ROOT);
+        String collapsed = nfkc.replaceAll("[^\\p{L}\\p{N}]+", "_");
+        return collapsed.replaceAll("^_+|_+$", "");
+    }
+
+    static String makeId(String... parts) {
+        StringBuilder sb = new StringBuilder();
+        for (String p : parts) {
+            String n = normalizeLabel(p);
+            if (n.isEmpty()) continue;
+            if (sb.length() > 0) sb.append(':');
+            sb.append(n);
+        }
+        return sb.toString();
+    }
+}

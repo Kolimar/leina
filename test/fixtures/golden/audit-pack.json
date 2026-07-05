@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 3,
+  "disclaimer": "NOTICE: This output is evidence for triage — these are CANDIDATE PATHS, NOT confirmed vulnerabilities or exploits. They represent potential data-flow routes that require qualified human review before any action is taken. leina audit does not generate exploits, payloads, or attack code.",
+  "builtAt": 0,
+  "reposInvolved": [
+    "repo-a",
+    "repo-b"
+  ],
+  "prunedPaths": 0,
+  "findings": [],
+  "paths": [
+    {
+      "source": "fn:handleReq",
+      "sink": "__sink__exec",
+      "minConfidence": "INFERRED",
+      "reposTraversed": [
+        "repo-a",
+        "repo-b"
+      ],
+      "steps": [
+        {
+          "from": "fn:handleReq",
+          "to": "fn:process",
+          "relation": "calls",
+          "confidence": "EXTRACTED"
+        },
+        {
+          "from": "fn:process",
+          "to": "__sink__exec",
+          "relation": "calls",
+          "confidence": "INFERRED"
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "fn:handleReq",
+      "label": "handleRequest",
+      "fileType": "code",
+      "sourceFile": "src/a.ts",
+      "kind": "function",
+      "repo": "repo-a"
+    },
+    {
+      "id": "fn:process",
+      "label": "process",
+      "fileType": "code",
+      "sourceFile": "src/b.ts",
+      "kind": "function",
+      "repo": "repo-b"
+    },
+    {
+      "id": "__sink__exec",
+      "label": "child_process.exec",
+      "fileType": "concept",
+      "sourceFile": "__synthetic__",
+      "kind": "concept"
+    }
+  ],
+  "edges": [
+    {
+      "source": "fn:handleReq",
+      "target": "fn:process",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "sourceFile": "src/a.ts",
+      "weight": 1
+    },
+    {
+      "source": "fn:process",
+      "target": "__sink__exec",
+      "relation": "calls",
+      "confidence": "INFERRED",
+      "sourceFile": "src/b.ts",
+      "weight": 1
+    }
+  ]
+}

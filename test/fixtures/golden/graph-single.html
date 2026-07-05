@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>P — grafo de código</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --txt:#e6edf3; --dim:#8b949e; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--txt);
+    font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
+  #net { position:absolute; inset:0; }
+  #hud { position:absolute; top:12px; left:12px; width:268px; background:rgba(22,27,34,.94);
+    border:1px solid var(--line); border-radius:10px; padding:12px 14px; backdrop-filter:blur(4px); }
+  #hud h1 { font-size:14px; margin:0 0 2px; }
+  #hud p.sub { margin:0 0 10px; color:var(--dim); font-size:11px; }
+  #search { width:100%; padding:7px 9px; background:var(--bg); border:1px solid var(--line);
+    border-radius:7px; color:var(--txt); margin-bottom:10px; }
+  #filters label { display:flex; align-items:center; gap:7px; font-size:12px; padding:2px 0; cursor:pointer; }
+  #filters .sw { width:11px; height:11px; border-radius:3px; flex:0 0 auto; }
+  #filters .ct { margin-left:auto; color:var(--dim); }
+  .btns { display:flex; gap:8px; margin-top:10px; }
+  .btns button { flex:1; padding:6px; background:var(--bg); border:1px solid var(--line);
+    color:var(--txt); border-radius:7px; cursor:pointer; font-size:12px; }
+  .btns button:hover { border-color:#58a6ff; }
+  details { margin-top:10px; }
+  summary { cursor:pointer; color:var(--dim); font-size:12px; }
+  .god { font-size:11px; }
+  .god div { display:flex; gap:6px; padding:2px 0; }
+  .god b { color:var(--txt); }
+  .god .d { margin-left:auto; color:var(--dim); }
+  #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--dim); font-size:14px; }
+  #drawer { position:absolute; top:0; right:0; height:100%; width:340px; transform:translateX(100%);
+    transition:transform .18s ease; background:var(--panel); border-left:1px solid var(--line);
+    padding:16px 18px; overflow:auto; box-shadow:-8px 0 24px rgba(0,0,0,.35); }
+  #drawer.open { transform:translateX(0); }
+  #drawer .x { position:absolute; top:10px; right:12px; cursor:pointer; color:var(--dim);
+    background:none; border:none; font-size:20px; line-height:1; }
+  #drawer h2 { font-size:15px; margin:2px 36px 2px 0; word-break:break-word; }
+  #drawer .badges { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 14px; }
+  #drawer .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--dim); }
+  #drawer .field { margin-bottom:11px; }
+  #drawer .field .k { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px; }
+  #drawer .field .v { font-size:13px; word-break:break-word; }
+  #drawer pre { background:var(--bg); border:1px solid var(--line); border-radius:7px; padding:9px 10px;
+    font-size:12px; white-space:pre-wrap; word-break:break-word; margin:4px 0 0; }
+  #drawer .empty { color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<div id="net"></div>
+<div id="loading">estabilizando layout…</div>
+<div id="hud">
+  <h1>P · grafo de código</h1>
+  <p class="sub" id="sub"></p>
+  <input id="search" placeholder="buscar nodo (enter)…" />
+  <div id="filters"></div>
+  <div class="btns">
+    <button id="physics-toggle">congelar física</button>
+    <button id="fit">encuadrar</button>
+  </div>
+  <details open><summary>God nodes (mayor grado)</summary><div class="god" id="god"></div></details>
+</div>
+<div id="drawer"></div>
+<script>/* vis-network stub (golden) */
+var vis={DataSet:function(){return{};},Network:function(){return{on:function(){}};}};</script>
+<script>
+const DATA = {"nodes":[{"id":"fn:a","label":"NodeA","group":"domain","value":2,"d":{"label":"NodeA","kind":"function","layer":"domain","community":0,"file":"src/domain/a.ts","degree":2,"sig":""}},{"id":"mod:b","label":"b.ts","group":"application","value":1,"d":{"label":"b.ts","kind":"module","layer":"application","community":0,"file":"src/application/b.ts","degree":1,"sig":""}},{"id":"cls:c","label":"NodeC","group":"infrastructure","value":1,"d":{"label":"NodeC","kind":"class","layer":"infrastructure","community":1,"file":"src/infrastructure/c.ts","degree":1,"sig":""}}],"edges":[{"from":"fn:a","to":"mod:b","arrows":"to","title":"imports (EXTRACTED)","color":{"color":"#30474f","opacity":0.55},"width":1,"dashes":false,"smooth":{"enabled":true,"type":"continuous"}},{"from":"mod:b","to":"cls:c","arrows":"to","title":"contains (EXTRACTED)","color":{"color":"#21262d","opacity":0.55},"width":0.5,"dashes":false,"smooth":{"enabled":true,"type":"continuous"}},{"from":"fn:a","to":"cls:c","arrows":"to","title":"calls (INFERRED)","color":{"color":"#30474f","opacity":0.55},"width":1,"dashes":true,"smooth":{"enabled":true,"type":"continuous"}}]};
+const META = {"totals":{"nodes":3,"edges":3},"layers":{"domain":1,"application":1,"infrastructure":1},"colors":{"domain":"#f0b429","application":"#58a6ff","infrastructure":"#3fb950"},"god":[{"id":"fn:a","label":"NodeA","layer":"domain","degree":2},{"id":"mod:b","label":"b.ts","layer":"application","degree":1},{"id":"cls:c","label":"NodeC","layer":"infrastructure","degree":1}],"maxDeg":2,"projectName":"P","mode":"single"};
+const sub = document.getElementById('sub');
+sub.textContent = META.totals.nodes + ' nodos · ' + META.totals.edges + ' edges · color = carpeta · tamaño = grado';
+
+const groups = {};
+for (const [name, color] of Object.entries(META.colors)) {
+  groups[name] = { color: { background: color + '33', border: color, highlight:{background:color+'55',border:color} },
+    font: { color: '#e6edf3', size: 12, strokeWidth: 3, strokeColor: '#0d1117' } };
+}
+
+const nodes = new vis.DataSet(DATA.nodes);
+const edges = new vis.DataSet(DATA.edges);
+const container = document.getElementById('net');
+const options = {
+  nodes: { shape: 'dot', scaling: { min: 5, max: 42, label: { enabled:true, min:11, max:22 } }, borderWidth: 1.5 },
+  edges: { selectionWidth: 2, hoverWidth: 1 },
+  groups,
+  interaction: { hover: true, tooltipDelay: 120, navigationButtons: false, keyboard: false },
+  physics: { stabilization: { iterations: 220 }, barnesHut: { gravitationalConstant: -9000, springLength: 110, springConstant: 0.03, avoidOverlap: 0.2 } },
+};
+const network = new vis.Network(container, { nodes, edges }, options);
+network.once('stabilizationIterationsDone', () => {
+  document.getElementById('loading').style.display = 'none';
+  network.setOptions({ physics: false });
+  document.getElementById('physics-toggle').textContent = 'reactivar física';
+});
+
+// --- drawer de detalle (click en un nodo) ---
+const drawer = document.getElementById('drawer');
+const byId = {};
+for (const n of DATA.nodes) byId[n.id] = n;
+function openDrawer(node){
+  if (!node) return;
+  const d = node.d || {};
+  const commBadge = d.community != null ? '<span class="badge">comunidad ' + d.community + '</span>' : '';
+  drawer.innerHTML =
+    '<button class="x" title="cerrar">×</button>' +
+    '<h2>' + (d.label || node.id) + '</h2>' +
+    '<div class="badges"><span class="badge">' + (d.kind || '?') + '</span>' +
+      '<span class="badge">capa ' + (d.layer || '?') + '</span>' + commBadge +
+      '<span class="badge">grado ' + (d.degree || 0) + '</span></div>' +
+    '<div class="field"><div class="k">archivo</div><div class="v">' + (d.file || '') + '</div></div>' +
+    (d.sig
+      ? '<div class="field"><div class="k">firma</div><pre>' + d.sig + '</pre></div>'
+      : '<div class="field empty">sin firma estructurada</div>');
+  drawer.classList.add('open');
+  drawer.querySelector('.x').addEventListener('click', closeDrawer);
+}
+function closeDrawer(){ drawer.classList.remove('open'); }
+network.on('click', params => {
+  if (params.nodes && params.nodes.length) openDrawer(byId[params.nodes[0]]);
+  else closeDrawer();
+});
+
+// --- filtros por grupo ---
+const hidden = new Set();
+const filtersEl = document.getElementById('filters');
+for (const [name, ct] of Object.entries(META.layers).sort((a,b)=>b[1]-a[1])) {
+  const row = document.createElement('label');
+  row.innerHTML = '<input type="checkbox" checked data-g="'+name+'"><span class="sw" style="background:'+(META.colors[name]||'#888')+'"></span>'+name+'<span class="ct">'+ct+'</span>';
+  filtersEl.appendChild(row);
+}
+filtersEl.addEventListener('change', e => {
+  const g = e.target.dataset.g; if (!g) return;
+  if (e.target.checked) hidden.delete(g); else hidden.add(g);
+  nodes.update(DATA.nodes.map(n => ({ id: n.id, hidden: hidden.has(n.group) })));
+});
+
+// --- búsqueda ---
+const searchEl = document.getElementById('search');
+searchEl.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const q = searchEl.value.trim().toLowerCase();
+  if (!q) return;
+  const hit = DATA.nodes.find(n => (n.label||'').toLowerCase().includes(q) || n.id.toLowerCase().includes(q) || ((n.d&&n.d.label)||'').toLowerCase().includes(q) || ((n.d&&n.d.file)||'').toLowerCase().includes(q));
+  if (hit) { network.focus(hit.id, { scale: 1.4, animation: true }); network.selectNodes([hit.id]); openDrawer(hit); }
+});
+
+// --- botones ---
+let frozen = true;
+document.getElementById('physics-toggle').addEventListener('click', () => {
+  frozen = !frozen;
+  network.setOptions({ physics: !frozen });
+  document.getElementById('physics-toggle').textContent = frozen ? 'reactivar física' : 'congelar física';
+});
+document.getElementById('fit').addEventListener('click', () => network.fit({ animation: true }));
+
+// --- god nodes (click → focus + drawer) ---
+const godEl = document.getElementById('god');
+godEl.innerHTML = META.god.map((g,i) =>
+  '<div data-i="'+i+'" style="cursor:pointer"><span class="sw" style="width:9px;height:9px;border-radius:2px;background:'+(META.colors[g.layer]||'#888')+'"></span><b>'+g.label+'</b><span class="d">'+g.degree+'</span></div>'
+).join('');
+godEl.addEventListener('click', e => {
+  const row = e.target.closest('[data-i]'); if (!row) return;
+  const g = META.god[+row.dataset.i]; if (!g || !g.id) return;
+  network.focus(g.id, { scale: 1.4, animation: true });
+  network.selectNodes([g.id]);
+  openDrawer(byId[g.id]);
+});
+</script>
+</body>
+</html>

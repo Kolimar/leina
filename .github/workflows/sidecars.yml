@@ -1,0 +1,72 @@
+name: Sidecar binaries
+
+# Builds the semantic sidecars (Roslyn / JavaParser) per platform and attaches them to the
+# `sidecars-v*` release whose tag triggered the run. `leina sidecar install <lang>` then
+# downloads + sha256-verifies these instead of requiring a local .NET/JDK toolchain.
+# The tag must match SIDECAR_DIST_TAG in src/.../sidecar-install.ts.
+on:
+  push:
+    tags: ["sidecars-v*"]
+
+permissions:
+  contents: write # gh release upload
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.x" }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: npm ci
+      - name: Build both sidecars
+        run: npm run cli -- sidecar build
+      - name: Package per-platform tarballs
+        shell: bash
+        run: |
+          set -euo pipefail
+          NODE_PLATFORM=$(node -p "process.platform")
+          NODE_ARCH=$(node -p "process.arch")
+          LEINA_HOME_DIR=$(node -p "process.env.LEINA_HOME ?? require('node:path').join(require('node:os').homedir(), '.leina')")
+          mkdir -p out
+          for LANG_ID in csharp java; do
+            DIST="$LEINA_HOME_DIR/sidecars/$LANG_ID/dist"
+            if [ -d "$DIST" ]; then
+              tar -czf "out/leina-sidecar-$LANG_ID-$NODE_PLATFORM-$NODE_ARCH.tar.gz" -C "$DIST" .
+            else
+              echo "::warning::$LANG_ID sidecar not built on $NODE_PLATFORM — skipping"
+            fi
+          done
+          ls -la out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidecars-${{ matrix.os }}
+          path: out/*.tar.gz
+
+  publish:
+    name: Attach to release with checksums
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: all, merge-multiple: true }
+      - name: Generate checksums.txt
+        run: |
+          cd all
+          sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --notes "Prebuilt semantic sidecars (${GITHUB_REF_NAME})" || true
+          gh release upload "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --clobber all/*.tar.gz all/checksums.txt

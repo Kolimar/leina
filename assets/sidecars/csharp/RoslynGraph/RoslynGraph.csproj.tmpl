@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>RoslynGraph</AssemblyName>
+    <RootNamespace>RoslynGraph</RootNamespace>
+    <!-- Self-contained single-file publish embeds the runtime so end users need
+         no .NET installed. See README "Semantic sidecar" for the publish command.
+         NOTE: do NOT set InvariantGlobalization. It can disable ICU and break
+         String.Normalize(FormKC), which IdGen needs to match the TS core's ids. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+    <!-- Embedded BCL reference assemblies: disk-independent, so metadata refs
+         survive single-file publish (TRUSTED_PLATFORM_ASSEMBLIES paths don't
+         exist on disk in a single-file deployment). -->
+    <PackageReference Include="Basic.Reference.Assemblies.Net80" Version="1.7.9" />
+  </ItemGroup>
+
+</Project>

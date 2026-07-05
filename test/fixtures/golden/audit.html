@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>demo — auditoría (rutas candidatas)</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --txt:#e6edf3; --dim:#8b949e;
+    --warn:#d29922; --warnbg:#3a2d05; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--txt);
+    font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
+  #net { position:absolute; inset:0; top:auto; bottom:0; height:calc(100% - 0px); }
+  #banner { position:absolute; top:0; left:0; right:0; z-index:5; background:var(--warnbg);
+    border-bottom:1px solid var(--warn); color:#f0d58c; padding:7px 14px; font-size:11px; }
+  #banner b { color:var(--warn); }
+  #hud { position:absolute; top:44px; left:12px; width:300px; max-height:calc(100% - 60px);
+    overflow:auto; background:rgba(22,27,34,.94); border:1px solid var(--line);
+    border-radius:10px; padding:12px 14px; backdrop-filter:blur(4px); }
+  #hud h1 { font-size:14px; margin:0 0 2px; }
+  #hud p.sub { margin:0 0 10px; color:var(--dim); font-size:11px; }
+  .legend { display:flex; flex-wrap:wrap; gap:6px 12px; margin:0 0 10px; font-size:11px; }
+  .legend span { display:flex; align-items:center; gap:5px; color:var(--dim); }
+  .legend .sw { width:11px; height:11px; border-radius:3px; flex:0 0 auto; }
+  .legend .sw.dia { border-radius:2px; transform:rotate(45deg); }
+  .paths { font-size:12px; }
+  .paths .p { padding:6px 8px; border:1px solid var(--line); border-radius:7px; margin-bottom:6px;
+    cursor:pointer; }
+  .paths .p:hover { border-color:#58a6ff; }
+  .paths .p.active { border-color:#58a6ff; background:#1c2330; }
+  .paths .ep { display:flex; align-items:center; gap:5px; }
+  .paths .ep b { color:var(--txt); word-break:break-all; }
+  .paths .ar { color:var(--dim); }
+  .paths .m { margin-top:3px; color:var(--dim); font-size:11px; }
+  .conf { font-size:10px; padding:1px 6px; border-radius:999px; border:1px solid var(--line); }
+  .btns { display:flex; gap:8px; margin:10px 0 4px; }
+  .btns button { flex:1; padding:6px; background:var(--bg); border:1px solid var(--line);
+    color:var(--txt); border-radius:7px; cursor:pointer; font-size:12px; }
+  .btns button:hover { border-color:#58a6ff; }
+  #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--dim); font-size:14px; }
+  #empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--dim); font-size:14px; text-align:center; padding:0 40px; }
+  #drawer { position:absolute; top:0; right:0; height:100%; width:340px; transform:translateX(100%);
+    transition:transform .18s ease; background:var(--panel); border-left:1px solid var(--line);
+    padding:16px 18px; overflow:auto; box-shadow:-8px 0 24px rgba(0,0,0,.35); z-index:6; }
+  #drawer.open { transform:translateX(0); }
+  #drawer .x { position:absolute; top:10px; right:12px; cursor:pointer; color:var(--dim);
+    background:none; border:none; font-size:20px; line-height:1; }
+  #drawer h2 { font-size:15px; margin:2px 36px 2px 0; word-break:break-word; }
+  #drawer .badges { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 14px; }
+  #drawer .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--dim); }
+  #drawer .field { margin-bottom:11px; }
+  #drawer .field .k { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px; }
+  #drawer .field .v { font-size:13px; word-break:break-word; }
+</style>
+</head>
+<body>
+<div id="banner">⚠ <b>NOTICE</b>: rutas CANDIDATAS, no vulnerabilidades confirmadas ni exploits. Requieren revisión humana calificada. leina no genera exploits, payloads ni código de ataque.</div>
+<div id="net"></div>
+<div id="loading">estabilizando layout…</div>
+<div id="hud">
+  <h1>demo · auditoría</h1>
+  <p class="sub" id="sub"></p>
+  <div class="legend">
+    <span><i class="sw" style="background:#3fb950"></i>source</span>
+    <span><i class="sw" style="background:#ff7b72"></i>sink</span>
+    <span><i class="sw dia" style="background:#f85149"></i>sink sintético</span>
+    <span><i class="sw" style="background:#58a6ff"></i>waypoint</span>
+  </div>
+  <div class="btns"><button id="fit">encuadrar</button><button id="clear">limpiar selección</button></div>
+  <div class="paths" id="paths"></div>
+</div>
+<div id="drawer"></div>
+<script>/* vis-network stub (golden) */
+var vis={DataSet:function(){return{};},Network:function(){return{on:function(){}};}};</script>
+<script>
+const DATA = {"nodes":[{"id":"fn:handleReq","label":"handleRequest","group":"source","shape":"dot","value":3,"color":{"background":"#3fb950","border":"#161b22","highlight":{"background":"#3fb950","border":"#e6edf3"}},"d":{"label":"handleRequest","role":"source","kind":"function","repo":"repo-a","file":"src/a.ts"}},{"id":"fn:process","label":"process","group":"waypoint","shape":"dot","value":1,"color":{"background":"#58a6ff","border":"#161b22","highlight":{"background":"#58a6ff","border":"#e6edf3"}},"d":{"label":"process","role":"waypoint","kind":"function","repo":"repo-b","file":"src/b.ts"}},{"id":"__sink__exec","label":"child_process.exec","group":"synthetic","shape":"diamond","value":3,"color":{"background":"#f85149","border":"#161b22","highlight":{"background":"#f85149","border":"#e6edf3"}},"d":{"label":"child_process.exec","role":"synthetic","kind":"concept","repo":"","file":"__synthetic__"}}],"edges":[{"id":"fn:handleReq::fn:process::calls","from":"fn:handleReq","to":"fn:process","arrows":"to","title":"calls (EXTRACTED)","color":{"color":"#3fb950","opacity":0.7,"highlight":"#e6edf3"},"width":1.5,"dashes":false,"smooth":{"enabled":true,"type":"continuous"}},{"id":"fn:process::__sink__exec::calls","from":"fn:process","to":"__sink__exec","arrows":"to","title":"calls (INFERRED)","color":{"color":"#d29922","opacity":0.7,"highlight":"#e6edf3"},"width":1.5,"dashes":true,"smooth":{"enabled":true,"type":"continuous"}}]};
+const META = {"totals":{"paths":1,"sources":1,"sinks":1,"repos":2},"prunedPaths":0,"colors":{"source":"#3fb950","sink":"#ff7b72","synthetic":"#f85149","waypoint":"#58a6ff"},"confColors":{"EXTRACTED":"#3fb950","INFERRED":"#d29922","AMBIGUOUS":"#ff7b72","SYNTACTIC":"#6e7681"},"paths":[{"source":"handleRequest","sink":"child_process.exec","minConfidence":"INFERRED","steps":2,"repos":["repo-a","repo-b"],"nodeIds":["fn:handleReq","fn:process","__sink__exec"],"edgeIds":["fn:handleReq::fn:process::calls","fn:process::__sink__exec::calls"]}],"disclaimer":"NOTICE: This output is evidence for triage — these are CANDIDATE PATHS, NOT confirmed vulnerabilities or exploits. They represent potential data-flow routes that require qualified human review before any action is taken. leina audit does not generate exploits, payloads, or attack code.","projectName":"demo"};
+const sub = document.getElementById('sub');
+sub.textContent = META.totals.paths + ' rutas · ' + META.totals.sources + ' sources · ' +
+  META.totals.sinks + ' sinks' + (META.totals.repos ? ' · ' + META.totals.repos + ' repos' : '') +
+  (META.prunedPaths ? ' · ' + META.prunedPaths + ' podadas' : '');
+
+if (DATA.nodes.length === 0) {
+  document.getElementById('loading').style.display = 'none';
+  const e = document.createElement('div'); e.id = 'empty';
+  e.textContent = 'No se encontraron rutas source→sink. Probá con --from <id> o reconstruí el grafo (leina workspace build).';
+  document.body.appendChild(e);
+}
+
+const groups = {};
+for (const [name, color] of Object.entries(META.colors)) {
+  groups[name] = { color: { background: color, border: '#161b22', highlight:{background:color,border:'#e6edf3'} },
+    font: { color: '#e6edf3', size: 12, strokeWidth: 3, strokeColor: '#0d1117' } };
+}
+
+const nodes = new vis.DataSet(DATA.nodes);
+const edges = new vis.DataSet(DATA.edges);
+const container = document.getElementById('net');
+const options = {
+  nodes: { shape: 'dot', scaling: { min: 10, max: 34, label: { enabled:true, min:11, max:20 } }, borderWidth: 1.5 },
+  edges: { selectionWidth: 2.4, hoverWidth: 1, font: { color:'#8b949e', size:10, strokeWidth:3, strokeColor:'#0d1117' } },
+  groups,
+  interaction: { hover: true, tooltipDelay: 120, navigationButtons: false, keyboard: false },
+  physics: { stabilization: { iterations: 200 }, barnesHut: { gravitationalConstant: -8000, springLength: 120, springConstant: 0.03, avoidOverlap: 0.3 } },
+  layout: { improvedLayout: true },
+};
+const network = new vis.Network(container, { nodes, edges }, options);
+network.once('stabilizationIterationsDone', () => {
+  const l = document.getElementById('loading'); if (l) l.style.display = 'none';
+  network.setOptions({ physics: false });
+});
+
+// --- drawer de detalle (click en un nodo) ---
+const drawer = document.getElementById('drawer');
+const byId = {};
+for (const n of DATA.nodes) byId[n.id] = n;
+function openDrawer(node){
+  if (!node) return;
+  const d = node.d || {};
+  drawer.innerHTML =
+    '<button class="x" title="cerrar">×</button>' +
+    '<h2>' + (d.label || node.id) + '</h2>' +
+    '<div class="badges"><span class="badge">' + (d.role || '?') + '</span>' +
+      '<span class="badge">' + (d.kind || '?') + '</span>' +
+      (d.repo ? '<span class="badge">' + d.repo + '</span>' : '') + '</div>' +
+    '<div class="field"><div class="k">archivo</div><div class="v">' + (d.file || '') + '</div></div>';
+  drawer.classList.add('open');
+  drawer.querySelector('.x').addEventListener('click', closeDrawer);
+}
+function closeDrawer(){ drawer.classList.remove('open'); }
+network.on('click', params => {
+  if (params.nodes && params.nodes.length) openDrawer(byId[params.nodes[0]]);
+  else closeDrawer();
+});
+
+// --- panel de rutas (click → resalta la ruta) ---
+const pathsEl = document.getElementById('paths');
+pathsEl.innerHTML = META.paths.map((p,i) => {
+  const c = META.confColors[p.minConfidence] || '#8b949e';
+  return '<div class="p" data-i="'+i+'">' +
+    '<div class="ep"><b>'+p.source+'</b><span class="ar">→</span><b>'+p.sink+'</b></div>' +
+    '<div class="m"><span class="conf" style="color:'+c+';border-color:'+c+'">'+p.minConfidence+'</span> '+
+      p.steps+' pasos'+(p.repos.length>1?' · '+p.repos.join(' → '):'')+'</div></div>';
+}).join('');
+
+let activeEl = null;
+function highlightPath(i){
+  const p = META.paths[i]; if (!p) return;
+  network.setSelection({ nodes: p.nodeIds, edges: p.edgeIds });
+  network.fit({ nodes: p.nodeIds, animation: true });
+  if (activeEl) activeEl.classList.remove('active');
+  activeEl = pathsEl.querySelector('[data-i="'+i+'"]');
+  if (activeEl) activeEl.classList.add('active');
+  const src = byId[p.nodeIds[0]]; if (src) openDrawer(src);
+}
+pathsEl.addEventListener('click', e => {
+  const row = e.target.closest('[data-i]'); if (!row) return;
+  highlightPath(+row.dataset.i);
+});
+
+document.getElementById('fit').addEventListener('click', () => network.fit({ animation: true }));
+document.getElementById('clear').addEventListener('click', () => {
+  network.unselectAll();
+  if (activeEl) { activeEl.classList.remove('active'); activeEl = null; }
+  closeDrawer();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,175 @@
+---
+name: sdd-archive
+description: "Archive a completed SDD change by syncing delta specs. Trigger: orchestrator launches archive after implementation and verification."
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  version: "2.0"
+  delegate_only: true
+---
+
+> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
+> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
+> the dedicated `sdd-archive` sub-agent using your platform's delegation primitive
+> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
+> only.
+
+## Purpose
+
+You are a sub-agent responsible for ARCHIVING. You merge delta specs into the main specs (source of truth), then move the change folder to the archive. You complete the SDD cycle.
+
+## What You Receive
+
+From the orchestrator:
+- Change name
+- Artifact store mode (`memory | openspec | hybrid | none`)
+
+## Execution and Persistence Contract
+
+> Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
+
+- **memory**: Read `sdd/{change-name}/proposal`, `sdd/{change-name}/spec`, `sdd/{change-name}/design`, `sdd/{change-name}/tasks`, `sdd/{change-name}/verify-report` (all required). Record all observation IDs in the archive report for traceability. Save as `sdd/{change-name}/archive-report`.
+- **openspec**: Read and follow `skills/_shared/openspec-convention.md`. Perform merge and archive folder moves.
+- **hybrid**: Follow BOTH conventions — persist archive report to Leina memory (with observation IDs) AND perform filesystem merge + archive folder moves.
+- **none**: Return closure summary only. Do not perform archive file operations.
+
+## What to Do
+
+### Step 1: Load Skills
+First do the **MANDATORY Section 0 preamble** (language + context bootstrap — never start
+blind), then follow **Section A** from `skills/_shared/sdd-phase-common.md`.
+
+### Step 2: Sync Delta Specs to Main Specs
+
+**IF mode is `memory`:** Skip filesystem sync — artifacts live in Leina memory only. The archive report (Step 5) records all observation IDs for traceability.
+
+**IF mode is `none`:** Skip — no artifacts to sync.
+
+**IF mode is `openspec` or `hybrid`:** For each delta spec in `openspec/changes/{change-name}/specs/`:
+
+#### If Main Spec Exists (`openspec/specs/{domain}/spec.md`)
+
+Read the existing main spec and apply the delta:
+
+```
+FOR EACH SECTION in delta spec:
+├── ADDED Requirements → Append to main spec's Requirements section
+├── MODIFIED Requirements → Replace the matching requirement in main spec
+└── REMOVED Requirements → Delete the matching requirement from main spec
+```
+
+**Merge carefully:**
+- Match requirements by name (e.g., "### Requirement: Session Expiration")
+- Preserve all OTHER requirements that aren't in the delta
+- Maintain proper Markdown formatting and heading hierarchy
+
+#### If Main Spec Does NOT Exist
+
+The delta spec IS a full spec (not a delta). Copy it directly:
+
+```bash
+# Copy new spec to main specs
+openspec/changes/{change-name}/specs/{domain}/spec.md
+  → openspec/specs/{domain}/spec.md
+```
+
+### Step 3: Move to Archive
+
+**IF mode is `memory`:** Skip — there are no `openspec/` directories to move. The archive report in Leina memory serves as the audit trail.
+
+**IF mode is `none`:** Skip — no filesystem operations.
+
+**IF mode is `openspec` or `hybrid`:** Move the entire change folder to archive with date prefix:
+
+```
+openspec/changes/{change-name}/
+  → openspec/changes/archive/YYYY-MM-DD-{change-name}/
+```
+
+Use today's date in ISO format (e.g., `2026-02-16`).
+
+### Step 4: Verify Archive
+
+**IF mode is `openspec` or `hybrid`:** Confirm:
+- [ ] Main specs updated correctly
+- [ ] Change folder moved to archive
+- [ ] Archive contains all artifacts (proposal, specs, design, tasks)
+- [ ] Active changes directory no longer has this change
+
+**IF mode is `memory`:** Confirm all artifact observation IDs are recorded in the archive report.
+
+**IF mode is `none`:** Skip verification — no persisted artifacts.
+
+### Step 5: Rescue Out-of-Scope Items (safety net)
+
+Before closing the change, re-open the proposal artifact and scan its **Out of Scope**
+section (plus any "Deferred" / "Follow-up" sections in spec/design). For each bullet that
+represents deferred concrete work (same heuristic as `sdd-propose` Step 5):
+
+1. Derive the candidate topic: `backlog/<kebab-name>` from the explicit `→ name`
+   pointer or the bullet's leading noun phrase.
+2. Run `leina memory search <dir> "<topic>"` for that topic. If a matching observation already exists, skip.
+3. If no matching observation exists, this item slipped through the propose-time prompt.
+   Surface ALL missing items together to the user with the question (in the user's
+   language): *"These Out-of-Scope items were never saved as backlog memories. Save them
+   before archiving? (all / none / selection)"*. Default if silent: save **all**.
+4. For each accepted item, run `leina memory save <dir> --topic backlog/<name>
+   --type decision --scope project --content "..."`, content referencing
+   `sdd/{change-name}/proposal` as origin.
+5. Record the rescued IDs in the archive report under a `backlog_rescued` field for
+   traceability.
+
+This is a safety net for the propose-time prompt — if `sdd-propose` already promoted every
+deferred item, this step is a no-op. Archive MUST NOT close until this scan has run.
+
+### Step 6: Persist Archive Report
+
+**This step is MANDATORY — do NOT skip it.**
+
+Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
+- artifact: `archive-report`
+- topic: `sdd/{change-name}/archive-report`
+- type: `architecture`
+
+### Step 7: Return Summary
+
+Return to the orchestrator:
+
+```markdown
+## Change Archived
+
+**Change**: {change-name}
+**Archived to**: `openspec/changes/archive/{YYYY-MM-DD}-{change-name}/` (openspec/hybrid) | Leina memory archive report (memory) | inline (none)
+
+### Specs Synced
+| Domain | Action | Details |
+|--------|--------|---------|
+| {domain} | Created/Updated | {N added, M modified, K removed requirements} |
+
+### Archive Contents
+- proposal.md ✅
+- specs/ ✅
+- design.md ✅
+- tasks.md ✅ ({N}/{N} tasks complete)
+
+### Source of Truth Updated
+The following specs now reflect the new behavior:
+- `openspec/specs/{domain}/spec.md`
+
+### SDD Cycle Complete
+The change has been fully planned, implemented, verified, and archived.
+Ready for the next change.
+```
+
+## Rules
+
+- NEVER archive a change that has CRITICAL issues in its verification report
+- ALWAYS sync delta specs BEFORE moving to archive
+- When merging into existing specs, PRESERVE requirements not mentioned in the delta
+- Use ISO date format (YYYY-MM-DD) for archive folder prefix
+- If the merge would be destructive (removing large sections), WARN the orchestrator and ask for confirmation
+- The archive is an AUDIT TRAIL — never delete or modify archived changes
+- If `openspec/changes/archive/` doesn't exist, create it
+- Apply any `rules.archive` from `openspec/config.yaml`
+- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
