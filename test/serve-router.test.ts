@@ -11,6 +11,7 @@ import type { Server } from "node:http";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
 import { createRouter, type RouterDeps } from "../src/cli/serve/router.ts";
 import { resolveStaticPath } from "../src/cli/serve/static.ts";
@@ -217,7 +218,56 @@ test("(sr-8) unknown /api/ route → 404 NOT_FOUND", async () => {
   }
 });
 
-test("(sr-9) sendJson: response over the size cap → 500 RESPONSE_TOO_LARGE, not the oversized body", () => {
+// ---------------------------------------------------------------------------
+// Frontend (wave 5): the real assets/graph-ui tree + the vendored vis-network route
+// ---------------------------------------------------------------------------
+
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const REAL_GRAPH_UI_ROOT = join(REPO_ROOT, "assets", "graph-ui");
+const REAL_VIS_NETWORK_ROOT = join(REPO_ROOT, "assets", "vis-network");
+
+test("(sr-10) real assets/graph-ui: index/app.js/lib.js/style.css all serve 200 with the right MIME", async () => {
+  await withServer({ assetsRoot: REAL_GRAPH_UI_ROOT }, async ({ baseUrl: base }) => {
+    const index = await fetch(`${base}/`);
+    assert.equal(index.status, 200);
+    assert.match(index.headers.get("content-type") ?? "", /text\/html/);
+    assert.match(await index.text(), /<title>/);
+
+    const app = await fetch(`${base}/app.js`);
+    assert.equal(app.status, 200);
+    assert.match(app.headers.get("content-type") ?? "", /javascript/);
+
+    const lib = await fetch(`${base}/lib.js`);
+    assert.equal(lib.status, 200);
+    assert.match(lib.headers.get("content-type") ?? "", /javascript/);
+
+    const css = await fetch(`${base}/style.css`);
+    assert.equal(css.status, 200);
+    assert.match(css.headers.get("content-type") ?? "", /text\/css/);
+  });
+});
+
+test("(sr-11) /vendor/vis-network.min.js serves the vendored bundle when visNetworkRoot is wired", async () => {
+  await withServer(
+    { assetsRoot: REAL_GRAPH_UI_ROOT, visNetworkRoot: REAL_VIS_NETWORK_ROOT },
+    async ({ baseUrl: base }) => {
+      const res = await fetch(`${base}/vendor/vis-network.min.js`);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get("content-type") ?? "", /javascript/);
+      const body = await res.text();
+      assert.ok(body.length > 1000, "should serve the actual vis-network bundle, not a stub");
+    },
+  );
+});
+
+test("(sr-12) /vendor/vis-network.min.js 404s when visNetworkRoot isn't configured (no zero-config path traversal surface)", async () => {
+  await withServer({ assetsRoot: REAL_GRAPH_UI_ROOT }, async ({ baseUrl: base }) => {
+    const res = await fetch(`${base}/vendor/vis-network.min.js`);
+    assert.equal(res.status, 404);
+  });
+});
+
+test("(sr-13) sendJson: response over the size cap → 500 RESPONSE_TOO_LARGE, not the oversized body", () => {
   const written: { status?: number; body?: string } = {};
   const fakeRes = {
     writeHead(status: number) {

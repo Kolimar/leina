@@ -63,8 +63,15 @@ export async function handleServe(rest: string[]): Promise<void> {
     );
   }
 
-  const assetsRoot = join(entryAssetsRootFrom(process.argv[1] ?? "."), "graph-ui");
-  const listener = createRouter({ token: config.token, assetsRoot });
+  // The frontend (assets/graph-ui) is served scoped tight to its own subdir; the vendored
+  // vis-network.min.js lives one level up (assets/vis-network, the exact same copy
+  // `graph visualize`/`audit` inline) and is exposed as a second, narrower static root
+  // rather than duplicating the ~700KB bundle inside graph-ui (design §6 "vanilla SIN
+  // build" — reuse, don't vendor twice).
+  const generalAssetsRoot = entryAssetsRootFrom(process.argv[1] ?? ".");
+  const assetsRoot = join(generalAssetsRoot, "graph-ui");
+  const visNetworkRoot = join(generalAssetsRoot, "vis-network");
+  const listener = createRouter({ token: config.token, assetsRoot, visNetworkRoot });
   const server = createServer(listener);
 
   // A single persistent error handler: while starting up it rejects the listen promise

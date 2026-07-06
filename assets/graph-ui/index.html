@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>leina · graph explorer</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header id="topbar">
+  <h1>leina graph explorer</h1>
+  <select id="project-select" aria-label="proyecto"></select>
+  <form id="search-form">
+    <input id="search-input" type="text" placeholder="buscar nodo (id, label, ruta)…" autocomplete="off" />
+  </form>
+  <div class="spacer"></div>
+  <button id="labels-toggle" type="button">ocultar etiquetas</button>
+  <button id="fit-btn" type="button">encuadrar</button>
+  <span id="status" role="status"></span>
+</header>
+
+<div id="layout">
+  <aside id="sidebar">
+    <section>
+      <h2>tipos de nodo</h2>
+      <div id="kind-chips" class="chips"></div>
+    </section>
+    <section>
+      <h2>tipos de arista</h2>
+      <div id="relation-chips" class="chips"></div>
+    </section>
+    <section>
+      <h2>carpetas</h2>
+      <div id="tree" class="tree"></div>
+    </section>
+  </aside>
+
+  <main id="canvas-wrap">
+    <div id="net"></div>
+    <div id="empty-hint">Busca un nodo o explora el árbol de carpetas para empezar.</div>
+  </main>
+
+  <aside id="drawer">
+    <button id="drawer-close" class="x" type="button" title="cerrar">&times;</button>
+    <h2 id="drawer-title"></h2>
+    <div id="drawer-badges" class="badges"></div>
+    <div class="field">
+      <div class="k">archivo</div>
+      <div id="drawer-file" class="v"></div>
+    </div>
+    <div id="drawer-sig" class="field" hidden>
+      <div class="k">firma</div>
+      <pre id="drawer-sig-text"></pre>
+    </div>
+    <details open>
+      <summary>quién lo declara</summary>
+      <div id="declared-by-list" class="ref-list"></div>
+    </details>
+    <details open>
+      <summary>quién lo invoca</summary>
+      <div id="invoked-by-list" class="ref-list"></div>
+    </details>
+    <details open>
+      <summary>últimas memorias</summary>
+      <div id="memories-list" class="memory-list"></div>
+    </details>
+  </aside>
+</div>
+
+<script src="/vendor/vis-network.min.js"></script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

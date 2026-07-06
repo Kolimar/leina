@@ -1,0 +1,144 @@
+/* assets/graph-ui/style.css — dark theme matching the offline `graph visualize` export
+ * (application/graph/html-export.ts's inlined <style>), so the two graph views feel
+ * like the same product. No build step: served verbatim by `leina graph serve`. */
+
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --line: #30363d;
+  --txt: #e6edf3;
+  --dim: #8b949e;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--txt);
+  font: 13px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+button {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--txt);
+  border-radius: 7px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+button:hover { border-color: #58a6ff; }
+
+input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--txt);
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+select {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--txt);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+#topbar h1 { font-size: 14px; margin: 0; white-space: nowrap; }
+#topbar .spacer { flex: 1; }
+#status { color: var(--dim); font-size: 12px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+#layout {
+  position: absolute;
+  top: 45px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+}
+
+#sidebar {
+  width: 260px;
+  flex: 0 0 auto;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  padding: 10px 12px;
+}
+#sidebar section { margin-bottom: 16px; }
+#sidebar h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 0 0 6px; }
+
+.chips { display: flex; flex-direction: column; gap: 2px; }
+.chip { display: flex; align-items: center; gap: 7px; font-size: 12px; padding: 2px 0; cursor: pointer; }
+.chip .sw { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; background: var(--dim); }
+.chip .ct { margin-left: auto; color: var(--dim); }
+
+.tree-node { margin-left: 0; }
+.tree-children { margin-left: 12px; }
+.tree-row { font-size: 12px; padding: 2px 4px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-row:hover { background: rgba(255,255,255,.06); }
+.tree-folder { color: var(--txt); font-weight: 600; }
+.tree-folder.active { background: rgba(88,166,255,.18); color: #79c0ff; }
+.tree-file { color: var(--dim); }
+
+#canvas-wrap { position: relative; flex: 1; }
+#net { position: absolute; inset: 0; }
+#empty-hint {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--dim);
+  font-size: 13px;
+  text-align: center;
+  max-width: 320px;
+  pointer-events: none;
+}
+
+#drawer {
+  width: 340px;
+  flex: 0 0 auto;
+  overflow: auto;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  padding: 16px 18px;
+  position: relative;
+  transform: translateX(100%);
+  transition: transform .18s ease;
+}
+#drawer.open { transform: translateX(0); }
+#drawer .x { position: absolute; top: 10px; right: 12px; padding: 0; border: none; background: none; color: var(--dim); font-size: 20px; line-height: 1; }
+#drawer h2 { font-size: 15px; margin: 2px 36px 2px 0; word-break: break-word; }
+.badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 14px; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
+.badge-usable { border-color: #3fb950; color: #3fb950; }
+.badge-warning { border-color: #d29922; color: #d29922; }
+.badge-danger { border-color: #ff7b72; color: #ff7b72; }
+.badge-unknown { border-color: var(--line); color: var(--dim); }
+
+.field { margin-bottom: 11px; }
+.field .k { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+.field .v { font-size: 13px; word-break: break-word; }
+#drawer pre { background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 9px 10px; font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; }
+
+details { margin-top: 10px; }
+summary { cursor: pointer; color: var(--dim); font-size: 12px; }
+.ref-list, .memory-list { font-size: 12px; margin-top: 6px; }
+.ref-row { padding: 3px 0; cursor: pointer; border-bottom: 1px dashed var(--line); }
+.ref-row:hover { color: #79c0ff; }
+.empty { color: var(--dim); font-size: 12px; padding: 3px 0; }
+
+.memory-item { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.memory-item .memory-text { margin-top: 4px; white-space: pre-wrap; word-break: break-word; color: var(--txt); }

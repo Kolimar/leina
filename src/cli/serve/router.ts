@@ -17,7 +17,19 @@ export interface RouterDeps {
   token?: string;
   /** Root dir the frontend (assets/graph-ui) is served from. */
   assetsRoot: string;
+  /**
+   * Root dir the vendored `vis-network.min.js` lives in (assets/vis-network — the same
+   * single copy `graph visualize`/`audit` already reuse). Optional so router tests that
+   * don't care about the UI's third-party dependency don't need to wire it up; when
+   * absent, the one path that would serve it (`/vendor/vis-network.min.js`) just 404s.
+   * Kept OUTSIDE `assetsRoot` on purpose: `assetsRoot` stays scoped tight to
+   * `assets/graph-ui` (design §7), so this is a second, narrower static root rather than
+   * widening the traversal-guarded surface of the main one.
+   */
+  visNetworkRoot?: string;
 }
+
+const VIS_NETWORK_ROUTE = "/vendor/vis-network.min.js";
 
 const DEFAULT_MEMORIES_LIMIT = 10;
 
@@ -128,6 +140,15 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, deps: RouterDe
 
   if (url.pathname.startsWith("/api/")) {
     routeApi(url.pathname, url, res);
+    return;
+  }
+
+  if (url.pathname === VIS_NETWORK_ROUTE) {
+    if (!deps.visNetworkRoot) {
+      sendApiError(res, 404, "NOT_FOUND", "no such asset");
+      return;
+    }
+    serveStatic(deps.visNetworkRoot, "/vis-network.min.js", res);
     return;
   }
 
