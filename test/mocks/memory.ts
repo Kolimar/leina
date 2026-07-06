@@ -155,6 +155,16 @@ export class MockMemoryRepository implements MemoryRepository {
     return [];
   }
 
+  recentAnchoredObservations(_nodeId: string, _limit: number): {
+    observationId: string;
+    role: string;
+    anchorLabel?: string;
+    anchorFile?: string;
+    updatedAt: number;
+  }[] {
+    return [];
+  }
+
   suggestTopicKeyWithMatches(
     title: string,
     _type: string,

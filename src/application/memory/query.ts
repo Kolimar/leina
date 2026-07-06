@@ -32,6 +32,61 @@ export function anchorsFor(store: MemoryRepository, nodeId: string): AnchorRef[]
 }
 
 // ---------------------------------------------------------------------------
+// latestMemoriesForNode — "recent memories" panel for a single graph node.
+// Composes recentAnchoredObservations() (ordering/limit) with anchorsForObservation()
+// + deriveMemoryState()/classify() (drift badge) so callers get ready-to-render items
+// instead of raw rows. Same shape of composition as getVerifiedContext() below, but
+// keyed by node instead of by search query.
+// ---------------------------------------------------------------------------
+
+export interface NodeMemory {
+  observationId: string;
+  title: string;
+  content: string;
+  updatedAt: number;
+  role: string;
+  anchorLabel?: string;
+  nature: Nature;
+  state: MemoryState;
+  reason: string;
+  verdict: Verdict;
+}
+
+export function latestMemoriesForNode(
+  store: MemoryRepository,
+  nodeId: string,
+  verify: NodeVerifier,
+  limit = 10,
+): NodeMemory[] {
+  const recent = store.recentAnchoredObservations(nodeId, limit);
+  const items: NodeMemory[] = [];
+  for (const r of recent) {
+    const obs = store.get(r.observationId);
+    // Defensive: the anchor row survives even if the observation it points at is gone
+    // (e.g. hard-deleted out of band) — skip rather than surface a broken entry.
+    if (!obs) continue;
+    const anchors = store.anchorsForObservation(r.observationId);
+    const { state, reason } = deriveMemoryState(anchors, verify);
+    const nature = natureOf(obs.type);
+    const { verdict } = classify(state, nature);
+    const item: NodeMemory = {
+      observationId: r.observationId,
+      title: obs.title,
+      content: obs.content,
+      updatedAt: r.updatedAt,
+      role: r.role,
+      nature,
+      state,
+      reason,
+      verdict,
+    };
+    if (r.anchorLabel !== undefined) item.anchorLabel = r.anchorLabel;
+    items.push(item);
+  }
+  return items;
+}
+
+// ---------------------------------------------------------------------------
 // Drift detection — a memory is a verifiable hypothesis against the graph.
 // State and nature are DERIVED at read time (never persisted): they depend on the
 // current graph, so storing them would itself go stale.

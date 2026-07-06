@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQLiteMemoryRepository as MemoryStore } from "../src/infrastructure/sqlite/memory-repository.ts";
 import type { AnchorResolver } from "../src/infrastructure/sqlite/memory-repository.ts";
-import { getVerifiedContext } from "../src/application/memory/query.ts";
+import { getVerifiedContext, latestMemoriesForNode } from "../src/application/memory/query.ts";
 import type { NodeVerifier } from "../src/application/memory/query.ts";
 import { ensureMemorySchema, MEMORY_SCHEMA_VERSION, LIKE_DDL } from "../src/infrastructure/sqlite/schema.ts";
 
@@ -258,6 +258,95 @@ test("(drift-i) verifier graph error → unverified + graphError, never contradi
     assert.equal(ctx.warning[0]!.state, "unverified");
     assert.match(ctx.warning[0]!.reason, /graph unavailable/, "reason must name the graph-read failure");
     assert.ok(ctx.graphError, "top-level graphError must be set so the tool can flag degraded verification");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- latestMemoriesForNode — "recent memories" composition for a graph node ------
+
+test("(latest-a) latestMemoriesForNode: composes recentAnchoredObservations + drift badge", () => {
+  const dir = tmpDir();
+  const store = new MemoryStore(join(dir, "memory.db"), "test_project", resolverWithHash("H1"));
+  try {
+    store.save({
+      title: "UserService caches sessions",
+      content: "UserService owns the session cache.",
+      type: "architecture",
+      anchors: ["UserService"],
+    });
+    const verify: NodeVerifier = () => ({ exists: true, currentHash: "H1" });
+    const items = latestMemoriesForNode(store, NODE_ID, verify, 10);
+
+    assert.equal(items.length, 1);
+    assert.equal(items[0]!.title, "UserService caches sessions");
+    assert.equal(items[0]!.content, "UserService owns the session cache.");
+    assert.equal(items[0]!.anchorLabel, "UserService");
+    assert.equal(items[0]!.state, "active");
+    assert.equal(items[0]!.verdict, "usable");
+    assert.equal(items[0]!.nature, "descriptive");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(latest-b) latestMemoriesForNode: node with no anchors → empty array, not an error", () => {
+  const dir = tmpDir();
+  const store = new MemoryStore(join(dir, "memory.db"), "test_project", resolverWithHash("H1"));
+  try {
+    store.save({
+      title: "Free-floating note",
+      content: "no anchors at all",
+      type: "discovery",
+    });
+    const verify: NodeVerifier = () => ({ exists: true, currentHash: "H1" });
+    assert.deepEqual(latestMemoriesForNode(store, NODE_ID, verify, 10), []);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(latest-c) latestMemoriesForNode: drifted anchor surfaces a warning badge", () => {
+  const dir = tmpDir();
+  const store = new MemoryStore(join(dir, "memory.db"), "test_project", resolverWithHash("H1"));
+  try {
+    store.save({
+      title: "UserService caches sessions",
+      content: "UserService owns the session cache.",
+      type: "architecture",
+      anchors: ["UserService"],
+    });
+    // Current file hash differs from the save-time hash → stale.
+    const verify: NodeVerifier = () => ({ exists: true, currentHash: "H2" });
+    const items = latestMemoriesForNode(store, NODE_ID, verify, 10);
+
+    assert.equal(items.length, 1);
+    assert.equal(items[0]!.state, "stale");
+    assert.equal(items[0]!.verdict, "warning");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(latest-d) latestMemoriesForNode: limit is forwarded to the underlying query", () => {
+  const dir = tmpDir();
+  const store = new MemoryStore(join(dir, "memory.db"), "test_project", resolverWithHash("H1"));
+  try {
+    for (let i = 0; i < 5; i++) {
+      store.save({
+        title: `Note ${i}`,
+        content: `content ${i}`,
+        type: "architecture",
+        anchors: ["UserService"],
+      });
+    }
+    const verify: NodeVerifier = () => ({ exists: true, currentHash: "H1" });
+    const items = latestMemoriesForNode(store, NODE_ID, verify, 2);
+    assert.equal(items.length, 2, "limit caps the number of composed items");
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });

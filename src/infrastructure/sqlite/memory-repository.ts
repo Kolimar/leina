@@ -1231,6 +1231,42 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     }));
   }
 
+  // Up to `limit` LIVE observations anchored to `nodeId`, newest first. JOINs
+  // memory_anchors to observations to sort/limit by updated_at — anchorsForNode alone
+  // carries no timestamp and is deliberately left unordered/unbounded for its call sites.
+  recentAnchoredObservations(nodeId: string, limit: number): {
+    observationId: string;
+    role: string;
+    anchorLabel?: string;
+    anchorFile?: string;
+    updatedAt: number;
+  }[] {
+    interface Row {
+      observation_id: string;
+      role: string;
+      anchor_label: string | null;
+      anchor_file: string | null;
+      updated_at: number;
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT ma.observation_id, ma.role, ma.anchor_label, ma.anchor_file, o.updated_at
+           FROM memory_anchors ma
+           JOIN observations o ON o.id = ma.observation_id
+          WHERE ma.node_id = ? AND o.superseded_by IS NULL
+          ORDER BY o.updated_at DESC
+          LIMIT ?`,
+      )
+      .all(nodeId, limit) as unknown as Row[];
+    return rows.map((r) => ({
+      observationId: r.observation_id,
+      role: r.role,
+      anchorLabel: r.anchor_label ?? undefined,
+      anchorFile: r.anchor_file ?? undefined,
+      updatedAt: r.updated_at,
+    }));
+  }
+
   // ---- suggestTopicKeyWithMatches -------------------------------------------
 
   // Pure read. Normalizes title+type to a topic_key candidate (via the static

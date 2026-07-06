@@ -162,6 +162,20 @@ export interface MemoryRepository {
     anchorHash?: string;
   }[];
 
+  /**
+   * Return up to `limit` LIVE observations anchored to `nodeId`, most recently
+   * updated first (`observations.updated_at DESC`). Unlike `anchorsForNode` (unordered,
+   * unbounded — kept intact for its existing call sites), this is the query behind
+   * "recent memories for this node" panels (e.g. `graph serve`'s node detail view).
+   */
+  recentAnchoredObservations(nodeId: string, limit: number): {
+    observationId: string;
+    role: string;
+    anchorLabel?: string;
+    anchorFile?: string;
+    updatedAt: number;
+  }[];
+
   // ---- topic-key suggestion -----------------------------------------------
 
   /** Suggest a normalised topic_key and rank near-matches from existing live keys. */

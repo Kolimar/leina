@@ -400,6 +400,29 @@ export class GraphStore implements GraphRepository {
     return { nodes, edges, byConfidence };
   }
 
+  // Node counts grouped by `kind` (function/class/service/...). Nodes without a kind
+  // (kind is nullable) are bucketed under "unknown" rather than dropped, so the totals
+  // in statsByKind() + missing-kind count still add up to stats().nodes.
+  statsByKind(): Record<string, number> {
+    const rows = this.db
+      .prepare("SELECT kind, COUNT(*) c FROM nodes GROUP BY kind")
+      .all() as unknown as { kind: string | null; c: number }[];
+    const byKind: Record<string, number> = {};
+    for (const r of rows) byKind[r.kind ?? "unknown"] = r.c;
+    return byKind;
+  }
+
+  // Edge counts grouped by `relation` (calls/imports/inherits/...). relation is NOT NULL
+  // on the edges table, so unlike statsByKind() there is no "unknown" bucket here.
+  statsByRelation(): Record<string, number> {
+    const rows = this.db
+      .prepare("SELECT relation, COUNT(*) c FROM edges GROUP BY relation")
+      .all() as unknown as { relation: string; c: number }[];
+    const byRelation: Record<string, number> = {};
+    for (const r of rows) byRelation[r.relation] = r.c;
+    return byRelation;
+  }
+
   updateCommunities(assignments: { id: string; community: number }[]): void {
     const stmt = this.db.prepare("UPDATE nodes SET community=? WHERE id=?");
     this.db.exec("BEGIN");

@@ -391,6 +391,23 @@ export class OverlayGraphRepository implements GraphRepository {
     return { nodes: nodes.length, edges: edges.length, byConfidence };
   }
 
+  statsByKind(): Record<string, number> {
+    const byKind: Record<string, number> = {};
+    for (const n of this.allNodes()) {
+      const kind = n.kind ?? "unknown";
+      byKind[kind] = (byKind[kind] ?? 0) + 1;
+    }
+    return byKind;
+  }
+
+  statsByRelation(): Record<string, number> {
+    const byRelation: Record<string, number> = {};
+    for (const e of this.allEdges()) {
+      byRelation[e.relation] = (byRelation[e.relation] ?? 0) + 1;
+    }
+    return byRelation;
+  }
+
   toNodeLink(directed = true): NodeLinkGraph {
     const nodes = this.allNodes();
     const edges = this.allEdges();
@@ -506,6 +523,23 @@ export class SyntheticSinkOverlay implements GraphRepository {
       byConfidence[e.confidence] = (byConfidence[e.confidence] ?? 0) + 1;
     }
     return { nodes: nodes.length, edges: edges.length, byConfidence };
+  }
+
+  statsByKind(): Record<string, number> {
+    const byKind: Record<string, number> = {};
+    for (const n of this.allNodes()) {
+      const kind = n.kind ?? "unknown";
+      byKind[kind] = (byKind[kind] ?? 0) + 1;
+    }
+    return byKind;
+  }
+
+  statsByRelation(): Record<string, number> {
+    const byRelation: Record<string, number> = {};
+    for (const e of this.allEdges()) {
+      byRelation[e.relation] = (byRelation[e.relation] ?? 0) + 1;
+    }
+    return byRelation;
   }
 
   toNodeLink(directed = true): NodeLinkGraph {

@@ -71,6 +71,10 @@ export interface GraphRepository {
   degree(id: string): number;
   /** Aggregate statistics for the stored graph. */
   stats(): GraphStats;
+  /** Node counts grouped by `kind` (missing kind bucketed under "unknown"). */
+  statsByKind(): Record<string, number>;
+  /** Edge counts grouped by `relation`. */
+  statsByRelation(): Record<string, number>;
   /** Serialize the graph in node-link format (compatible with networkx). */
   toNodeLink(directed?: boolean): NodeLinkGraph;
   /**

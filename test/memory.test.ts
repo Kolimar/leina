@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { SQLiteMemoryRepository as MemoryStore } from "../src/infrastructure/sqlite/memory-repository.ts";
 
 // ---- helpers ----------------------------------------------------------------
@@ -608,6 +609,95 @@ test("(h) anchors resolve to real node ids with anchor_file; unresolved keep the
     assert.equal(onGhost.length, 1, "unresolved anchor must still be stored under its raw label");
     assert.equal(onGhost[0]!.observationId, observation.id);
     assert.equal(onGhost[0]!.anchorFile, undefined, "unresolved anchor has no anchor_file");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- recentAnchoredObservations: ordered/limited "latest memories" for a node ----
+
+test("(recent-1) recentAnchoredObservations: newest first, respects limit", () => {
+  const dir = join(tmpdir(), `cg-mem-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(dir, { recursive: true });
+  const dbPath = join(dir, "memory.db");
+  const resolver = () => [{ nodeId: "n1", sourceFile: "src/a.ts" }];
+  const store = new MemoryStore(dbPath, "test_project", resolver);
+  try {
+    const first = store.save({
+      title: "First note", content: "oldest", type: "architecture", anchors: ["Anything"],
+    });
+    const second = store.save({
+      title: "Second note", content: "middle", type: "architecture", anchors: ["Anything"],
+    });
+    const third = store.save({
+      title: "Third note", content: "newest", type: "architecture", anchors: ["Anything"],
+    });
+
+    // Stamp deterministic, well-spaced updated_at values directly (same-millisecond
+    // saves in a fast test run would otherwise make ORDER BY updated_at DESC a coin flip).
+    const raw = new DatabaseSync(dbPath);
+    try {
+      raw.prepare("UPDATE observations SET updated_at=? WHERE id=?").run(1000, first.observation.id);
+      raw.prepare("UPDATE observations SET updated_at=? WHERE id=?").run(2000, second.observation.id);
+      raw.prepare("UPDATE observations SET updated_at=? WHERE id=?").run(3000, third.observation.id);
+    } finally {
+      raw.close();
+    }
+
+    const all = store.recentAnchoredObservations("n1", 10);
+    assert.deepEqual(
+      all.map((a) => a.observationId),
+      [third.observation.id, second.observation.id, first.observation.id],
+      "most recently updated observation first",
+    );
+    assert.equal(all[0]!.updatedAt, 3000);
+
+    const limited = store.recentAnchoredObservations("n1", 2);
+    assert.deepEqual(
+      limited.map((a) => a.observationId),
+      [third.observation.id, second.observation.id],
+      "limit caps the returned rows to the N most recent",
+    );
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(recent-2) recentAnchoredObservations: unknown node id returns empty", () => {
+  const { store, dir } = tmpStore();
+  try {
+    assert.deepEqual(store.recentAnchoredObservations("nope", 10), []);
+  } finally {
+    cleanup(store, dir);
+  }
+});
+
+test("(recent-3) recentAnchoredObservations: superseded observations are excluded", () => {
+  const dir = join(tmpdir(), `cg-mem-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(dir, { recursive: true });
+  const resolver = () => [{ nodeId: "n1", sourceFile: "src/a.ts" }];
+  const store = new MemoryStore(join(dir, "memory.db"), "test_project", resolver);
+  try {
+    store.save({
+      title: "Cache policy",
+      content: "v1",
+      type: "decision",
+      topicKey: "cache/policy",
+      anchors: ["Anything"],
+    });
+    const { observation: latest } = store.save({
+      title: "Cache policy",
+      content: "v2",
+      type: "decision",
+      topicKey: "cache/policy",
+      anchors: ["Anything"],
+    });
+
+    const recent = store.recentAnchoredObservations("n1", 10);
+    assert.equal(recent.length, 1, "only the live (non-superseded) revision is returned");
+    assert.equal(recent[0]!.observationId, latest.id);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });

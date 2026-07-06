@@ -2,7 +2,7 @@
 // (build / refresh / status / stats / affected / path / query) in src/cli/handlers/graph.ts.
 // Run: node --no-warnings --experimental-strip-types --test test/graph-cli.test.ts
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -18,11 +18,17 @@ interface RunResult {
   code: number;
 }
 
+// `build`/`refresh` opportunistically upsert into the global project registry
+// (~/.leina/projects.json). Sandbox LEINA_HOME so these CLI-integration tests never
+// touch the developer's real global state.
+const sandboxHome = mkdtempSync(join(tmpdir(), "leina-graphcli-home-"));
+after(() => rmSync(sandboxHome, { recursive: true, force: true }));
+
 function runCli(args: string[]): RunResult {
   const r = spawnSync(
     process.execPath,
     ["--no-warnings", "--experimental-strip-types", CLI, ...args],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: { ...process.env, LEINA_HOME: sandboxHome } },
   );
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", code: r.status ?? 1 };
 }

@@ -132,6 +132,60 @@ test("stats aggregates counts by confidence", () => {
   }
 });
 
+test("statsByKind: node counts grouped by kind", () => {
+  const { store, dir } = tmpStore();
+  try {
+    store.addNodes([
+      node("f1", "fn1", { kind: "function" }),
+      node("f2", "fn2", { kind: "function" }),
+      node("c1", "C1", { kind: "class" }),
+    ]);
+    const byKind = store.statsByKind();
+    assert.equal(byKind.function, 2);
+    assert.equal(byKind.class, 1);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("statsByKind: nodes without a kind are bucketed under 'unknown'", () => {
+  const { store, dir } = tmpStore();
+  try {
+    const noKind = { id: "u1", label: "U1", fileType: "code", sourceFile: "u.ts" } as GraphNode;
+    store.addNodes([noKind, node("f1", "fn1", { kind: "function" })]);
+    const byKind = store.statsByKind();
+    assert.equal(byKind.unknown, 1);
+    assert.equal(byKind.function, 1);
+    assert.equal(
+      Object.values(byKind).reduce((a, b) => a + b, 0),
+      store.stats().nodes,
+      "statsByKind totals must add up to stats().nodes",
+    );
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("statsByRelation: edge counts grouped by relation", () => {
+  const { store, dir } = tmpStore();
+  try {
+    store.addNodes([node("a", "A"), node("b", "B"), node("c", "C")]);
+    store.addEdges([
+      edge("a", "b", { relation: "calls" }),
+      edge("b", "c", { relation: "calls" }),
+      edge("a", "c", { relation: "imports" }),
+    ]);
+    const byRelation = store.statsByRelation();
+    assert.equal(byRelation.calls, 2);
+    assert.equal(byRelation.imports, 1);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("clear empties nodes and edges", () => {
   const { store, dir } = tmpStore();
   try {

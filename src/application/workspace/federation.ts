@@ -212,6 +212,16 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     return this.hostRepo.anchorsForObservation(observationId);
   }
 
+  recentAnchoredObservations(nodeId: string, limit: number): {
+    observationId: string;
+    role: string;
+    anchorLabel?: string;
+    anchorFile?: string;
+    updatedAt: number;
+  }[] {
+    return this.hostRepo.recentAnchoredObservations(nodeId, limit);
+  }
+
   // ---- Topic suggestion → host repo ---------------------------------------
 
   suggestTopicKeyWithMatches(

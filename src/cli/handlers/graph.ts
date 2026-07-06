@@ -11,6 +11,8 @@ import { openGraphRepo as openStore, openFreshStore, openEventSink, buildDefault
 import { makeLeinaEvent } from "../../domain/events/model.ts";
 import { emitEvent } from "../../application/events/emit.ts";
 import { fail } from "../io.ts";
+import { deriveProjectKey } from "../../application/project/detect-key.ts";
+import { recordProject } from "../../infrastructure/config/project-registry-store.ts";
 
 
 // `build --profile` — stage timings for deciding where incremental work pays off.
@@ -25,6 +27,19 @@ function printBuildProfile(t: import("../../application/graph/build.ts").BuildTi
   console.log(`  persist          ${String(t.persistMs).padStart(6)}ms`);
   console.log(`  communities      ${String(t.communitiesMs).padStart(6)}ms`);
   console.log(`  manifest         ${String(t.manifestMs).padStart(6)}ms`);
+}
+
+// Opportunistic upsert into the global project registry (~/.leina/projects.json), the
+// data source for the `graph serve` project selector. Fail-open: project-key ambiguity
+// or a registry write failure must never fail the build/refresh command itself.
+function recordProjectBuild(root: string): void {
+  try {
+    const resolved = resolvePath(root);
+    const projectKey = deriveProjectKey(resolved).key;
+    recordProject({ projectKey, root: resolved, lastBuild: Date.now() });
+  } catch {
+    // best-effort bookkeeping only
+  }
 }
 
 // Shared by handleBuild/handleRefresh: wait for (or reclaim) the foreground build lock;
@@ -75,6 +90,7 @@ export async function handleBuild(rest: string[]): Promise<void> {
         filesExtracted: report.filesExtracted,
       }),
     );
+    recordProjectBuild(root);
   } finally {
     try { rmSync(lockPath, { force: true }); } catch { /* best-effort */ }
   }
@@ -105,6 +121,7 @@ export async function handleRefresh(rest: string[]): Promise<void> {
         filesExtracted: report.filesExtracted,
       }),
     );
+    recordProjectBuild(root);
   } finally {
     try { rmSync(lockPath, { force: true }); } catch { /* best-effort */ }
   }

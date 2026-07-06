@@ -64,6 +64,23 @@ export class MockGraphRepository implements GraphRepository {
     return { nodes: this.nodes.length, edges: this.edges.length, byConfidence };
   }
 
+  statsByKind(): Record<string, number> {
+    const byKind: Record<string, number> = {};
+    for (const n of this.nodes) {
+      const kind = n.kind ?? "unknown";
+      byKind[kind] = (byKind[kind] ?? 0) + 1;
+    }
+    return byKind;
+  }
+
+  statsByRelation(): Record<string, number> {
+    const byRelation: Record<string, number> = {};
+    for (const e of this.edges) {
+      byRelation[e.relation] = (byRelation[e.relation] ?? 0) + 1;
+    }
+    return byRelation;
+  }
+
   toNodeLink(directed = true): NodeLinkGraph {
     return {
       directed,
