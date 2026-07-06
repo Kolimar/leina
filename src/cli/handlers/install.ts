@@ -40,7 +40,11 @@ import { devinHooksJson } from "../../application/install/devin-hooks.ts";
 import { grantCliExecPermission, grantMcpPermission, revokeCliExecPermission, revokeMcpPermission } from "../../application/install/permissions.ts";
 import { readConsentFlag, writeConsentFlag } from "../../application/install/consent.ts";
 import { runActivate, runDeactivate } from "../../application/activate.ts";
-import { writeProjectConfig } from "../../application/project/detect-key.ts";
+import {
+  deriveProjectKey,
+  readProjectConfig,
+  writeProjectConfig,
+} from "../../application/project/detect-key.ts";
 import {
   detectHosts,
   entryAssetsRoot,
@@ -203,16 +207,30 @@ export function handleInstallGlobal(rest: string[]): void {
 
 // --name: lock project name in .leina/config.json (committable). This is idempotent:
 // re-running init with the same --name overwrites with identical content.
+//
+// Without --name the key currently derived is pinned AUTOMATICALLY (unless one is
+// already locked). The key is otherwise re-derived on every invocation, so adding a
+// git remote after init used to silently re-home the project under a new key and
+// orphan its memories in the global DB. Pinning at init freezes the identity at the
+// moment the user opted in. Ambiguous/failed derivation → skip (previous behavior).
 function lockProjectName(
   project: string,
   nameArg: string | undefined,
   written: string[],
   failures: string[],
 ): void {
-  if (nameArg === undefined) return;
+  let name = nameArg?.trim();
+  if (name === undefined) {
+    if (readProjectConfig(project) !== null) return; // already locked — respect it
+    try {
+      name = deriveProjectKey(project).key;
+    } catch {
+      return; // AmbiguousProjectError etc. — no pin, same as before
+    }
+  }
   try {
-    writeProjectConfig(project, nameArg.trim());
-    written.push(".leina/config.json (project name locked)");
+    writeProjectConfig(project, name);
+    written.push(`.leina/config.json (project name locked: ${name})`);
   } catch (err) {
     failures.push(`.leina/config.json: ${errMsg(err)}`);
   }

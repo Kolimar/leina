@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [1.0.1] — 2026-07-06
 
 ### Fixed
+- Project keys no longer silently re-home when a git remote is added after `init`:
+  `init` now auto-pins the derived key in `.leina/config.json` (config-lock), and
+  `memory current-project`/`search`/`context` print an actionable hint when the
+  resolved key has no memories but a previously-derived key does (e.g. memories
+  saved under the dir-basename key before the remote existed), including the exact
+  `memory merge-projects` command to recover them. `--name` writes are now
+  merge-safe (sibling keys like `project_key_format` are preserved).
 - Graph source discovery now skips .NET build outputs (`obj/`, `bin/`): generated
   files (`*.g.cs`, `AssemblyInfo.cs`) were indexed as sources, inflating the file
   count and re-staling the graph after every `dotnet build`. The workspace

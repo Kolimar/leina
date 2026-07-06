@@ -17,7 +17,13 @@ import type {
   UpdateFields,
 } from "../../domain/memory/model.ts";
 import { makeId } from "../../domain/shared/id.ts";
-import { AmbiguousProjectError, deriveProjectKey } from "../../application/project/detect-key.ts";
+import {
+  AmbiguousProjectError,
+  deriveProjectKey,
+  deriveProjectKeyAlternates,
+} from "../../application/project/detect-key.ts";
+import { countLiveObservationsByKey } from "../../infrastructure/sqlite/memory-repository.ts";
+import { globalMemoryPath } from "../../infrastructure/install/share-paths.ts";
 import { memOpenGuarded, openEventSink } from "../wiring.ts";
 import { makeLeinaEvent } from "../../domain/events/model.ts";
 import { emitEvent } from "../../application/events/emit.ts";
@@ -130,6 +136,34 @@ function memUpdate(rest: string[], dir: string): void {
   }
 }
 
+// Orphan-key hint: the project key is re-derived on every invocation, so adding a git
+// remote (or renaming the folder) silently re-homes the project under a NEW key while
+// its memories stay under the old one — and every query comes back empty with no clue.
+// When the resolved key has zero live observations but a key from a *discarded*
+// detection step has some, print the exact remedy on stderr. Fail-open: a diagnostic
+// must never break the command it decorates.
+function warnIfOrphanKeys(dir: string): void {
+  try {
+    const det = deriveProjectKey(resolvePath(dir));
+    const alternates = deriveProjectKeyAlternates(resolvePath(dir), det.key);
+    if (alternates.length === 0) return;
+    const counts = countLiveObservationsByKey(globalMemoryPath(), [
+      det.key,
+      ...alternates.map((a) => a.key),
+    ]);
+    if ((counts.get(det.key) ?? 0) > 0) return;
+    const orphan = alternates.find((a) => (counts.get(a.key) ?? 0) > 0);
+    if (!orphan) return;
+    process.stderr.write(
+      `hint: project key '${det.key}' (via ${det.method}) has no memories, but ${counts.get(orphan.key)} live under '${orphan.key}' (via ${orphan.method}).\n` +
+        `      If this repo was renamed or its git remote changed, migrate them with:\n` +
+        `      leina memory merge-projects ${dir} --from ${orphan.key} --to ${det.key}\n`,
+    );
+  } catch {
+    // fail-open
+  }
+}
+
 function memSearch(rest: string[], dir: string): void {
   const query = rest.slice(2).filter((a) => !a.startsWith("--")).join(" ") || fail("memory search requires a query");
   const type = optFlag(rest, "--type", undefined) as ObservationType | undefined;
@@ -140,6 +174,7 @@ function memSearch(rest: string[], dir: string): void {
   close();
   if (hits.length === 0) {
     console.log(`No results for "${query}"`);
+    warnIfOrphanKeys(dir);
     return;
   }
   for (const h of hits) {
@@ -219,6 +254,7 @@ function memContext(rest: string[], dir: string): void {
     const tk = o.topicKey ? ` [${o.topicKey}]` : "";
     console.log(`  #${o.id} [${o.type}]${tk} ${o.title}`);
   }
+  if (sessions.length === 0 && observations.length === 0) warnIfOrphanKeys(dir);
 }
 
 function memSession(rest: string[], dir: string): void {
@@ -270,6 +306,7 @@ function memCurrentProject(_rest: string[], dir: string): void {
   console.log(`project_key: ${det.key}`);
   console.log(`method: ${det.method}`);
   if (det.rawName) console.log(`raw_name: ${det.rawName}`);
+  warnIfOrphanKeys(cpDir);
 }
 
 function memMergeProjects(rest: string[], dir: string): void {

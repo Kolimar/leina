@@ -192,7 +192,20 @@ export function readProjectConfig(cwd: string): { project_name: string } | null 
 export function writeProjectConfig(cwd: string, name: string): void {
   const dir = join(cwd, ".leina");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "config.json"), `${JSON.stringify({ project_name: name }, null, 2)  }\n`);
+  const cfgPath = join(dir, "config.json");
+  // Merge-safe: config.json may carry other keys (project_key_format, …) that a
+  // plain overwrite would silently drop. Malformed/absent existing content → fresh object.
+  let existing: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(readFileSync(cfgPath, "utf8")) as unknown;
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      existing = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // absent or malformed → start fresh
+  }
+  existing.project_name = name;
+  writeFileSync(cfgPath, `${JSON.stringify(existing, null, 2)}\n`);
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +355,45 @@ export function deriveProjectKey(cwd: string): ProjectDetection {
   // Step 4: dir-basename fallback
   const rawName = basename(resolved);
   return { key: normalizeProjectKey(rawName), method: "dir-basename", rawName };
+}
+
+/**
+ * Alternate keys this directory could have resolved to at an earlier point in
+ * its life (before a git remote existed, before a config lock, after a folder
+ * rename, …). Runs every detection step — not just the winning one — and
+ * returns the keys that differ from `winnerKey`, deduped, in detection order.
+ *
+ * Used to diagnose "orphaned" memories: observations stored in the global DB
+ * under a key this repo no longer resolves to. Never throws (child-git
+ * ambiguity and fs errors are skipped — this is a diagnostic, not a resolver).
+ */
+export function deriveProjectKeyAlternates(
+  cwd: string,
+  winnerKey: string,
+): { key: string; method: DetectionMethod }[] {
+  const resolved = resolve(cwd);
+  const seen = new Set<string>([winnerKey]);
+  const out: { key: string; method: DetectionMethod }[] = [];
+  const steps: (() => ProjectDetection | null)[] = [
+    () => detectFromConfig(resolved),
+    () => detectFromGitRemote(resolved),
+    () => detectFromGitRoot(resolved),
+    () => detectFromChildGit(resolved),
+    () => ({ key: normalizeProjectKey(basename(resolved)), method: "dir-basename" }),
+  ];
+  for (const step of steps) {
+    let det: ProjectDetection | null = null;
+    try {
+      det = step();
+    } catch {
+      // AmbiguousProjectError / fs errors → skip this candidate
+    }
+    if (det && !seen.has(det.key)) {
+      seen.add(det.key);
+      out.push({ key: det.key, method: det.method });
+    }
+  }
+  return out;
 }
 
 /**

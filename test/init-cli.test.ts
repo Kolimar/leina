@@ -12,8 +12,9 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeProjectKey } from "../src/application/project/detect-key.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
 
@@ -357,12 +358,50 @@ test("(i-name-b) init --name is idempotent (re-run with same name preserves file
   }
 });
 
-test("(i-name-c) init without --name does NOT write .leina/config.json", () => {
+test("(i-name-c) init without --name auto-pins the derived key in .leina/config.json", () => {
+  // The key is re-derived per invocation, so adding a git remote after init used to
+  // silently re-home the project and orphan its memories. init now freezes the key.
   const dir = tmpProject();
   try {
     runInit(dir, "--agent", "devin");
     const cfgPath = join(dir, ".leina", "config.json");
-    assert.ok(!existsSync(cfgPath), ".leina/config.json must NOT be written without --name");
+    assert.ok(existsSync(cfgPath), ".leina/config.json auto-written (key pinned at init)");
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+    assert.equal(cfg.project_name, normalizeProjectKey(basename(dir)), "pins the derived (dir-basename) key");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(i-name-d) init without --name respects an already-locked project_name", () => {
+  const dir = tmpProject();
+  try {
+    mkdirSync(join(dir, ".leina"), { recursive: true });
+    writeFileSync(
+      join(dir, ".leina", "config.json"),
+      `${JSON.stringify({ project_name: "pinned-before", project_key_format: "org/repo" }, null, 2)}\n`,
+    );
+    runInit(dir, "--agent", "devin");
+    const cfg = JSON.parse(readFileSync(join(dir, ".leina", "config.json"), "utf8"));
+    assert.equal(cfg.project_name, "pinned-before", "existing lock untouched");
+    assert.equal(cfg.project_key_format, "org/repo", "sibling config keys preserved");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(i-name-e) init --name preserves sibling keys in an existing config.json", () => {
+  const dir = tmpProject();
+  try {
+    mkdirSync(join(dir, ".leina"), { recursive: true });
+    writeFileSync(
+      join(dir, ".leina", "config.json"),
+      `${JSON.stringify({ project_key_format: "org/repo" }, null, 2)}\n`,
+    );
+    runInit(dir, "--agent", "devin", "--name", "explicit-name");
+    const cfg = JSON.parse(readFileSync(join(dir, ".leina", "config.json"), "utf8"));
+    assert.equal(cfg.project_name, "explicit-name");
+    assert.equal(cfg.project_key_format, "org/repo", "merge-safe write keeps project_key_format");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

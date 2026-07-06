@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeId } from "../src/domain/shared/id.ts";
-import { deriveProjectKey } from "../src/application/project/detect-key.ts";
+import { deriveProjectKey, normalizeProjectKey } from "../src/application/project/detect-key.ts";
 import { SQLiteMemoryRepository as MemoryStore } from "../src/infrastructure/sqlite/memory-repository.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
@@ -98,6 +98,79 @@ test("(WU-07c) current-project: config-lock wins", () => {
     assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
     assert.match(r.stdout, /project_key: locked-service/);
     assert.match(r.stdout, /method: config-lock/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// orphan-key hint — memories stored under a key this repo no longer resolves to
+// (e.g. a git remote added AFTER memories were saved under the dir-basename key)
+// ---------------------------------------------------------------------------
+
+test("(OK-1) current-project: hints when memories live under a discarded fallback key", () => {
+  const home = tmpHome();
+  const dir = tmpGitRepo("https://github.com/acme/renamed-svc.git");
+  try {
+    const env = { ...process.env, LEINA_HOME: home };
+    // Simulate memories saved BEFORE the remote existed: stored under the
+    // git-root/dir-basename key, which the remote now shadows.
+    const oldKey = normalizeProjectKey(basename(dir));
+    const store = new MemoryStore(join(home, "memory.db"), oldKey);
+    store.save({ title: "Old1", content: "C1", type: "manual" });
+    store.save({ title: "Old2", content: "C2", type: "manual" });
+    store.close();
+
+    const r = runCli(["memory", "current-project", dir], { env });
+    assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
+    assert.match(r.stdout, /project_key: renamed-svc/);
+    assert.match(r.stderr, /hint: project key 'renamed-svc' \(via git-remote\) has no memories, but 2 live under/);
+    assert.match(r.stderr, new RegExp(`--from ${oldKey} --to renamed-svc`));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(OK-2) search with zero hits: emits the orphan-key hint on stderr", () => {
+  const home = tmpHome();
+  const dir = tmpGitRepo("https://github.com/acme/renamed-svc.git");
+  try {
+    const env = { ...process.env, LEINA_HOME: home };
+    const oldKey = normalizeProjectKey(basename(dir));
+    const store = new MemoryStore(join(home, "memory.db"), oldKey);
+    store.save({ title: "Lost", content: "orphaned content", type: "manual" });
+    store.close();
+
+    const r = runCli(["memory", "search", dir, "orphaned"], { env });
+    assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
+    assert.match(r.stdout, /No results/);
+    assert.match(r.stderr, /hint: project key 'renamed-svc'/);
+    assert.match(r.stderr, /leina memory merge-projects/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(OK-3) no hint when the resolved key has live memories", () => {
+  const home = tmpHome();
+  const dir = tmpGitRepo("https://github.com/acme/renamed-svc.git");
+  try {
+    const env = { ...process.env, LEINA_HOME: home };
+    // Both keys have rows — the resolved key wins, no hint.
+    const globalPath = join(home, "memory.db");
+    const oldStore = new MemoryStore(globalPath, normalizeProjectKey(basename(dir)));
+    oldStore.save({ title: "Old", content: "C", type: "manual" });
+    oldStore.close();
+    const curStore = new MemoryStore(globalPath, "renamed-svc");
+    curStore.save({ title: "Current", content: "C", type: "manual" });
+    curStore.close();
+
+    const r = runCli(["memory", "current-project", dir], { env });
+    assert.equal(r.code, 0);
+    assert.doesNotMatch(r.stderr, /hint: project key/);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });

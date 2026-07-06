@@ -1439,3 +1439,42 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     return `${type}/${normalizeLabel(title).replaceAll("_", "-")}`;
   }
 }
+
+// ---------------------------------------------------------------------------
+// countLiveObservationsByKey — orphan-key diagnostic (standalone, read-only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Count LIVE (non-superseded) observations per project key in the global
+ * memory DB. Standalone on purpose: SQLiteMemoryRepository is scoped to a
+ * single project key, but the orphan-key hint needs to peek at keys this repo
+ * *used to* resolve to. Read-only open, no schema side effects; a missing DB
+ * (or any sqlite error) yields zero counts — this feeds a diagnostic hint and
+ * must never break the command using it.
+ */
+export function countLiveObservationsByKey(
+  dbPath: string,
+  keys: string[],
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  if (keys.length === 0 || !existsSync(dbPath)) return counts;
+  try {
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const placeholders = keys.map(() => "?").join(",");
+      const rows = db
+        .prepare(
+          `SELECT project_key, COUNT(*) AS n FROM observations
+            WHERE project_key IN (${placeholders}) AND superseded_by IS NULL
+            GROUP BY project_key`,
+        )
+        .all(...keys) as unknown as { project_key: string; n: number }[];
+      for (const r of rows) counts.set(r.project_key, r.n);
+    } finally {
+      db.close();
+    }
+  } catch {
+    // fail-open: diagnostic only
+  }
+  return counts;
+}
