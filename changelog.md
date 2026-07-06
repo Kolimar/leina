@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   saved under the dir-basename key before the remote existed), including the exact
   `memory merge-projects` command to recover them. `--name` writes are now
   merge-safe (sibling keys like `project_key_format` are preserved).
+- Graph source discovery now skips conventionally-named minified artifacts
+  (`*.min.js`, `*.min.css`, …): a vendored bundle used to flood the graph with
+  meaningless one-letter god nodes and re-stale it on every copy. The workspace
+  cross-repo scanner applies the same filter.
 - Graph source discovery now skips .NET build outputs (`obj/`, `bin/`): generated
   files (`*.g.cs`, `AssemblyInfo.cs`) were indexed as sources, inflating the file
   count and re-staling the graph after every `dotnet build`. The workspace

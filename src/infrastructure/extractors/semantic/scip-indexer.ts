@@ -603,7 +603,7 @@ function deriveDefinitionNodesAndEdges(
     // already-resolved chain's final descriptor name, which IS always the
     // real identifier (Rust's `normalizeImpl` already rewrote it to the
     // self-type where applicable), rather than emitting a blank label.
-    const name = sym.displayName || translated.chain.at(-1)?.name || sym.displayName;
+    const name = sym.displayName || translated.chain.at(-1)?.name || "";
     const label = kind === "function" || kind === "method" ? `${name}()` : name;
     const sourceLocation = locOf(defRanges.get(sym.symbol) ?? null);
     nodes.push({ id: translated.id, label, fileType: "code", sourceFile: doc.relativePath, sourceLocation, kind });

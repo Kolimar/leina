@@ -25,6 +25,16 @@ const IGNORE_DIRS = new Set([
   "bin",
 ]);
 
+// Minified bundles (vendored vis-network, copied dist artifacts) are generated,
+// unreadable code: indexing one floods the graph with meaningless one-letter god
+// nodes. Match by the conventional `.min.<ext>` infix regardless of extension.
+const MINIFIED_RE = /\.min\.[^.]+$/i;
+
+/** True for conventionally-named minified artifacts (`foo.min.js`, `lib.min.mjs`, …). */
+export function isMinifiedArtifact(name: string): boolean {
+  return MINIFIED_RE.test(name);
+}
+
 /**
  * Returns true for `.yml` and `.yaml` files (infra config sources).
  * `detectLang()` in detect.ts is NOT modified — it remains code-only.
@@ -54,6 +64,7 @@ export function listSourceFiles(root: string): string[] {
         // Include code files (detectLang) OR YAML infra config (detectIsConfig).
         // The fine-grained routing (which extractor handles what) is done later by
         // ext.supports() in build.ts — here we just discover candidates.
+        if (isMinifiedArtifact(e.name)) continue;
         if (detectLang(e.name) !== null || detectIsConfig(e.name)) found.push(full);
       }
     }

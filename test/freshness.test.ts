@@ -60,6 +60,30 @@ test("listSourceFiles: .NET build outputs (obj/, bin/) are not sources", () => {
   }
 });
 
+test("listSourceFiles: minified artifacts (*.min.js et al) are not sources", () => {
+  const dir = mkdtempSync(join(tmpdir(), "leina-fresh-"));
+  try {
+    mkdirSync(join(dir, "assets", "vis-network"), { recursive: true });
+    writeFileSync(join(dir, "app.ts"), "export const a = 1;\n");
+    writeFileSync(join(dir, "assets", "vis-network", "vis-network.min.js"), "var a=1;\n");
+    writeFileSync(join(dir, "assets", "styles.min.css"), "body{}\n");
+    // NOT minified-named — must survive the filter.
+    writeFileSync(join(dir, "assets", "admin.js"), "const b = 2;\n");
+
+    const files = listSourceFiles(dir);
+    assert.deepEqual(files.sort(), [join(dir, "app.ts"), join(dir, "assets", "admin.js")].sort());
+
+    // Re-copying a vendored bundle must not re-stale the graph.
+    writeManifest(dir, files);
+    writeFileSync(join(dir, "assets", "vis-network", "vis-network.min.js"), "var a=2;\n");
+    const r = isStale(dir);
+    assert.equal(r.stale, false);
+    assert.equal(r.reason, "fresh");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- isStale matrix ---------------------------------------------------------
 
 test("isStale: untouched manifest is fresh", () => {
