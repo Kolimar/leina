@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Kolimar/leina/actions/workflows/ci.yml/badge.svg)](https://github.com/Kolimar/leina/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@kolimar/leina)](https://www.npmjs.com/package/@kolimar/leina)
-[![node](https://img.shields.io/node/v/leina)](#requirements)
+[![node](https://img.shields.io/node/v/@kolimar/leina)](#requirements)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![docs: EN/ES](https://img.shields.io/badge/docs-EN%20%2F%20ES-4493f8)](https://kolimar.github.io/leina/)
 

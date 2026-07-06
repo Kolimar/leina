@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Kolimar/leina/actions/workflows/ci.yml/badge.svg)](https://github.com/Kolimar/leina/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@kolimar/leina)](https://www.npmjs.com/package/@kolimar/leina)
-[![node](https://img.shields.io/node/v/leina)](#requirements)
+[![node](https://img.shields.io/node/v/@kolimar/leina)](#requirements)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Leina** es una **L**inked **E**ngineering **I**ntelligence **N**etwork for **A**gents
