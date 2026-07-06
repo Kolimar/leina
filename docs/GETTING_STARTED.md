@@ -48,7 +48,7 @@ everything machine-wide in one shot — populates the skills/agents share, symli
 global dirs, writes the user-global `Exec` grant + hooks, and turns on **blanket mode**:
 
 ```bash
-npm install -g leina
+npm install -g @kolimar/leina
 leina setup              # the one-shot "magic" command
 ```
 
@@ -174,7 +174,7 @@ about the codebase — e.g. *"what's the blast radius of `GraphStore`?"* — and
 `leina affected` / `query` on its own.
 
 For Devin (cloud, runs in a VM), make `leina` available in the VM snapshot via
-Repository Setup → *Install Dependencies* (e.g. `npm install -g leina`). For a committed
+Repository Setup → *Install Dependencies* (e.g. `npm install -g @kolimar/leina`). For a committed
 graph, run `leina build . --json` and commit `.leina/graph.json` (the `.db` is
 git-ignored; the portable `graph.json` is what you commit) and `init` with `--freshness refuse`.
 
@@ -183,7 +183,7 @@ git-ignored; the portable `graph.json` is what you commit) and `init` with `--fr
 ## Troubleshooting
 
 **`command not found: leina`**
-- The global install isn't on PATH; reinstall with `npm install -g leina`, or use the
+- The global install isn't on PATH; reinstall with `npm install -g @kolimar/leina`, or use the
   clone form (`npm run cli -- <cmd>` from `<leina>`).
 
 **`No graph at <...>` when running a query**

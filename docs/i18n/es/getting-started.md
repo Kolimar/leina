@@ -51,7 +51,7 @@ directorios globales de Devin, escribe el grant `Exec` user-global + los hooks, 
 **modo blanket**:
 
 ```bash
-npm install -g leina
+npm install -g @kolimar/leina
 leina setup              # el comando "mágico" de un solo paso
 ```
 
@@ -178,7 +178,7 @@ hacia la CLI. Simplemente hacele preguntas a Devin sobre el código — por ejem
 blast radius de `GraphStore`?"* — y va a correr `leina affected` / `query` por su cuenta.
 
 Para Devin (cloud, corre en una VM), hacé que `leina` esté disponible en el snapshot de la VM
-vía Repository Setup → *Install Dependencies* (por ejemplo `npm install -g leina`). Para un
+vía Repository Setup → *Install Dependencies* (por ejemplo `npm install -g @kolimar/leina`). Para un
 grafo commiteado, corré `leina build . --json` y commiteá `.leina/graph.json` (el `.db` está
 git-ignored; el `graph.json` portable es lo que se commitea) e inicializá con
 `init` con `--freshness refuse`.
@@ -188,7 +188,7 @@ git-ignored; el `graph.json` portable es lo que se commitea) e inicializá con
 ## Solución de problemas
 
 **`command not found: leina`**
-- La instalación global no está en el PATH; reinstalá con `npm install -g leina`, o usá la
+- La instalación global no está en el PATH; reinstalá con `npm install -g @kolimar/leina`, o usá la
   forma de clon (`npm run cli -- <cmd>` desde `<leina>`).
 
 **`No graph at <...>` al correr una consulta**

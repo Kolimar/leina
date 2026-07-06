@@ -1,7 +1,7 @@
 # leina
 
 [![CI](https://github.com/Kolimar/leina/actions/workflows/ci.yml/badge.svg)](https://github.com/Kolimar/leina/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/leina)](https://www.npmjs.com/package/leina)
+[![npm](https://img.shields.io/npm/v/@kolimar/leina)](https://www.npmjs.com/package/@kolimar/leina)
 [![node](https://img.shields.io/node/v/leina)](#requirements)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![docs: EN/ES](https://img.shields.io/badge/docs-EN%20%2F%20ES-4493f8)](https://kolimar.github.io/leina/)
@@ -68,7 +68,7 @@ matters most. The two are complementary; this is the graph half.
 
 ```bash
 # use it anywhere — installs the `leina` binary on your PATH
-npm install -g leina
+npm install -g @kolimar/leina
 
 # or, working from a clone (contributors / latest unreleased code):
 npm install
@@ -105,7 +105,7 @@ actually resolve from.
 
 ```bash
 # These examples use the clone/contributor form `npm run cli -- <command>`.
-# If you ran `npm install -g leina`, drop the prefix and call `leina <command>`.
+# If you ran `npm install -g @kolimar/leina`, drop the prefix and call `leina <command>`.
 #
 # ── Interactive console ─────────────────────────────────────────────────────
 # Everything below is also available through menus: install/update (pick asset

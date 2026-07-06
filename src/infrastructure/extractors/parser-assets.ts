@@ -134,7 +134,7 @@ export function parserAssetsAdvice(report: ParserAssetsReport): string {
     `leina's bundled parser assets are incomplete: ${report.detail}.`,
     "These are plain files vendored under assets/wasm/ (web-tree-sitter itself still",
     "resolves from node_modules) — a partial or corrupted install is the usual cause.",
-    "Reinstall the package (npm i -g leina, or your package manager's equivalent) and",
+    "Reinstall the package (npm i -g @kolimar/leina, or your package manager's equivalent) and",
     "re-run `leina doctor` to confirm.",
   ].join("\n");
 }

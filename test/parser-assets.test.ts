@@ -66,7 +66,7 @@ test("(pa-b1) advice names the problem and the reinstall remedy", () => {
     detail: "web-tree-sitter does not resolve; assets/wasm/ does not exist",
   });
   assert.match(advice, /web-tree-sitter does not resolve/);
-  assert.match(advice, /npm i -g leina/);
+  assert.match(advice, /npm i -g @kolimar\/leina/);
   assert.match(advice, /leina doctor/);
 });
 

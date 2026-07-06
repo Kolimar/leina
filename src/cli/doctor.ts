@@ -695,7 +695,7 @@ function checkMcp(out: CheckResult[], root: string): void {
             group: g,
             label: "server command",
             status: "fail",
-            detail: "registered but 'leina' not on PATH — the host cannot launch the server (npm i -g leina, or re-register with an absolute path)",
+            detail: "registered but 'leina' not on PATH — the host cannot launch the server (npm i -g @kolimar/leina, or re-register with an absolute path)",
           },
     );
   }

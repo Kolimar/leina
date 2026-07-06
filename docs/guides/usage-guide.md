@@ -48,7 +48,7 @@ El setup es **un solo comando, una sola vez por máquina**. Después de eso no t
 **Opción recomendada — instalar el binario en tu PATH:**
 
 ```bash
-npm install -g leina
+npm install -g @kolimar/leina
 leina setup              # activa todo: share + symlinks de skills/agents en ~/.config/devin,
                                 # grant Exec user-global, hooks, y enciende el modo "blanket"
 ```
@@ -311,7 +311,7 @@ Con la herramienta apuntando a su propio repo, la IA tiene a mano el código, la
 
 Atajos a mano:
 
-- `command not found: leina` → no está en el PATH; reinstalá con `npm install -g leina` o usá `npm run cli -- <cmd>` desde el clon.
+- `command not found: leina` → no está en el PATH; reinstalá con `npm install -g @kolimar/leina` o usá `npm run cli -- <cmd>` desde el clon.
 - `No graph at <...>` → no corriste `leina build <dir>` para ese proyecto.
 - `Graph is stale (...) posture "refuse"` → corré `leina refresh <dir>`.
 

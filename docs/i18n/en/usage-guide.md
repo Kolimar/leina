@@ -48,7 +48,7 @@ Setup is **a single command, once per machine**. After that you don't have to re
 **Recommended option — install the binary on your PATH:**
 
 ```bash
-npm install -g leina
+npm install -g @kolimar/leina
 leina setup              # activates everything: share + skills/agents symlinks in ~/.config/devin,
                                 # user-global Exec grant, hooks, and turns on "blanket" mode
 ```
@@ -311,7 +311,7 @@ With the tool pointed at its own repo, the AI has the code, the skills and the p
 
 Quick fixes at hand:
 
-- `command not found: leina` → not on the PATH; reinstall with `npm install -g leina` or use `npm run cli -- <cmd>` from the clone.
+- `command not found: leina` → not on the PATH; reinstall with `npm install -g @kolimar/leina` or use `npm run cli -- <cmd>` from the clone.
 - `No graph at <...>` → you haven't run `leina build <dir>` for that project.
 - `Graph is stale (...) posture "refuse"` → run `leina refresh <dir>`.
 
