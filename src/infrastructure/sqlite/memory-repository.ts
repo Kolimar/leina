@@ -264,6 +264,9 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   constructor(memPath: string, projectKey: string, resolveAnchor?: AnchorResolver) {
     mkdirSync(dirname(memPath), { recursive: true });
     this.db = new DatabaseSync(memPath);
+    // Same rationale as GraphStore: wait for a concurrent writer instead of failing
+    // immediately with SQLITE_BUSY (the global memory.db is shared across processes).
+    this.db.exec("PRAGMA busy_timeout = 5000;");
     this.db.exec("PRAGMA journal_mode = WAL;");
     const { fts5 } = ensureMemorySchema(this.db);
     this.fts5 = fts5;

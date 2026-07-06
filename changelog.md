@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [1.0.1] — 2026-07-06
 
 ### Fixed
+- Concurrent multi-process access no longer fails intermittently with `SQLITE_BUSY`:
+  `graph.db` and the global `memory.db` are now opened with a 5s `busy_timeout`, and
+  the GraphStore constructor skips its schema DDL when the db is already stamped at
+  the current version (opens used to execute write DDL on every open, colliding with
+  a concurrent build). Covered by a multi-process regression test.
 - Project keys no longer silently re-home when a git remote is added after `init`:
   `init` now auto-pins the derived key in `.leina/config.json` (config-lock), and
   `memory current-project`/`search`/`context` print an actionable hint when the

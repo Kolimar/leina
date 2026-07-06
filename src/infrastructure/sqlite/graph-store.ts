@@ -150,6 +150,10 @@ export class GraphStore implements GraphRepository {
 
   constructor(path: string) {
     this.db = new DatabaseSync(path);
+    // Another process (background build, MCP server, a second CLI) may hold the write
+    // lock; without a busy_timeout every statement below fails immediately with
+    // SQLITE_BUSY instead of waiting its turn.
+    this.db.exec("PRAGMA busy_timeout = 5000;");
     this.db.exec("PRAGMA journal_mode = WAL;");
 
     // Schema versioning — reject DBs written by a newer binary BEFORE running
@@ -162,21 +166,26 @@ export class GraphStore implements GraphRepository {
       );
     }
 
+    // Fast path: the version stamp is written only AFTER SCHEMA + migrations complete,
+    // so a db already at the current version is guaranteed to have the full current
+    // shape. Skipping the DDL re-execution keeps concurrent opens (build in one
+    // process, queries in others) free of write locks on the hot path.
+    if (v === GRAPH_SCHEMA_VERSION) return;
+
     this.db.exec(SCHEMA);
-    // Run the additive migrations UNCONDITIONALLY. They are idempotent (guarded by
-    // PRAGMA table_info / IF NOT EXISTS), so on a fresh DB they are no-ops (SCHEMA
-    // already produced the latest shape). Crucially this also repairs a *legacy
-    // pre-versioning* DB, which reports user_version=0 while its tables still have
-    // the old shape: since CREATE TABLE IF NOT EXISTS never upgrades an existing
-    // table, a plain "v===0 → stamp latest" path would leave the `signature`/`repo`
-    // columns missing and the next INSERT would fail with a SQL logic error.
-    // Always migrating closes that gap.
+    // Run the additive migrations for EVERY below-current version, including 0. They
+    // are idempotent (guarded by PRAGMA table_info / IF NOT EXISTS), so on a fresh DB
+    // they are no-ops (SCHEMA already produced the latest shape). Crucially this also
+    // repairs a *legacy pre-versioning* DB, which reports user_version=0 while its
+    // tables still have the old shape: since CREATE TABLE IF NOT EXISTS never upgrades
+    // an existing table, a plain "v===0 → stamp latest" path would leave the
+    // `signature`/`repo` columns missing and the next INSERT would fail with a SQL
+    // logic error. (Only the fast path above — an exact current-version stamp — may
+    // skip this, and that stamp is written strictly after these migrations ran.)
     migrateV1toV2(this.db);
     migrateV2toV3(this.db);
     migrateV3toV4(this.db);
-    if (v !== GRAPH_SCHEMA_VERSION) {
-      this.db.exec(`PRAGMA user_version = ${GRAPH_SCHEMA_VERSION}`);
-    }
+    this.db.exec(`PRAGMA user_version = ${GRAPH_SCHEMA_VERSION}`);
   }
 
   close(): void {
