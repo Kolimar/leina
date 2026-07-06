@@ -8,6 +8,7 @@ import {
   buildStatsPayload,
   buildTreePayload,
   buildSearchPayload,
+  buildGraphPayload,
   buildNodeDetailPayload,
   buildNodeMemoriesPayload,
 } from "../src/application/graph/serve-payloads.ts";
@@ -177,6 +178,56 @@ test("buildNodeDetailPayload: node with no inbound edges → empty declaredBy/in
   const payload = buildNodeDetailPayload(store, "mod:file")!;
   assert.deepEqual(payload.declaredBy, []);
   assert.deepEqual(payload.invokedBy, []);
+});
+
+test("buildNodeDetailPayload: neighbors covers ALL relations, both directions", () => {
+  const store = detailFixture();
+  const payload = buildNodeDetailPayload(store, "fn:target")!;
+  // 3 incident edges total: contains (in) + 2 calls (in). All must appear.
+  assert.equal(payload.neighbors.length, 3);
+  const byKey = payload.neighbors.map((n) => `${n.relation}:${n.direction}:${n.id}`).sort();
+  assert.deepEqual(byKey, [
+    "calls:in:fn:caller1",
+    "calls:in:fn:caller2",
+    "contains:in:mod:file",
+  ]);
+});
+
+test("buildNodeDetailPayload: outbound edges appear as direction 'out'", () => {
+  const store = detailFixture();
+  const payload = buildNodeDetailPayload(store, "fn:caller1")!;
+  assert.equal(payload.neighbors.length, 1);
+  assert.equal(payload.neighbors[0]!.direction, "out");
+  assert.equal(payload.neighbors[0]!.id, "fn:target");
+  assert.equal(payload.neighbors[0]!.relation, "calls");
+});
+
+// ---------------------------------------------------------------------------
+// buildGraphPayload — full-graph endpoint for the explorer's initial render
+// ---------------------------------------------------------------------------
+
+test("buildGraphPayload: returns every node and edge with non-contains degree", () => {
+  const store = detailFixture();
+  const payload = buildGraphPayload(store);
+  assert.equal(payload.truncated, false);
+  assert.equal(payload.nodes.length, 4);
+  assert.equal(payload.edges.length, 3);
+  const target = payload.nodes.find((n) => n.id === "fn:target")!;
+  assert.equal(target.degree, 2, "contains edges do not count toward degree");
+  assert.equal(target.kind, "function");
+  assert.equal(target.file, "src/domain/file.ts");
+});
+
+test("buildGraphPayload: maxNodes keeps highest-degree nodes and only edges among them", () => {
+  const store = detailFixture();
+  const payload = buildGraphPayload(store, 3);
+  assert.equal(payload.truncated, true);
+  assert.equal(payload.nodes.length, 3);
+  // fn:target (degree 2) and the two callers (degree 1 each) win over mod:file (0).
+  const ids = payload.nodes.map((n) => n.id).sort();
+  assert.deepEqual(ids, ["fn:caller1", "fn:caller2", "fn:target"]);
+  // The contains edge to the dropped mod:file must not leak into the payload.
+  assert.ok(payload.edges.every((e) => ids.includes(e.from) && ids.includes(e.to)));
 });
 
 // ---------------------------------------------------------------------------

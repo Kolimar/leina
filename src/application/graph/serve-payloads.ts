@@ -131,6 +131,74 @@ export function buildSearchPayload(store: GraphRepository, query: string): Searc
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/projects/:key/graph
+// ---------------------------------------------------------------------------
+
+export interface GraphPayloadNode {
+  id: string;
+  label: string;
+  kind: string;
+  file: string;
+  /** Non-`contains` bidirectional degree — the UI scales node size with it. */
+  degree: number;
+}
+
+export interface GraphPayloadEdge {
+  from: string;
+  to: string;
+  relation: string;
+}
+
+export interface GraphPayload {
+  nodes: GraphPayloadNode[];
+  edges: GraphPayloadEdge[];
+  /** True when maxNodes kicked in: the payload keeps the highest-degree nodes only. */
+  truncated: boolean;
+}
+
+/**
+ * Full-graph payload for the explorer's initial render. The incremental endpoints
+ * (search/detail) turned out to make a terrible first-load experience — an empty canvas
+ * — so the UI now loads the whole graph up front and uses chips/tree as visibility
+ * filters over it. For pathological graphs, `maxNodes` keeps the highest-degree nodes
+ * (hubs first — the view a human wants anyway) and only edges between kept nodes.
+ */
+export function buildGraphPayload(store: GraphRepository, maxNodes = 6000): GraphPayload {
+  const allNodes = store.allNodes();
+  const allEdges = store.allEdges();
+
+  const degree = new Map<string, number>();
+  for (const e of allEdges) {
+    if (e.relation === "contains") continue;
+    degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+    degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+  }
+
+  let kept = allNodes;
+  const truncated = allNodes.length > maxNodes;
+  if (truncated) {
+    kept = [...allNodes]
+      .sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0) || a.id.localeCompare(b.id))
+      .slice(0, maxNodes);
+  }
+  const keptIds = new Set(kept.map((n) => n.id));
+
+  return {
+    nodes: kept.map((n) => ({
+      id: n.id,
+      label: n.label,
+      kind: n.kind ?? "unknown",
+      file: n.sourceFile,
+      degree: degree.get(n.id) ?? 0,
+    })),
+    edges: allEdges
+      .filter((e) => keptIds.has(e.source) && keptIds.has(e.target))
+      .map((e) => ({ from: e.source, to: e.target, relation: e.relation })),
+    truncated,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/projects/:key/nodes/:id
 // ---------------------------------------------------------------------------
 
@@ -142,10 +210,21 @@ export interface NodeEdgeRef {
   relation: string;
 }
 
+/** One incident edge of the detail node, whatever its relation. `direction` is from the
+ * detail node's point of view: "out" = the node points at `id` (e.g. it calls it),
+ * "in" = `id` points at the node (e.g. it is called by it). */
+export interface NodeNeighbor extends NodeEdgeRef {
+  direction: "in" | "out";
+}
+
 export interface NodeDetailPayload {
   node: ReturnType<typeof nodeDetail> & { id: string };
   declaredBy: NodeEdgeRef[];
   invokedBy: NodeEdgeRef[];
+  /** Every incident edge (all relations, both directions) — the UI's navigable
+   * "conexiones" panel. declaredBy/invokedBy above remain as the original narrow
+   * views for API compatibility. */
+  neighbors: NodeNeighbor[];
 }
 
 // Structural edges: who declares/contains this node (its parent module/class).
@@ -196,11 +275,24 @@ export function buildNodeDetailPayload(store: GraphRepository, nodeId: string): 
   const node = store.getNode(nodeId);
   if (!node) return null;
   const inbound = store.inEdges(nodeId);
+  const outbound = store.outEdges(nodeId);
   const degree = nonContainsDegree(store, nodeId);
+
+  const neighbors: NodeNeighbor[] = [];
+  for (const e of inbound) {
+    const ref = edgeRef(store, e.source, e.relation);
+    if (ref) neighbors.push({ ...ref, direction: "in" });
+  }
+  for (const e of outbound) {
+    const ref = edgeRef(store, e.target, e.relation);
+    if (ref) neighbors.push({ ...ref, direction: "out" });
+  }
+
   return {
     node: { id: node.id, ...nodeDetail(node, degree) },
     declaredBy: refsFor(store, inbound, DECLARATION_RELATIONS),
     invokedBy: refsFor(store, inbound, INVOCATION_RELATIONS),
+    neighbors,
   };
 }
 

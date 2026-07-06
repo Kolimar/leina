@@ -10,12 +10,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Added
 - **`leina graph serve`**: a read-only, foreground HTTP server (`node:http`, zero new
   dependencies) exposing the graph + anchored memory of a project as a JSON API
-  (`/api/projects`, `.../stats`, `.../tree`, `.../search`, `.../nodes/:id`,
-  `.../nodes/:id/memories`), plus a vanilla-JS explorer UI (project selector, kind/relation
-  chips, folder tree, node detail with `declaredBy`/`invokedBy`, and drift-badged memories).
-  Binds strictly to loopback, supports an optional constant-time-compared auth token
-  (`LEINA_SERVE_TOKEN`), and self-registers the project into a new global registry
-  (`~/.leina/projects.json`, also upserted by `build`/`refresh`/`init`).
+  (`/api/projects`, `.../graph`, `.../stats`, `.../tree`, `.../search`, `.../nodes/:id`,
+  `.../nodes/:id/memories`), plus a vanilla-JS explorer UI: the full graph renders up
+  front (force layout frozen after stabilization, node size by degree, labels appear as
+  you zoom), with a live search dropdown, kind/relation filter chips (structural
+  `contains` off by default), a collapsible folder tree, a node drawer listing every
+  incident relation in both directions as navigable groups, and drift-badged memory
+  cards (title/date/preview, expandable). Binds strictly to loopback, supports an
+  optional constant-time-compared auth token (`LEINA_SERVE_TOKEN`), and self-registers
+  the project into a new global registry (`~/.leina/projects.json`, also upserted by
+  `build`/`refresh`/`init`).
 - **`leina memory reanchor`**: conservatively retro-anchors existing observations by
   extracting only explicit path/symbol references from their text and verifying each
   candidate against the live graph before minting — ambiguous or unresolved candidates are

@@ -1,11 +1,15 @@
 // assets/graph-ui/app.js — DOM + fetch + vis-network wiring for the `leina graph serve`
-// explorer UI (tasks 4.1-4.5). Vanilla ES module, no build step (design §6): the browser
-// runs this file exactly as shipped.
+// explorer UI. Vanilla ES module, no build step (design §6): the browser runs this file
+// exactly as shipped.
 //
 // Data-shaping is delegated to lib.js (pure, unit-tested); everything DOM-related lives
 // here. Security: every piece of server-derived text is inserted via `textContent` (or
 // as a vis-network canvas label, which is drawn on <canvas> and can't execute markup
 // either way) — never `innerHTML`. See lib.js's module doc for the HTML-escaping note.
+//
+// Rendering model: the FULL graph is loaded up front from /api/projects/:key/graph and
+// laid out once (physics freezes after stabilization). Chips, the folder tree and search
+// are all visibility/navigation over that one layout — nothing re-fetches the canvas.
 //
 // `vis` is a global provided by /vendor/vis-network.min.js, loaded as a classic
 // (non-module) <script> before this module in index.html — same UMD bundle
@@ -18,7 +22,9 @@ const state = {
   node: null,
   token: null,
   hiddenKinds: new Set(),
-  hiddenRelations: new Set(),
+  // `contains` is pure structure (module→symbol) and drowns the picture at full-graph
+  // scale — ships OFF; its chip starts unchecked and one click brings it back.
+  hiddenRelations: new Set(["contains"]),
   folderFilter: "",
 };
 
@@ -34,6 +40,7 @@ const els = {
   tree: document.getElementById("tree"),
   searchForm: document.getElementById("search-form"),
   searchInput: document.getElementById("search-input"),
+  searchResults: document.getElementById("search-results"),
   net: document.getElementById("net"),
   emptyHint: document.getElementById("empty-hint"),
   labelsToggle: document.getElementById("labels-toggle"),
@@ -46,13 +53,17 @@ const els = {
   drawerFile: document.getElementById("drawer-file"),
   drawerSig: document.getElementById("drawer-sig"),
   drawerSigText: document.getElementById("drawer-sig-text"),
-  declaredByList: document.getElementById("declared-by-list"),
-  invokedByList: document.getElementById("invoked-by-list"),
+  neighborsGroups: document.getElementById("neighbors-groups"),
   memoriesList: document.getElementById("memories-list"),
 };
 
 function setStatus(text) {
   els.status.textContent = text || "";
+}
+
+function setHint(text) {
+  els.emptyHint.hidden = !text;
+  els.emptyHint.textContent = text || "";
 }
 
 // ---------------------------------------------------------------------------
@@ -82,25 +93,63 @@ function projectApiPath(...segments) {
 }
 
 // ---------------------------------------------------------------------------
-// vis-network canvas
+// vis-network canvas — one full-graph layout, frozen after stabilization.
 // ---------------------------------------------------------------------------
 
 function initNetwork() {
   const options = {
-    nodes: { shape: "dot", size: 14, borderWidth: 1.5 },
-    edges: {
-      arrows: "to",
-      color: { color: "#30474f", highlight: "#58a6ff", hover: "#79c0ff" },
-      width: 1,
-      smooth: { enabled: true, type: "continuous" },
+    nodes: {
+      shape: "dot",
+      borderWidth: 1.5,
+      // Node size AND label size scale with `value` (degree): hubs read from afar,
+      // leaf labels only materialize once you zoom in (drawThreshold hides them below
+      // 8px drawn size — the built-in cure for the 2k-label hairball).
+      scaling: {
+        min: 6,
+        max: 30,
+        label: { enabled: true, min: 9, max: 22, drawThreshold: 8 },
+      },
+      font: { color: "#e6edf3", size: 12, strokeWidth: 3, strokeColor: "#0d1117" },
     },
-    interaction: { hover: true, tooltipDelay: 120 },
+    edges: {
+      arrows: { to: { enabled: true, scaleFactor: 0.35 } },
+      color: { color: "#2b3d46", highlight: "#58a6ff", hover: "#79c0ff", opacity: 0.55 },
+      width: 1,
+      smooth: false, // straight edges: the difference between usable and slideshow at this scale
+    },
+    interaction: {
+      hover: true,
+      tooltipDelay: 120,
+      hideEdgesOnDrag: true,
+      multiselect: false,
+    },
+    layout: { improvedLayout: false }, // O(n²)-ish; the physics pass below does the work
     physics: {
-      stabilization: { iterations: 120 },
-      barnesHut: { gravitationalConstant: -6000, springLength: 100, springConstant: 0.04 },
+      solver: "forceAtlas2Based",
+      forceAtlas2Based: {
+        gravitationalConstant: -42,
+        centralGravity: 0.006,
+        springLength: 110,
+        springConstant: 0.08,
+        damping: 0.6,
+        avoidOverlap: 0.4,
+      },
+      maxVelocity: 60,
+      stabilization: { enabled: true, iterations: 300, updateInterval: 25 },
     },
   };
   network = new vis.Network(els.net, { nodes: nodesDs, edges: edgesDs }, options);
+
+  network.on("stabilizationProgress", (params) => {
+    const pct = Math.round((params.iterations / params.total) * 100);
+    setHint(`Distribuyendo el grafo… ${pct}%`);
+  });
+  network.on("stabilizationIterationsDone", () => {
+    // Freeze the layout: pan/zoom/drag stay fluid because nothing simulates anymore.
+    network.setOptions({ physics: false });
+    setHint("");
+    network.fit({ animation: { duration: 400 } });
+  });
   network.on("click", (params) => {
     if (params.nodes && params.nodes.length) {
       void selectNode(params.nodes[0]);
@@ -108,55 +157,41 @@ function initNetwork() {
   });
 }
 
-function labelColor() {
-  return labelsOn ? "#e6edf3" : "rgba(0,0,0,0)";
-}
-
-function toggleEmptyHint() {
-  els.emptyHint.hidden = nodesDs.length > 0;
-}
-
 function nodeHidden(kind, file) {
   return state.hiddenKinds.has(kind) || lib.isOutsideFolder(file, state.folderFilter);
 }
 
-/** Add (or refresh) a node in the vis canvas from a pure lib.js node descriptor. */
-function upsertVisNode(descriptor) {
+function visNodeStyle(descriptor) {
   const color = lib.colorForKind(descriptor._kind);
-  const visNode = {
-    id: descriptor.id,
-    label: descriptor.label,
-    group: descriptor._kind,
+  return {
+    ...descriptor,
     title: descriptor._file,
-    _kind: descriptor._kind,
-    _file: descriptor._file,
     color: {
-      background: `${color}33`,
+      background: `${color}55`,
       border: color,
-      highlight: { background: `${color}55`, border: color },
+      highlight: { background: `${color}88`, border: "#e6edf3" },
+      hover: { background: `${color}77`, border: color },
     },
-    font: { color: labelColor(), size: 12, strokeWidth: 3, strokeColor: "#0d1117" },
     hidden: nodeHidden(descriptor._kind, descriptor._file),
   };
-  if (nodesDs.get(descriptor.id)) nodesDs.update(visNode);
-  else nodesDs.add(visNode);
-  toggleEmptyHint();
 }
 
-function upsertVisEdge(descriptor) {
-  const visEdge = {
-    id: descriptor.id,
-    from: descriptor.from,
-    to: descriptor.to,
-    label: descriptor.label,
-    _relation: descriptor._relation,
-    hidden: state.hiddenRelations.has(descriptor._relation),
-  };
-  if (edgesDs.get(descriptor.id)) edgesDs.update(visEdge);
-  else edgesDs.add(visEdge);
+async function loadGraph() {
+  setHint("Cargando el grafo…");
+  const body = await apiFetch(projectApiPath("graph"));
+  const { nodes, edges } = lib.buildGraphDatasets(body);
+  nodesDs.clear();
+  edgesDs.clear();
+  nodesDs.add(nodes.map(visNodeStyle));
+  edgesDs.add(edges.map((e) => ({ ...e, hidden: state.hiddenRelations.has(e._relation) })));
+  const truncNote = body.truncated ? " (truncado a los nodos de mayor grado)" : "";
+  setStatus(`${nodes.length} nodos · ${edges.length} aristas${truncNote}`);
+  // Re-arm physics for the fresh dataset (it was frozen after the previous layout).
+  network.setOptions({ physics: true });
+  network.stabilize();
 }
 
-/** FR-09: chip toggle re-evaluates hidden on every plotted node/edge (no re-fetch). */
+/** Chip/folder toggles re-evaluate `hidden` on every plotted node/edge (no re-fetch). */
 function applyVisibility() {
   const nodeUpdates = nodesDs.get().map((n) => ({ id: n.id, hidden: nodeHidden(n._kind, n._file) }));
   if (nodeUpdates.length) nodesDs.update(nodeUpdates);
@@ -165,7 +200,8 @@ function applyVisibility() {
 }
 
 function focusNode(nodeId) {
-  network.focus(nodeId, { scale: 1.2, animation: true });
+  if (!nodesDs.get(nodeId)) return;
+  network.focus(nodeId, { scale: 1.1, animation: true });
   network.selectNodes([nodeId]);
 }
 
@@ -173,21 +209,25 @@ function resetCanvas() {
   nodesDs.clear();
   edgesDs.clear();
   state.hiddenKinds.clear();
-  state.hiddenRelations.clear();
+  state.hiddenRelations = new Set(["contains"]);
   state.folderFilter = "";
   closeDrawer();
-  toggleEmptyHint();
 }
 
 // ---------------------------------------------------------------------------
-// FR-13: label toggle — client-side only, no re-fetch.
+// FR-13: label toggle — one global option flip, not 2k per-node updates.
 // ---------------------------------------------------------------------------
 
 function toggleLabels() {
   labelsOn = !labelsOn;
   els.labelsToggle.textContent = labelsOn ? "ocultar etiquetas" : "mostrar etiquetas";
-  const updates = nodesDs.get().map((n) => ({ id: n.id, font: { ...n.font, color: labelColor() } }));
-  if (updates.length) nodesDs.update(updates);
+  network.setOptions({
+    nodes: {
+      font: labelsOn
+        ? { color: "#e6edf3", strokeColor: "#0d1117" }
+        : { color: "rgba(0,0,0,0)", strokeColor: "rgba(0,0,0,0)" },
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -228,36 +268,58 @@ async function loadStats() {
 }
 
 // ---------------------------------------------------------------------------
-// FR-10: folder tree — filters the plotted graph; clicking a file adds its module node.
+// FR-10: folder tree — collapsible; folder name filters the plotted graph, the chevron
+// expands/collapses, clicking a file focuses its module node.
 // ---------------------------------------------------------------------------
 
-function renderFolder(folder, isRoot) {
+function renderFolder(folder, depth) {
   const wrapper = document.createElement("div");
   wrapper.className = "tree-node";
 
-  if (!isRoot) {
+  const children = document.createElement("div");
+  children.className = "tree-children";
+  const hasChildren = folder.children.length > 0 || folder.files.length > 0;
+
+  if (depth > 0) {
     const row = document.createElement("div");
     row.className = "tree-row tree-folder";
-    row.textContent = folder.path.split("/").pop() || folder.path;
-    row.title = folder.path;
-    row.addEventListener("click", () => {
+    row.dataset.path = folder.path;
+
+    const chevron = document.createElement("span");
+    chevron.className = "chev";
+    chevron.textContent = hasChildren ? "▸" : "·";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = folder.path.split("/").pop() || folder.path;
+    name.title = folder.path;
+    row.append(chevron, name);
+
+    // Depth 1 starts open so the repo's top shape is visible; deeper levels collapsed.
+    const startOpen = depth <= 1;
+    children.hidden = !startOpen;
+    if (hasChildren && startOpen) chevron.textContent = "▾";
+
+    chevron.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (!hasChildren) return;
+      children.hidden = !children.hidden;
+      chevron.textContent = children.hidden ? "▸" : "▾";
+    });
+    name.addEventListener("click", () => {
       state.folderFilter = state.folderFilter === folder.path ? "" : folder.path;
       renderActiveFolder();
       applyVisibility();
     });
-    row.dataset.path = folder.path;
     wrapper.appendChild(row);
   }
 
-  const children = document.createElement("div");
-  children.className = "tree-children";
-  for (const child of folder.children) children.appendChild(renderFolder(child, false));
+  for (const child of folder.children) children.appendChild(renderFolder(child, depth + 1));
   for (const file of folder.files) {
     const row = document.createElement("div");
     row.className = "tree-row tree-file";
     row.textContent = file.split("/").pop() || file;
     row.title = file;
-    row.addEventListener("click", () => void addNodeByFile(file));
+    row.addEventListener("click", () => void focusFile(file));
     children.appendChild(row);
   }
   wrapper.appendChild(children);
@@ -272,58 +334,109 @@ function renderActiveFolder() {
 
 async function loadTree() {
   const body = await apiFetch(projectApiPath("tree"));
-  els.tree.replaceChildren(renderFolder(body.tree, true));
+  els.tree.replaceChildren(renderFolder(body.tree, 0));
 }
 
-async function addNodeByFile(file) {
-  setStatus(`buscando ${file}…`);
-  try {
-    const body = await apiFetch(`${projectApiPath("search")}?q=${encodeURIComponent(file)}`);
-    const hit = body.results.find((r) => r.file === file) ?? body.results[0];
-    if (!hit) {
-      setStatus(`sin nodo para ${file}`);
-      return;
-    }
-    upsertVisNode(lib.buildNodeFromSearchResult(hit));
-    focusNode(hit.id);
-    await selectNode(hit.id);
-    setStatus("");
-  } catch (err) {
-    setStatus(err.message);
+async function focusFile(file) {
+  // The full graph is already plotted — find the module node for this file locally.
+  const hit = nodesDs.get().find((n) => n._file === file && n._kind === "module")
+    ?? nodesDs.get().find((n) => n._file === file);
+  if (!hit) {
+    setStatus(`sin nodo para ${file}`);
+    return;
   }
+  focusNode(hit.id);
+  await selectNode(hit.id);
 }
 
 // ---------------------------------------------------------------------------
-// Search box — FR-10 "búsqueda centra/resalta el nodo resultado".
+// Search — live dropdown of results; Enter selects the first, click selects any.
 // ---------------------------------------------------------------------------
+
+let searchTimer = null;
+
+function hideSearchResults() {
+  els.searchResults.hidden = true;
+  els.searchResults.replaceChildren();
+}
+
+function renderSearchResults(results) {
+  els.searchResults.replaceChildren();
+  if (results.length === 0) {
+    hideSearchResults();
+    return;
+  }
+  for (const item of results.slice(0, 12)) {
+    const row = document.createElement("div");
+    row.className = "search-hit";
+    const sw = document.createElement("span");
+    sw.className = "sw";
+    sw.style.background = lib.colorForKind(item.kind);
+    const label = document.createElement("span");
+    label.className = "hit-label";
+    label.textContent = item.label;
+    const meta = document.createElement("span");
+    meta.className = "hit-meta";
+    meta.textContent = `${item.kind} · ${item.file}`;
+    row.append(sw, label, meta);
+    row.addEventListener("mousedown", (event) => {
+      event.preventDefault(); // beat the input's blur
+      hideSearchResults();
+      focusNode(item.id);
+      void selectNode(item.id);
+    });
+    els.searchResults.appendChild(row);
+  }
+  els.searchResults.hidden = false;
+}
+
+async function runSearch(q) {
+  const body = await apiFetch(`${projectApiPath("search")}?q=${encodeURIComponent(q)}`);
+  renderSearchResults(body.results);
+  return body.results;
+}
+
+els.searchInput.addEventListener("input", () => {
+  const q = els.searchInput.value.trim();
+  clearTimeout(searchTimer);
+  if (!q || !state.project) {
+    hideSearchResults();
+    return;
+  }
+  searchTimer = setTimeout(() => { void runSearch(q).catch((err) => setStatus(err.message)); }, 200);
+});
+
+els.searchInput.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    els.searchInput.value = "";
+    hideSearchResults();
+  }
+});
+
+els.searchInput.addEventListener("blur", () => {
+  // Delay so a click on a result (mousedown) lands before the list disappears.
+  setTimeout(hideSearchResults, 150);
+});
 
 els.searchForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const q = els.searchInput.value.trim();
   if (!q || !state.project) return;
-  void runSearch(q);
+  void runSearch(q)
+    .then((results) => {
+      if (results.length === 0) {
+        setStatus(`sin resultados para "${q}"`);
+        return;
+      }
+      hideSearchResults();
+      focusNode(results[0].id);
+      return selectNode(results[0].id);
+    })
+    .catch((err) => setStatus(err.message));
 });
 
-async function runSearch(q) {
-  setStatus(`buscando "${q}"…`);
-  try {
-    const body = await apiFetch(`${projectApiPath("search")}?q=${encodeURIComponent(q)}`);
-    if (body.results.length === 0) {
-      setStatus(`sin resultados para "${q}"`);
-      return;
-    }
-    for (const item of body.results) upsertVisNode(lib.buildNodeFromSearchResult(item));
-    const first = body.results[0];
-    focusNode(first.id);
-    await selectNode(first.id);
-    setStatus(`${body.results.length} resultado(s) para "${q}"`);
-  } catch (err) {
-    setStatus(err.message);
-  }
-}
-
 // ---------------------------------------------------------------------------
-// FR-11/FR-12: node detail drawer + memories panel.
+// FR-11/FR-12: node detail drawer (grouped connections) + memories panel.
 // ---------------------------------------------------------------------------
 
 function closeDrawer() {
@@ -337,26 +450,43 @@ function makeBadge(text) {
   return span;
 }
 
-function renderRefs(container, refs) {
-  container.replaceChildren();
-  if (!refs || refs.length === 0) {
+function renderNeighborGroups(neighbors) {
+  els.neighborsGroups.replaceChildren();
+  const groups = lib.groupNeighbors(neighbors);
+  if (groups.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "ninguno";
-    container.appendChild(empty);
+    empty.textContent = "sin conexiones";
+    els.neighborsGroups.appendChild(empty);
     return;
   }
-  for (const ref of refs) {
-    const row = document.createElement("div");
-    row.className = "ref-row";
-    row.textContent = `${ref.label} · ${ref.kind}`;
-    row.title = ref.file;
-    row.addEventListener("click", () => {
-      upsertVisNode(lib.buildNodeFromSearchResult(ref));
-      focusNode(ref.id);
-      void selectNode(ref.id);
-    });
-    container.appendChild(row);
+  for (const group of groups) {
+    const details = document.createElement("details");
+    details.className = "nb-group";
+    details.open = group.items.length <= 12;
+    const summary = document.createElement("summary");
+    summary.textContent = `${group.title} (${group.items.length})`;
+    details.appendChild(summary);
+    const list = document.createElement("div");
+    list.className = "ref-list";
+    for (const ref of group.items) {
+      const row = document.createElement("div");
+      row.className = "ref-row";
+      const sw = document.createElement("span");
+      sw.className = "sw";
+      sw.style.background = lib.colorForKind(ref.kind);
+      const label = document.createElement("span");
+      label.textContent = ref.label;
+      row.append(sw, label);
+      row.title = ref.file;
+      row.addEventListener("click", () => {
+        focusNode(ref.id);
+        void selectNode(ref.id);
+      });
+      list.appendChild(row);
+    }
+    details.appendChild(list);
+    els.neighborsGroups.appendChild(details);
   }
 }
 
@@ -377,8 +507,50 @@ function renderDrawer(nodeId, detail) {
     els.drawerSig.hidden = true;
     els.drawerSigText.textContent = "";
   }
-  renderRefs(els.declaredByList, detail.declaredBy);
-  renderRefs(els.invokedByList, detail.invokedBy);
+  renderNeighborGroups(detail.neighbors || []);
+}
+
+function renderMemoryCard(mem) {
+  const { title, body, preview, date } = lib.formatMemory(mem);
+  const badge = lib.driftBadge(mem.driftState);
+
+  const item = document.createElement("div");
+  item.className = "memory-item";
+
+  const head = document.createElement("div");
+  head.className = "memory-head";
+  const badgeEl = document.createElement("span");
+  badgeEl.className = `badge ${badge.className}`;
+  badgeEl.textContent = badge.label;
+  const dateEl = document.createElement("span");
+  dateEl.className = "memory-date";
+  dateEl.textContent = date;
+  head.append(badgeEl, dateEl);
+
+  const titleEl = document.createElement("div");
+  titleEl.className = "memory-title";
+  titleEl.textContent = title;
+
+  const previewEl = document.createElement("div");
+  previewEl.className = "memory-preview";
+  previewEl.textContent = preview || "(sin contenido)";
+
+  const bodyEl = document.createElement("pre");
+  bodyEl.className = "memory-body";
+  bodyEl.textContent = body;
+  bodyEl.hidden = true;
+
+  item.append(head, titleEl, previewEl, bodyEl);
+  if (body) {
+    item.classList.add("expandable");
+    item.addEventListener("click", () => {
+      const expanded = !bodyEl.hidden;
+      bodyEl.hidden = expanded;
+      previewEl.hidden = !expanded;
+      item.classList.toggle("expanded", !expanded);
+    });
+  }
+  return item;
 }
 
 async function loadMemories(nodeId) {
@@ -392,17 +564,7 @@ async function loadMemories(nodeId) {
     return;
   }
   for (const mem of body.memories) {
-    const badge = lib.driftBadge(mem.driftState);
-    const item = document.createElement("div");
-    item.className = "memory-item";
-    const badgeEl = document.createElement("span");
-    badgeEl.className = `badge ${badge.className}`;
-    badgeEl.textContent = badge.label;
-    const text = document.createElement("div");
-    text.className = "memory-text";
-    text.textContent = mem.text;
-    item.append(badgeEl, text);
-    els.memoriesList.appendChild(item);
+    els.memoriesList.appendChild(renderMemoryCard(mem));
   }
 }
 
@@ -412,23 +574,15 @@ els.drawerClose.addEventListener("click", () => {
   syncUrl();
 });
 
-/** FR-11: fetch node detail, plot it + its declaredBy/invokedBy edges, open the drawer,
- * load its memories panel, and reflect the selection in the URL (FR-08). */
+/** FR-11: fetch node detail, open the drawer with its grouped connections, load its
+ * memories panel, and reflect the selection in the URL (FR-08). The graph is already
+ * fully plotted, so selection never mutates the canvas — it only navigates it. */
 async function selectNode(nodeId, opts = {}) {
   state.node = nodeId;
   if (!opts.skipUrlSync) syncUrl();
   setStatus("cargando detalle…");
   try {
     const detail = await apiFetch(projectApiPath("nodes", nodeId));
-    upsertVisNode(lib.buildNodeFromDetail(nodeId, detail.node));
-    for (const ref of detail.declaredBy) {
-      upsertVisNode(lib.buildNodeFromSearchResult(ref));
-      upsertVisEdge(lib.buildEdgeFromRef(nodeId, ref));
-    }
-    for (const ref of detail.invokedBy) {
-      upsertVisNode(lib.buildNodeFromSearchResult(ref));
-      upsertVisEdge(lib.buildEdgeFromRef(nodeId, ref));
-    }
     renderDrawer(nodeId, detail);
     await loadMemories(nodeId);
     setStatus("");
@@ -466,11 +620,14 @@ async function selectProject(projectKey, opts = {}) {
   syncUrl();
   setStatus(`cargando ${projectKey}…`);
   try {
-    await Promise.all([loadStats(), loadTree()]);
-    setStatus("");
-    if (opts.nodeId) await selectNode(opts.nodeId, { skipUrlSync: false });
+    await Promise.all([loadStats(), loadTree(), loadGraph()]);
+    if (opts.nodeId) {
+      focusNode(opts.nodeId);
+      await selectNode(opts.nodeId, { skipUrlSync: false });
+    }
   } catch (err) {
     setStatus(err.message);
+    setHint(err.message);
   }
 }
 
@@ -489,11 +646,10 @@ async function init() {
   const urlState = lib.parseUrlState(location.search);
   state.token = urlState.token || null;
   initNetwork();
-  toggleEmptyHint();
 
   const projects = await loadProjects();
   if (projects.length === 0) {
-    setStatus("no hay proyectos registrados — corre `leina build`/`leina graph serve` en un proyecto");
+    setHint("no hay proyectos registrados — corre `leina build`/`leina graph serve` en un proyecto");
     return;
   }
   const requested = urlState.project;
@@ -503,4 +659,4 @@ async function init() {
   await selectProject(initialKey, { nodeId: urlState.node });
 }
 
-init().catch((err) => setStatus(err.message));
+init().catch((err) => setHint(err.message));

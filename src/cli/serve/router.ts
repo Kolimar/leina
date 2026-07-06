@@ -67,9 +67,48 @@ function parseLimit(raw: string | null): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_MEMORIES_LIMIT;
 }
 
+/** The `/api/projects/:key/...` subroutes — split from routeApi to keep both under the
+ * complexity gate. Returns false when no subroute matched (caller sends the 404). */
+function routeProjectApi(key: string, segs: string[], url: URL, res: ServerResponse): boolean {
+  if (segs.length === 4 && segs[3] === "stats") {
+    respond(res, api.getStats(key));
+    return true;
+  }
+  if (segs.length === 4 && segs[3] === "tree") {
+    respond(res, api.getTree(key));
+    return true;
+  }
+  if (segs.length === 4 && segs[3] === "graph") {
+    respond(res, api.getGraph(key));
+    return true;
+  }
+  if (segs.length === 4 && segs[3] === "search") {
+    respond(res, api.getSearch(key, url.searchParams.get("q") ?? ""));
+    return true;
+  }
+  if (segs.length >= 5 && segs[3] === "nodes") {
+    let nodeId: string;
+    try {
+      nodeId = decodeURIComponent(segs[4]!);
+    } catch {
+      sendApiError(res, 400, "BAD_PATH", "malformed node id");
+      return true;
+    }
+    if (segs.length === 5) {
+      respond(res, api.getNodeDetail(key, nodeId));
+      return true;
+    }
+    if (segs.length === 6 && segs[5] === "memories") {
+      respond(res, api.getNodeMemories(key, nodeId, parseLimit(url.searchParams.get("limit"))));
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Dispatch every `/api/...` path. Segment-based matching (no path-to-regexp dependency —
- * NFR-03 forbids new production deps) against the exact 6-route table of FR-06.
+ * NFR-03 forbids new production deps) against the FR-06 route table plus `/graph`.
  */
 function routeApi(pathname: string, url: URL, res: ServerResponse): void {
   const segs = pathname.split("/").filter(Boolean); // "/api/projects" -> ["api","projects"]
@@ -87,36 +126,7 @@ function routeApi(pathname: string, url: URL, res: ServerResponse): void {
       sendApiError(res, 400, "BAD_PATH", "malformed project key");
       return;
     }
-
-    if (segs.length === 4 && segs[3] === "stats") {
-      respond(res, api.getStats(key));
-      return;
-    }
-    if (segs.length === 4 && segs[3] === "tree") {
-      respond(res, api.getTree(key));
-      return;
-    }
-    if (segs.length === 4 && segs[3] === "search") {
-      respond(res, api.getSearch(key, url.searchParams.get("q") ?? ""));
-      return;
-    }
-    if (segs.length >= 5 && segs[3] === "nodes") {
-      let nodeId: string;
-      try {
-        nodeId = decodeURIComponent(segs[4]!);
-      } catch {
-        sendApiError(res, 400, "BAD_PATH", "malformed node id");
-        return;
-      }
-      if (segs.length === 5) {
-        respond(res, api.getNodeDetail(key, nodeId));
-        return;
-      }
-      if (segs.length === 6 && segs[5] === "memories") {
-        respond(res, api.getNodeMemories(key, nodeId, parseLimit(url.searchParams.get("limit"))));
-        return;
-      }
-    }
+    if (routeProjectApi(key, segs, url, res)) return;
   }
 
   sendApiError(res, 404, "NOT_FOUND", `no such API route: ${pathname}`);

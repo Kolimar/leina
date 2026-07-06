@@ -144,6 +144,121 @@ export function buildEdgeFromRef(centerId, ref) {
 }
 
 // ---------------------------------------------------------------------------
+// /graph payload → vis datasets (pure; app.js feeds them to vis.DataSet).
+// ---------------------------------------------------------------------------
+
+/** Dedupe edges by (from,to,relation) — the store keeps one row per call-site context,
+ * which the canvas doesn't need (it would draw N parallel arrows). */
+export function buildGraphDatasets(graph) {
+  const nodes = (graph.nodes || []).map((n) => ({
+    id: n.id,
+    label: n.label || n.id,
+    value: (n.degree || 0) + 1,
+    _kind: n.kind || "unknown",
+    _file: n.file || "",
+    _degree: n.degree || 0,
+  }));
+  const seen = new Set();
+  const edges = [];
+  for (const e of graph.edges || []) {
+    const key = `${e.from}->${e.to}:${e.relation}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push({ id: key, from: e.from, to: e.to, _relation: e.relation });
+  }
+  return { nodes, edges };
+}
+
+// ---------------------------------------------------------------------------
+// Node detail: group the flat `neighbors` list into navigable sections.
+// ---------------------------------------------------------------------------
+
+const RELATION_TITLES = {
+  "calls:out": "llama a",
+  "calls:in": "lo llaman",
+  "references:out": "referencia a",
+  "references:in": "lo referencian",
+  "imports:out": "importa",
+  "imports:in": "lo importan",
+  "implements:out": "implementa",
+  "implements:in": "lo implementan",
+  "extends:out": "extiende",
+  "extends:in": "lo extienden",
+  "reads:out": "lee",
+  "reads:in": "lo leen",
+  "configures:out": "configura",
+  "configures:in": "lo configuran",
+  "method:in": "definido en",
+  "method:out": "métodos",
+  "contains:in": "declarado en",
+  "contains:out": "contiene",
+};
+
+// Behavioural relations first (that's what you navigate by), structure last.
+const GROUP_ORDER = [
+  "calls:in", "calls:out",
+  "references:in", "references:out",
+  "imports:in", "imports:out",
+  "implements:in", "implements:out",
+  "extends:in", "extends:out",
+  "reads:in", "reads:out",
+  "configures:in", "configures:out",
+  "method:out", "method:in",
+  "contains:out", "contains:in",
+];
+
+/** [{key, title, items}] sorted by GROUP_ORDER (unknown relations appended, labelled
+ * generically). Items keep their {id,label,kind,file} shape for click-to-navigate. */
+export function groupNeighbors(neighbors) {
+  const buckets = new Map();
+  for (const n of neighbors || []) {
+    const key = `${n.relation}:${n.direction}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(n);
+  }
+  const orderOf = (key) => {
+    const idx = GROUP_ORDER.indexOf(key);
+    return idx === -1 ? GROUP_ORDER.length : idx;
+  };
+  return [...buckets.entries()]
+    .sort((a, b) => orderOf(a[0]) - orderOf(b[0]) || a[0].localeCompare(b[0]))
+    .map(([key, items]) => {
+      const [relation, direction] = key.split(":");
+      const title = RELATION_TITLES[key] ?? (direction === "in" ? `← ${relation}` : `${relation} →`);
+      return { key, title, items };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// FR-12: memory items — split the API's title+content blob into readable parts.
+// ---------------------------------------------------------------------------
+
+/** The memories payload packs `title\n\ncontent` into one `text` field. Split it back,
+ * derive a short plain-text preview (markdown syntax stripped, first ~lines), and format
+ * the timestamp — pure so it's unit-testable. */
+export function formatMemory(mem) {
+  const text = typeof mem.text === "string" ? mem.text : "";
+  const newline = text.indexOf("\n");
+  const title = (newline === -1 ? text : text.slice(0, newline)).trim() || "(sin título)";
+  const body = newline === -1 ? "" : text.slice(newline + 1).trim();
+  const preview = body
+    .split("\n")
+    .map((line) => line
+      .replace(/^#{1,6}\s+/, "")        // heading markers
+      .replace(/^[-*]\s+/, "· ")        // list bullets
+      .replace(/\|/g, " ")              // table pipes
+      .replace(/`+/g, "")               // code ticks
+      .replace(/\*\*/g, "")             // bold markers
+      .trim())
+    .filter((line) => line.length > 0 && !/^[-\s]+$/.test(line)) // drop table rules
+    .slice(0, 3)
+    .join(" — ")
+    .slice(0, 220);
+  const date = mem.updatedAt ? new Date(mem.updatedAt).toISOString().slice(0, 10) : "";
+  return { title, body, preview, date };
+}
+
+// ---------------------------------------------------------------------------
 // FR-08: URL state (project + selected node + optional token) — a page reload/share
 // reproduces the same view.
 // ---------------------------------------------------------------------------

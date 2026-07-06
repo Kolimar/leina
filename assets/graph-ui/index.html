@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>leina · graph explorer</title>
+<link rel="icon" href="data:," />
 <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -12,6 +13,7 @@
   <select id="project-select" aria-label="proyecto"></select>
   <form id="search-form">
     <input id="search-input" type="text" placeholder="buscar nodo (id, label, ruta)…" autocomplete="off" />
+    <div id="search-results" hidden></div>
   </form>
   <div class="spacer"></div>
   <button id="labels-toggle" type="button">ocultar etiquetas</button>
@@ -37,7 +39,7 @@
 
   <main id="canvas-wrap">
     <div id="net"></div>
-    <div id="empty-hint">Busca un nodo o explora el árbol de carpetas para empezar.</div>
+    <div id="empty-hint">Cargando el grafo…</div>
   </main>
 
   <aside id="drawer">
@@ -53,12 +55,8 @@
       <pre id="drawer-sig-text"></pre>
     </div>
     <details open>
-      <summary>quién lo declara</summary>
-      <div id="declared-by-list" class="ref-list"></div>
-    </details>
-    <details open>
-      <summary>quién lo invoca</summary>
-      <div id="invoked-by-list" class="ref-list"></div>
+      <summary>conexiones</summary>
+      <div id="neighbors-groups"></div>
     </details>
     <details open>
       <summary>últimas memorias</summary>

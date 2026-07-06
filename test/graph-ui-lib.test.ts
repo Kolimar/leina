@@ -164,3 +164,88 @@ test("(gl-17) buildUrlQuery returns empty string when nothing to represent", () 
   assert.equal(lib.buildUrlQuery({}), "");
   assert.equal(lib.buildUrlQuery({ project: "", node: "" }), "");
 });
+
+// ---------------------------------------------------------------------------
+// Full-graph datasets
+// ---------------------------------------------------------------------------
+
+test("(gl-18) buildGraphDatasets maps /graph nodes with degree-driven value", () => {
+  const { nodes } = lib.buildGraphDatasets({
+    nodes: [{ id: "a", label: "A", kind: "function", file: "src/a.ts", degree: 5 }],
+    edges: [],
+  });
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0].value, 6, "value = degree + 1 so zero-degree nodes still render");
+  assert.equal(nodes[0]._kind, "function");
+  assert.equal(nodes[0]._file, "src/a.ts");
+});
+
+test("(gl-19) buildGraphDatasets dedupes parallel edges by (from,to,relation)", () => {
+  const { edges } = lib.buildGraphDatasets({
+    nodes: [],
+    edges: [
+      { from: "a", to: "b", relation: "calls" },
+      { from: "a", to: "b", relation: "calls" },
+      { from: "a", to: "b", relation: "references" },
+    ],
+  });
+  assert.equal(edges.length, 2);
+  assert.deepEqual(edges.map((e: { _relation: string }) => e._relation).sort(), ["calls", "references"]);
+});
+
+// ---------------------------------------------------------------------------
+// Neighbor grouping (drawer's "conexiones")
+// ---------------------------------------------------------------------------
+
+test("(gl-20) groupNeighbors buckets by relation+direction, behavioural relations first", () => {
+  const groups = lib.groupNeighbors([
+    { id: "m", label: "mod", kind: "module", file: "m.ts", relation: "contains", direction: "in" },
+    { id: "c1", label: "c1", kind: "function", file: "c.ts", relation: "calls", direction: "in" },
+    { id: "c2", label: "c2", kind: "function", file: "c.ts", relation: "calls", direction: "in" },
+    { id: "t", label: "t", kind: "function", file: "t.ts", relation: "calls", direction: "out" },
+  ]);
+  assert.equal(groups.length, 3);
+  assert.equal(groups[0].key, "calls:in", "callers come before structure");
+  assert.equal(groups[0].items.length, 2);
+  assert.equal(groups[0].title, "lo llaman");
+  assert.equal(groups[2].key, "contains:in");
+  assert.equal(groups[2].title, "declarado en");
+});
+
+test("(gl-21) groupNeighbors labels unknown relations generically instead of dropping them", () => {
+  const groups = lib.groupNeighbors([
+    { id: "x", label: "x", kind: "config", file: "x.yml", relation: "deploys", direction: "out" },
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].title, "deploys →");
+});
+
+test("(gl-22) groupNeighbors on empty/missing input → empty array", () => {
+  assert.deepEqual(lib.groupNeighbors([]), []);
+  assert.deepEqual(lib.groupNeighbors(undefined), []);
+});
+
+// ---------------------------------------------------------------------------
+// Memory formatting (drawer's memory cards)
+// ---------------------------------------------------------------------------
+
+test("(gl-23) formatMemory splits title from body and strips markdown from the preview", () => {
+  const mem = {
+    text: "sdd/graph-serve/tasks\n\n# Tasks: plan\n\n| Field | Value |\n|---|---|\n- item one\n**bold** `code`",
+    updatedAt: Date.UTC(2026, 6, 6),
+  };
+  const f = lib.formatMemory(mem);
+  assert.equal(f.title, "sdd/graph-serve/tasks");
+  assert.equal(f.date, "2026-07-06");
+  assert.ok(!f.preview.includes("#"), "heading markers stripped");
+  assert.ok(!f.preview.includes("|"), "table pipes stripped");
+  assert.ok(!f.preview.includes("**"), "bold markers stripped");
+  assert.ok(f.body.includes("| Field | Value |"), "full body keeps the original text");
+});
+
+test("(gl-24) formatMemory tolerates single-line and empty memories", () => {
+  assert.equal(lib.formatMemory({ text: "solo título" }).title, "solo título");
+  assert.equal(lib.formatMemory({ text: "solo título" }).body, "");
+  assert.equal(lib.formatMemory({ text: "" }).title, "(sin título)");
+  assert.equal(lib.formatMemory({}).date, "");
+});

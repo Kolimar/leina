@@ -13,6 +13,7 @@ import { openGraphRepo, openMemoryRepo } from "../wiring.ts";
 import { readProjectRegistry } from "../../infrastructure/config/project-registry-store.ts";
 import { withAvailability, type ProjectEntry } from "../../application/project/registry.ts";
 import {
+  buildGraphPayload,
   buildNodeDetailPayload,
   buildNodeMemoriesPayload,
   buildSearchPayload,
@@ -100,6 +101,13 @@ export function getTree(key: string): ApiResult {
   const project = requireProject(key);
   if (isApiResult(project)) return project;
   return withGraphStore(project, (store) => buildTreePayload(store.allNodes()));
+}
+
+/** GET /api/projects/:key/graph — full graph for the explorer's initial render. */
+export function getGraph(key: string): ApiResult {
+  const project = requireProject(key);
+  if (isApiResult(project)) return project;
+  return withGraphStore(project, (store) => buildGraphPayload(store));
 }
 
 /** GET /api/projects/:key/search?q= — FR-06. */
