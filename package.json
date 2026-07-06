@@ -29,7 +29,7 @@
   ],
   "type": "module",
   "bin": {
-    "leina": "./dist/cli/index.js"
+    "leina": "dist/cli/index.js"
   },
   "files": [
     "dist",
