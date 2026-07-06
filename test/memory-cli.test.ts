@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -246,6 +246,88 @@ test("(MC-anchors-2) save --batch: non-string non-array anchors is a per-item er
     const r = runCli(["memory", "save", dir, "--batch"], { env, input });
     assert.notEqual(r.code, 0, "invalid anchors type must not save silently");
     assert.match(r.stderr + r.stdout, /anchors must be/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reanchor: retro-anchor existing observations against the live graph.
+// ---------------------------------------------------------------------------
+
+test("(MC-reanchor-1) reanchor --dry-run: reports a mint prediction without writing anything", () => {
+  withEnv(({ env, dir }) => {
+    writeFileSync(join(dir, "a.ts"), `export function betaSymbol(): number { return 1; }\n`);
+    const build = runCli(["build", dir], { env });
+    assert.equal(build.code, 0, `build exit 0. stderr: ${build.stderr}`);
+
+    runCli(
+      ["memory", "save", dir, "--title", "Note", "--content", "See `betaSymbol()` in a.ts.", "--type", "architecture"],
+      { env },
+    );
+
+    const dry = runCli(["memory", "reanchor", dir, "--dry-run"], { env });
+    assert.equal(dry.code, 0, `exit 0. stderr: ${dry.stderr}`);
+    assert.match(dry.stdout, /\[dry-run\]/);
+    assert.match(dry.stdout, /1 minted/);
+
+    // Dry-run must not have written anything: a real run afterwards still mints 1.
+    const real = runCli(["memory", "reanchor", dir], { env });
+    assert.doesNotMatch(real.stdout, /\[dry-run\]/);
+    assert.match(real.stdout, /1 minted/);
+  });
+});
+
+test("(MC-reanchor-2) reanchor: mints an anchor for an explicit symbol reference, then is idempotent", () => {
+  withEnv(({ env, dir }) => {
+    writeFileSync(join(dir, "a.ts"), `export function betaSymbol(): number { return 1; }\n`);
+    runCli(["build", dir], { env });
+    const saved = runCli(
+      ["memory", "save", dir, "--title", "Note", "--content", "See `betaSymbol()` in a.ts.", "--type", "architecture"],
+      { env },
+    );
+    const id = idFrom(saved.stdout);
+
+    const first = runCli(["memory", "reanchor", dir], { env });
+    assert.equal(first.code, 0, `exit 0. stderr: ${first.stderr}`);
+    assert.match(first.stdout, /1 minted/);
+    assert.match(first.stdout, new RegExp(`#${id} minted: betaSymbol ->`));
+
+    // The now-anchored observation surfaces as verified (drift-checked) against the real symbol.
+    const verified = runCli(["memory", "verified", dir, "Note", "--limit", "3"], { env });
+    assert.match(verified.stdout, /USABLE \(1\)/);
+    assert.match(verified.stdout, /all anchors verified/);
+
+    // Re-running must not duplicate the anchor (idempotent).
+    const second = runCli(["memory", "reanchor", dir], { env });
+    assert.match(second.stdout, /0 minted/);
+    assert.match(second.stdout, /already anchored/);
+  });
+});
+
+test("(MC-reanchor-3) reanchor: unresolved/ambiguous-looking references are rejected, not guessed", () => {
+  withEnv(({ env, dir }) => {
+    writeFileSync(join(dir, "a.ts"), `export function realSymbol(): number { return 1; }\n`);
+    runCli(["build", dir], { env });
+    runCli(
+      ["memory", "save", dir, "--title", "Note", "--content", "Mentions `noSuchSymbol()` only.", "--type", "architecture"],
+      { env },
+    );
+
+    const r = runCli(["memory", "reanchor", dir], { env });
+    assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
+    assert.match(r.stdout, /0 minted, 1 rejected/);
+    assert.match(r.stdout, /no match found/);
+  });
+});
+
+test("(MC-reanchor-4) reanchor: no graph built yet — fails open (0 processed, no crash)", () => {
+  withEnv(({ env, dir }) => {
+    runCli(
+      ["memory", "save", dir, "--title", "Note", "--content", "See `anySymbol()` somewhere.", "--type", "architecture"],
+      { env },
+    );
+    const r = runCli(["memory", "reanchor", dir], { env });
+    assert.equal(r.code, 0, `exit 0 even without a graph. stderr: ${r.stderr}`);
+    assert.match(r.stdout, /0 minted, 1 rejected/);
   });
 });
 

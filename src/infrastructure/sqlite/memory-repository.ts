@@ -1267,6 +1267,44 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     }));
   }
 
+  // Additive counterpart to insertAnchorsInTx: INSERT OR IGNORE against the
+  // (observation_id, node_id, role) primary key, so anchors already present are silently
+  // skipped rather than replaced. Anchors passed in are already resolved+verified by the
+  // caller (application/memory/reanchor.ts) — this method never re-resolves labels itself.
+  // Returns how many rows this call actually inserted (used to compute the "minted" count
+  // in reanchor's report without a second existence check).
+  addAnchorsIfMissing(
+    observationId: string,
+    anchors: {
+      nodeId: string;
+      role?: string;
+      anchorLabel?: string;
+      anchorFile?: string;
+      anchorHash?: string;
+    }[],
+  ): number {
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO memory_anchors
+         (observation_id, node_id, role, anchor_label, anchor_file, anchor_hash, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const now = Date.now();
+    let inserted = 0;
+    for (const a of anchors) {
+      const result = stmt.run(
+        observationId,
+        a.nodeId,
+        a.role ?? "about",
+        a.anchorLabel ?? null,
+        a.anchorFile ?? null,
+        a.anchorHash ?? null,
+        now,
+      ) as { changes: number };
+      if (result.changes > 0) inserted += 1;
+    }
+    return inserted;
+  }
+
   // ---- suggestTopicKeyWithMatches -------------------------------------------
 
   // Pure read. Normalizes title+type to a topic_key candidate (via the static

@@ -15,9 +15,19 @@ import type { BatchResult } from "../../src/domain/shared/batch.ts";
 
 let nextId = 1;
 
+interface MockAnchor {
+  observationId: string;
+  nodeId: string;
+  role: string;
+  anchorLabel?: string;
+  anchorFile?: string;
+  anchorHash?: string;
+}
+
 export class MockMemoryRepository implements MemoryRepository {
   observations: Observation[] = [];
   sessions: Session[] = [];
+  anchors: MockAnchor[] = [];
   closed = false;
   readonly usingLike: boolean = false;
 
@@ -136,33 +146,91 @@ export class MockMemoryRepository implements MemoryRepository {
     return session;
   }
 
-  anchorsForNode(_nodeId: string): {
+  anchorsForNode(nodeId: string): {
     observationId: string;
     role: string;
     anchorLabel?: string;
     anchorFile?: string;
   }[] {
-    return [];
+    return this.anchors
+      .filter((a) => a.nodeId === nodeId)
+      .map((a) => ({
+        observationId: a.observationId,
+        role: a.role,
+        anchorLabel: a.anchorLabel,
+        anchorFile: a.anchorFile,
+      }));
   }
 
-  anchorsForObservation(_observationId: string): {
+  anchorsForObservation(observationId: string): {
     nodeId: string;
     role: string;
     anchorLabel?: string;
     anchorFile?: string;
     anchorHash?: string;
   }[] {
-    return [];
+    return this.anchors
+      .filter((a) => a.observationId === observationId)
+      .map((a) => ({
+        nodeId: a.nodeId,
+        role: a.role,
+        anchorLabel: a.anchorLabel,
+        anchorFile: a.anchorFile,
+        anchorHash: a.anchorHash,
+      }));
   }
 
-  recentAnchoredObservations(_nodeId: string, _limit: number): {
+  recentAnchoredObservations(nodeId: string, limit: number): {
     observationId: string;
     role: string;
     anchorLabel?: string;
     anchorFile?: string;
     updatedAt: number;
   }[] {
-    return [];
+    return this.anchors
+      .filter((a) => a.nodeId === nodeId)
+      .map((a) => {
+        const obs = this.get(a.observationId);
+        return {
+          observationId: a.observationId,
+          role: a.role,
+          anchorLabel: a.anchorLabel,
+          anchorFile: a.anchorFile,
+          updatedAt: obs?.updatedAt ?? 0,
+        };
+      })
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, limit);
+  }
+
+  addAnchorsIfMissing(
+    observationId: string,
+    anchors: {
+      nodeId: string;
+      role?: string;
+      anchorLabel?: string;
+      anchorFile?: string;
+      anchorHash?: string;
+    }[],
+  ): number {
+    let inserted = 0;
+    for (const a of anchors) {
+      const role = a.role ?? "about";
+      const exists = this.anchors.some(
+        (x) => x.observationId === observationId && x.nodeId === a.nodeId && x.role === role,
+      );
+      if (exists) continue;
+      this.anchors.push({
+        observationId,
+        nodeId: a.nodeId,
+        role,
+        anchorLabel: a.anchorLabel,
+        anchorFile: a.anchorFile,
+        anchorHash: a.anchorHash,
+      });
+      inserted += 1;
+    }
+    return inserted;
   }
 
   suggestTopicKeyWithMatches(
@@ -191,7 +259,20 @@ export class MockMemoryRepository implements MemoryRepository {
   }
 
   exportAll(): import("../../src/domain/memory/model.ts").ExportedObservation[] {
-    return [];
+    return this.observations.map((o) => ({
+      ...o,
+      schemaVersion: 1 as const,
+      anchors: this.anchors
+        .filter((a) => a.observationId === o.id)
+        .map((a) => ({
+          nodeId: a.nodeId,
+          role: a.role,
+          anchorLabel: a.anchorLabel,
+          anchorFile: a.anchorFile,
+          anchorHash: a.anchorHash,
+          createdAt: o.createdAt,
+        })),
+    }));
   }
 
   importObservations(): import("../../src/domain/memory/model.ts").ImportReport {

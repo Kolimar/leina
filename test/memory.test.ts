@@ -704,6 +704,65 @@ test("(recent-3) recentAnchoredObservations: superseded observations are exclude
   }
 });
 
+// ---- addAnchorsIfMissing: additive, idempotent anchor insert (reanchor's write path) ----
+
+test("(add-anchor-1) addAnchorsIfMissing: inserts new anchors and returns the inserted count", () => {
+  const { store, dir } = tmpStore();
+  try {
+    const { observation } = store.save({ title: "T", content: "C", type: "architecture" });
+    const inserted = store.addAnchorsIfMissing(observation.id, [
+      { nodeId: "n1", anchorLabel: "foo", anchorFile: "src/foo.ts", anchorHash: "h1" },
+      { nodeId: "n2", anchorLabel: "bar", anchorFile: "src/bar.ts" },
+    ]);
+    assert.equal(inserted, 2);
+
+    const anchors = store.anchorsForObservation(observation.id);
+    assert.equal(anchors.length, 2);
+    const byNode = new Map(anchors.map((a) => [a.nodeId, a]));
+    assert.equal(byNode.get("n1")!.anchorFile, "src/foo.ts");
+    assert.equal(byNode.get("n1")!.anchorHash, "h1");
+    assert.equal(byNode.get("n2")!.anchorFile, "src/bar.ts");
+  } finally {
+    cleanup(store, dir);
+  }
+});
+
+test("(add-anchor-2) addAnchorsIfMissing: re-running with the same anchors mints nothing new (idempotent)", () => {
+  const { store, dir } = tmpStore();
+  try {
+    const { observation } = store.save({ title: "T", content: "C", type: "architecture" });
+    const first = store.addAnchorsIfMissing(observation.id, [{ nodeId: "n1", anchorLabel: "foo" }]);
+    assert.equal(first, 1);
+    const second = store.addAnchorsIfMissing(observation.id, [{ nodeId: "n1", anchorLabel: "foo" }]);
+    assert.equal(second, 0, "re-inserting the same (observation_id, node_id, role) must be a no-op");
+    assert.equal(store.anchorsForObservation(observation.id).length, 1, "no duplicate row created");
+  } finally {
+    cleanup(store, dir);
+  }
+});
+
+test("(add-anchor-3) addAnchorsIfMissing: unions onto anchors an observation already has", () => {
+  const dir = join(tmpdir(), `cg-mem-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(dir, { recursive: true });
+  const resolver = () => [{ nodeId: "n1", sourceFile: "src/a.ts" }];
+  const store = new MemoryStore(join(dir, "memory.db"), "test_project", resolver);
+  try {
+    const { observation } = store.save({
+      title: "T", content: "C", type: "architecture", anchors: ["Anything"],
+    });
+    assert.equal(store.anchorsForObservation(observation.id).length, 1, "starts with one anchor");
+    const inserted = store.addAnchorsIfMissing(observation.id, [{ nodeId: "n2", anchorLabel: "bar" }]);
+    assert.equal(inserted, 1);
+    const anchors = store.anchorsForObservation(observation.id);
+    assert.equal(anchors.length, 2, "new anchor is UNIONED, existing one is preserved (not replaced)");
+    assert.ok(anchors.some((a) => a.nodeId === "n1"));
+    assert.ok(anchors.some((a) => a.nodeId === "n2"));
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ---- batch store unit tests -------------------------------------------------
 
 // (batch-1) saveBatch non-atomic — 3 items all succeed

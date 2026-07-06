@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { formatBatchResults } from "../../domain/shared/batch.ts";
 import { getVerifiedContext } from "../../application/memory/query.ts";
+import { reanchorObservations } from "../../application/memory/reanchor.ts";
 import type {
   ExportedObservation,
   ObservationInput,
@@ -361,6 +362,34 @@ function memMigrate(_rest: string[], dir: string): void {
   }
 }
 
+// memory reanchor <dir> [--dry-run] — retro-anchor existing observations by extracting
+// EXPLICIT path/symbol references from their text and resolving them against the live
+// graph (see application/memory/reanchor.ts for the conservative extraction rules).
+function memReanchor(rest: string[], dir: string): void {
+  const dryRun = hasFlag(rest, "--dry-run");
+  const { store, resolveAnchor, close } = memOpenGuarded(dir);
+  try {
+    const report = reanchorObservations(store, resolveAnchor, { dryRun });
+    const prefix = dryRun ? "[dry-run] " : "";
+    console.log(
+      `${prefix}reanchor: ${report.processed} candidate(s) processed, ` +
+        `${report.minted} minted, ${report.rejected} rejected`,
+    );
+    for (const item of report.items) {
+      if (item.minted.length > 0) {
+        const labels = item.minted.map((m) => `${m.label} -> ${m.nodeId}`).join(", ");
+        console.log(`  #${item.observationId} minted: ${labels}`);
+      }
+      if (item.rejected.length > 0) {
+        const labels = item.rejected.map((r) => `${r.label} (${r.reason})`).join(", ");
+        console.log(`  #${item.observationId} rejected: ${labels}`);
+      }
+    }
+  } finally {
+    close();
+  }
+}
+
 function memHelp(): void {
   console.log(
     `leina memory <dir> <sub-command>\n\n` +
@@ -385,6 +414,7 @@ function memHelp(): void {
       `  current-project <dir>              (show derived project key + detection method)\n` +
       `  merge-projects <dir> --from <key> --to <key> [--dry-run]  (rename/merge project keys)\n` +
       `  migrate <dir>                      (fold legacy per-repo memory.db into global memory)\n` +
+      `  reanchor <dir> [--dry-run]         (retro-anchor observations to real graph nodes)\n` +
       `  export <dir> [--out file.jsonl]    (dump this project's observations+anchors as JSONL)\n` +
       `  import <dir> [--in file.jsonl]     (merge an export from stdin/file; newer revision wins)\n` +
       `  sync <dir>                         (two-way merge with committable .leina/memory-export.jsonl)\n`,
@@ -496,6 +526,7 @@ const MEM_HANDLERS: Record<string, MemSubHandler> = {
   "current-project": memCurrentProject,
   "merge-projects": memMergeProjects,
   migrate: memMigrate,
+  reanchor: memReanchor,
 };
 
 export async function handleMemory(rest: string[]): Promise<void> {

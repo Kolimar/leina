@@ -176,6 +176,25 @@ export interface MemoryRepository {
     updatedAt: number;
   }[];
 
+  /**
+   * Additive, non-destructive anchor insert for an EXISTING observation: adds each anchor
+   * that isn't already present (by `(observation_id, node_id, role)`) and silently skips the
+   * rest — never deletes or replaces (unlike the DELETE+reinsert `anchors` path of `save`/
+   * `update`). Used by `memory reanchor`, which must union new anchors onto observations
+   * that already have some, idempotently. Callers pass already-RESOLVED anchors (this method
+   * never calls the label resolver itself). Returns the number of anchors actually inserted.
+   */
+  addAnchorsIfMissing(
+    observationId: string,
+    anchors: {
+      nodeId: string;
+      role?: string;
+      anchorLabel?: string;
+      anchorFile?: string;
+      anchorHash?: string;
+    }[],
+  ): number;
+
   // ---- topic-key suggestion -----------------------------------------------
 
   /** Suggest a normalised topic_key and rank near-matches from existing live keys. */

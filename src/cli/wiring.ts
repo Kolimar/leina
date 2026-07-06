@@ -9,6 +9,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { GraphStore } from "../infrastructure/sqlite/graph-store.ts";
 import { SQLiteMemoryRepository } from "../infrastructure/sqlite/memory-repository.ts";
+import type { AnchorResolver } from "../infrastructure/sqlite/memory-repository.ts";
 import { FTS5_MIN_NODE_MAJOR } from "../infrastructure/sqlite/schema.ts";
 import { detectNodeVersionAdvice, buildLikeModeWarning } from "../infrastructure/node-version-advice.ts";
 import { makeResolveAnchor, makeVerifyNode } from "../application/memory/anchor-verify.ts";
@@ -49,6 +50,7 @@ export function openGraphRepo(root: string): GraphRepository {
 export function openMemoryRepo(root: string): {
   store: MemoryRepository;
   verifyNode: NodeVerifier;
+  resolveAnchor: AnchorResolver;
   close: () => void;
 } {
   let graph: GraphStore | null = null;
@@ -68,6 +70,10 @@ export function openMemoryRepo(root: string): {
   return {
     store,
     verifyNode,
+    // Exposed (not just baked into the store's save-time label resolution) so
+    // application/memory/reanchor.ts can re-resolve labels extracted from EXISTING
+    // observation text against the same live-graph-backed resolver.
+    resolveAnchor,
     close: () => {
       store.close();
       if (graph) graph.close();
@@ -257,6 +263,7 @@ export function openWorkspaceMemoryRepo(
   return {
     store: federator,
     verifyNode,
+    resolveAnchor,
     close: () => {
       // federator.close() is a no-op; we own all repos here
       for (const mr of memberRepos) mr.close();

@@ -222,6 +222,13 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     return this.hostRepo.recentAnchoredObservations(nodeId, limit);
   }
 
+  addAnchorsIfMissing(
+    observationId: string,
+    anchors: Parameters<MemoryRepository["addAnchorsIfMissing"]>[1],
+  ): number {
+    return this.hostRepo.addAnchorsIfMissing(observationId, anchors);
+  }
+
   // ---- Topic suggestion → host repo ---------------------------------------
 
   suggestTopicKeyWithMatches(
