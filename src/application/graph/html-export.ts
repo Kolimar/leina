@@ -107,8 +107,13 @@ function signatureText(sig: Signature): string {
  * Detalle estructurado y HTML-escapado de un nodo. Se embebe en cada nodo como
  * `d` y se renderiza en el drawer lateral al hacer click (reemplaza el tooltip
  * de hover, que era ilegible cuando la info es larga).
+ *
+ * Exportada (graph-serve FR-06): reutilizada tal cual por
+ * `application/graph/serve-payloads.ts` para construir el campo `node` del
+ * endpoint `/api/projects/:key/nodes/:id` — mismos campos HTML-escapados que
+ * ya consume el drawer de `graph visualize`.
  */
-function nodeDetail(n: GraphNode, deg: number): Record<string, unknown> {
+export function nodeDetail(n: GraphNode, deg: number): Record<string, unknown> {
   const loc = n.sourceLocation ? `:${escapeHtml(n.sourceLocation)}` : "";
   return {
     label: escapeHtml(n.label),
@@ -125,8 +130,11 @@ function nodeDetail(n: GraphNode, deg: number): Record<string, unknown> {
  * Array de nodos en formato vis-network. NO se setea `title` (tooltip de hover):
  * el detalle va en `d` y se muestra en el drawer al hacer click. Los strings de
  * `d` están HTML-escapados (se inyectan vía innerHTML en el drawer).
+ *
+ * Exportada (graph-serve FR-06): builder puro reutilizado por
+ * `application/graph/serve-payloads.ts` para el payload de nodos vis-network.
  */
-function buildVisNodes(
+export function buildVisNodes(
   nodes: GraphNode[],
   degreeMap: Map<string, number>,
   godNodeIds: Set<string>,
@@ -144,8 +152,13 @@ function buildVisNodes(
   });
 }
 
-/** Array de aristas en formato vis-network. INFERRED → dashes:true. */
-function buildVisEdges(edges: GraphEdge[]): unknown[] {
+/**
+ * Array de aristas en formato vis-network. INFERRED → dashes:true.
+ *
+ * Exportada (graph-serve FR-06): builder puro reutilizado por
+ * `application/graph/serve-payloads.ts`.
+ */
+export function buildVisEdges(edges: GraphEdge[]): unknown[] {
   return edges.map((e) => ({
     from: e.source,
     to: e.target,
@@ -171,8 +184,15 @@ function buildGroupColors(nodes: GraphNode[]): Record<string, string> {
   return result;
 }
 
-/** Conteo de nodos por grupo (para los filtros del HUD). */
-function buildGroupCounts(nodes: GraphNode[]): Record<string, number> {
+/**
+ * Conteo de nodos por grupo (para los filtros del HUD).
+ *
+ * Exportada (graph-serve FR-06): builder puro reutilizado por
+ * `application/graph/serve-payloads.ts` para el payload de `/api/.../stats`
+ * (agrupado por carpeta/capa, no confundir con `GraphRepository.statsByKind()`
+ * que agrupa por `kind` de nodo).
+ */
+export function buildGroupCounts(nodes: GraphNode[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const n of nodes) {
     const key = groupKey(n);
