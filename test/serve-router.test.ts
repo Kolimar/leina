@@ -10,7 +10,7 @@ import { createServer, request as httpRequest } from "node:http";
 import type { Server } from "node:http";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
 import { createRouter, type RouterDeps } from "../src/cli/serve/router.ts";
@@ -144,9 +144,12 @@ test("(sr-4) resolveStaticPath rejects ../ traversal, encoded traversal and NUL 
 
 test("(sr-5) resolveStaticPath accepts paths that stay inside root", () => {
   const root = "/srv/graph-ui";
-  assert.equal(resolveStaticPath(root, "/"), join(root, "index.html"));
-  assert.equal(resolveStaticPath(root, "/app.js"), join(root, "app.js"));
-  assert.equal(resolveStaticPath(root, "/sub/dir/file.css"), join(root, "sub", "dir", "file.css"));
+  // Expected via resolve() (NOT join()): the source anchors root with path.resolve(),
+  // which on Windows prepends the current drive (e.g. `D:\srv\graph-ui`). join() would
+  // omit the drive and diverge from the actual only on win32. On POSIX the two agree.
+  assert.equal(resolveStaticPath(root, "/"), resolve(root, "index.html"));
+  assert.equal(resolveStaticPath(root, "/app.js"), resolve(root, "app.js"));
+  assert.equal(resolveStaticPath(root, "/sub/dir/file.css"), resolve(root, "sub", "dir", "file.css"));
 });
 
 test("(sr-6) HTTP: literal and percent-encoded traversal on the wire never escapes root", async () => {

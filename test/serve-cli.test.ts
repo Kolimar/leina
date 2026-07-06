@@ -98,7 +98,11 @@ test("(sc-3) `graph serve` prints its URL, serves the API, self-registers, and S
       child.once("exit", (code) => resolve(code));
       child.kill("SIGINT");
     });
-    assert.equal(exitCode, 0);
+    // win32 has no POSIX SIGINT for child processes: kill() terminates by signal, so the
+    // exit code comes back null (signal-terminated) rather than 0. The observable that
+    // matters — the process exited and released the port — holds either way.
+    if (process.platform === "win32") assert.ok(exitCode === 0 || exitCode === null, `unexpected exit code ${exitCode}`);
+    else assert.equal(exitCode, 0);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
@@ -161,7 +165,9 @@ test("(sc-4) `graph serve` serves the explorer UI (wave 5): index/app.js/lib.js/
         child.once("exit", (code) => resolve(code));
         child.kill("SIGINT");
       });
-      assert.equal(exitCode, 0);
+      // win32: kill() terminates by signal → exit code null rather than 0 (see sc-3).
+      if (process.platform === "win32") assert.ok(exitCode === 0 || exitCode === null, `unexpected exit code ${exitCode}`);
+      else assert.equal(exitCode, 0);
     }
   } finally {
     rmSync(home, { recursive: true, force: true });
