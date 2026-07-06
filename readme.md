@@ -325,7 +325,26 @@ freshness without rebuilding; `refresh` forces a rebuild.
 
 `memory save` resolves `--anchors a,b` to real graph nodes so `memory verified` can later
 re-check each saved observation against the live graph (drift detection). Pass `--topic <key>`
-to evolve an existing entry in place instead of creating a duplicate.
+to evolve an existing entry in place instead of creating a duplicate. Already have
+observations saved without `--anchors`? `memory reanchor <dir> [--dry-run]` retro-anchors
+them by extracting only *explicit* path/symbol references from their text and verifying each
+candidate against the live graph — ambiguous or unresolved mentions are discarded, never
+guessed. It's additive and idempotent, so re-running it is always safe.
+
+### Graph explorer server (`graph serve`)
+
+```bash
+npm run cli -- graph serve <dir> [--port 7423] [--host 127.0.0.1]
+```
+
+A read-only, foreground `node:http` server (zero new dependencies) over the same graph +
+anchored memory as the rest of the CLI: a JSON API (`/api/projects`, `.../stats`, `.../tree`,
+`.../search`, `.../nodes/:id`, `.../nodes/:id/memories`) plus a small vanilla-JS explorer UI —
+project selector, node/edge-kind chips, a folder tree, and a detail drawer with
+`declaredBy`/`invokedBy` and drift-badged memories. Binds strictly to loopback and self-registers
+the project into `~/.leina/projects.json` (the same registry `build`/`refresh`/`init` upsert
+into). Stop it with Ctrl+C. See [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md#graph-serve-dir---port-n---host-h)
+for the full flag/config reference.
 
 ## Memory & drift detection
 

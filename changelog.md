@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`leina graph serve`**: a read-only, foreground HTTP server (`node:http`, zero new
+  dependencies) exposing the graph + anchored memory of a project as a JSON API
+  (`/api/projects`, `.../stats`, `.../tree`, `.../search`, `.../nodes/:id`,
+  `.../nodes/:id/memories`), plus a vanilla-JS explorer UI (project selector, kind/relation
+  chips, folder tree, node detail with `declaredBy`/`invokedBy`, and drift-badged memories).
+  Binds strictly to loopback, supports an optional constant-time-compared auth token
+  (`LEINA_SERVE_TOKEN`), and self-registers the project into a new global registry
+  (`~/.leina/projects.json`, also upserted by `build`/`refresh`/`init`).
+- **`leina memory reanchor`**: conservatively retro-anchors existing observations by
+  extracting only explicit path/symbol references from their text and verifying each
+  candidate against the live graph before minting — ambiguous or unresolved candidates are
+  discarded. Additive and idempotent per `(observation_id, node_id)`; supports `--dry-run`.
+
 ## [1.0.1] — 2026-07-06
 
 ### Fixed
@@ -53,8 +69,8 @@ Initial public release of **leina** — Linked Engineering Intelligence Network 
   travel with the repo, no server.
 
 ### Agent integration
-- **MCP server** (`leina mcp`, stdio): the versioned capability registry (14 contracts)
-  exposed as 15 tools; `init --mcp` registers it in the project `.mcp.json`.
+- **MCP server** (`leina mcp`, stdio): the versioned capability registry (17 contracts)
+  exposed as 19 tools; `init --mcp` registers it in the project `.mcp.json`.
 - Host-neutral advisory hook gate (consent-scoped, never blocks): Devin
   (`.devin/hooks.v1.json`) and Claude Code (`init --claude-hooks` →
   `.claude/settings.json`) share one gate; `AGENTS.md` protocol block for every host

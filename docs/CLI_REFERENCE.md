@@ -89,6 +89,36 @@ coloured by repo. `--single` / `--workspace` override auto-detection.
 Backed by `handleVisualize` (`src/cli/handlers/visualize.ts`) →
 `renderGraphHtml` / `renderConstellationHtml` (`src/application/graph/html-export.ts`).
 
+### `graph serve [<dir>] [--port <n>] [--host <h>]`
+Start a **read-only, foreground** HTTP server (`node:http`, zero framework deps) exposing the
+graph + anchored memory of `<dir>` as a JSON API, plus a vanilla-JS explorer UI at `/`
+(`assets/graph-ui/`, the same vendored `vis-network.min.js` as `visualize`). Routes through the
+same freshness gate as the other graph reads before starting, and self-registers `<dir>` in the
+global project registry (`~/.leina/projects.json`) — the same registry `build`/`refresh`/`init`
+opportunistically upsert into, which backs the UI's project selector.
+
+Config resolves **port → host → token** with a 3-tier precedence (env > `.leina/config.json`
+`"serve"` key > defaults): `LEINA_SERVE_PORT`/`LEINA_SERVE_HOST`/`LEINA_SERVE_TOKEN`, defaulting
+to port `7423`, host `127.0.0.1`, no token (`src/infrastructure/config/serve.ts`). Bind is
+**strictly loopback** — a non-loopback `--host`/config/env value is refused before the server
+ever binds (NFR-02). If a token is configured, requests without a matching token get `401`; the
+comparison is constant-time.
+
+JSON API (all read-only; non-GET → `405`; errors are `{"error":{"code","message"}}`):
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/projects` | every project in the global registry |
+| GET | `/api/projects/:key/stats` | node/edge counts by kind and by relation |
+| GET | `/api/projects/:key/tree` | folder/file tree for the project selector |
+| GET | `/api/projects/:key/search?q=` | label search |
+| GET | `/api/projects/:key/nodes/:id` | node detail + `declaredBy`/`invokedBy` edges |
+| GET | `/api/projects/:key/nodes/:id/memories?limit=` | latest anchored observations, drift-classified |
+
+Runs in the **foreground** until Ctrl+C (`SIGINT` closes every open connection and releases the
+port — no zombie process). Backed by `handleServe` (`src/cli/handlers/serve.ts`) → `cli/serve/router.ts`
++ `cli/serve/handlers.ts` → `application/graph/serve-payloads.ts`.
+
 ---
 
 ## Workspace commands (multi-repo)
@@ -194,6 +224,17 @@ Move/merge all observations from one project key to another (after a remote rena
 ### `memory migrate <dir>`
 Fold a legacy per-repo `<dir>/.leina/memory.db` into the global DB under the derived
 project key. No-op if there's no legacy DB.
+
+### `memory reanchor <dir> [--dry-run]`
+Retro-anchor **existing** observations that reference a real file/symbol in prose but were
+saved without an explicit `--anchors`. Extracts only EXPLICIT references (a path matching a
+node's `sourceFile`, or a symbol resolved with a functional-exact match against the live
+graph, `makeResolveAnchor`) — ambiguous (2+ matches) or unresolved candidates are discarded,
+never guessed. Minting is **additive** (unions with any anchors the observation already has)
+and **idempotent** per `(observation_id, node_id)`: re-running never duplicates a row.
+`--dry-run` reports what would be minted/rejected without writing. Prints a summary
+(`{processed, minted, rejected}`) plus a per-observation breakdown. Backed by
+`reanchorObservations` (`src/application/memory/reanchor.ts`).
 
 ---
 
@@ -548,9 +589,11 @@ fails pointing at the non-interactive equivalents. Backed by `handleTui`
 (`src/cli/handlers/tui.ts`).
 
 ### `capabilities list [--json]`
-List the **6 system capabilities** that expose core use cases as transport-agnostic contracts
-(`CommandContract`, `src/application/capabilities/registry.ts`): `graph.query`, `graph.status`,
-`memory.add`, `memory.search`, `context.build`, `audit.run`. With `--json` prints an array of
+List the **17 system capabilities** that expose core use cases as transport-agnostic contracts
+(`CommandContract`, `src/application/capabilities/registry.ts`), e.g. `graph.query`,
+`graph.status`, `memory.add`, `memory.search`, `context.build`, `audit.run` — run the command
+for the full, current list rather than relying on this doc, since the registry grows over time.
+With `--json` prints an array of
 `{id, description, inputSchema, outputSchema, schemaVersion, transports}` (the `fn` reference is
 omitted from JSON). Each output schema is versioned (`schemaVersion: 1`) and validated in
 `test/schema-validation.test.ts`. This registry is the seam that lets a future alternative

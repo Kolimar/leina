@@ -16,6 +16,20 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// NFR-03 (graph-serve, task 5.2): the whole feature (project registry, `memory reanchor`,
+// `graph serve` + JSON API, the vanilla explorer UI) MUST NOT add new production dependencies.
+// Frozen at the state of `package.json#dependencies` measured on commit `2f8246e` — the last
+// commit BEFORE the graph-serve change started (ola 1, `3e582b3`) — and re-verified unchanged
+// through every subsequent ola (2f8246e..f72284e). Any NEW key added to `dependencies` fails
+// this test; removing a baseline dependency is fine (the guard is "no new", not "exactly this
+// set frozen forever").
+const FROZEN_PRODUCTION_DEPENDENCIES = new Set([
+  "@clack/prompts",
+  "@modelcontextprotocol/sdk",
+  "ts-morph",
+  "web-tree-sitter",
+]);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -283,4 +297,30 @@ test("arch-rule-5: extractor adapters are confined to infrastructure/extractors/
   }
 
   assert.deepEqual(violations, [], `Rule 5 violations:\n${violations.join("\n")}`);
+});
+
+// ---------------------------------------------------------------------------
+// Rule 6 (NFR-03, graph-serve task 5.2): `package.json#dependencies` MUST NOT gain any
+// entry beyond the frozen baseline captured before the graph-serve change. The feature is
+// additive-only on top of the existing hexagonal architecture and its vanilla-JS frontend
+// (design §6: "vanilla SIN build... cero deps de producción → cumple la guarda") — a new
+// production dependency here would silently violate that constraint.
+//
+// Status: ACTIVE.
+// ---------------------------------------------------------------------------
+
+test("arch-rule-6: package.json#dependencies has no entries beyond the frozen NFR-03 baseline", () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
+    dependencies?: Record<string, string>;
+  };
+  const current = Object.keys(pkg.dependencies ?? {});
+
+  const newDependencies = current.filter((name) => !FROZEN_PRODUCTION_DEPENDENCIES.has(name));
+
+  assert.deepEqual(
+    newDependencies,
+    [],
+    `New production dependencies found beyond the frozen NFR-03 baseline ` +
+      `(${[...FROZEN_PRODUCTION_DEPENDENCIES].join(", ")}): ${newDependencies.join(", ")}`,
+  );
 });
