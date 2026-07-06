@@ -198,15 +198,67 @@ summary { cursor: pointer; color: var(--dim); font-size: 12px; }
 .memory-date { color: var(--dim); font-size: 11px; margin-left: auto; }
 .memory-title { font-weight: 600; font-size: 12px; margin-bottom: 3px; word-break: break-word; }
 .memory-preview { color: var(--dim); font-size: 12px; word-break: break-word; }
-.memory-body {
-  background: none !important;
-  border: none !important;
-  padding: 0 !important;
-  margin-top: 4px !important;
-  max-height: 340px;
-  overflow: auto;
-  color: var(--txt);
+/* ---- memory modal ------------------------------------------------------- */
+
+#modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(1, 4, 9, .72);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 4vw;
+}
+/* `display:flex` above would override the [hidden] attribute's UA default
+ * (display:none) — without this rule the invisible backdrop swallows every click. */
+#modal-backdrop[hidden] { display: none; }
+#modal {
+  position: relative;
+  width: min(780px, 100%);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .6);
+  padding: 18px 22px;
+}
+#modal .x { position: absolute; top: 12px; right: 14px; padding: 0; border: none; background: none; color: var(--dim); font-size: 20px; line-height: 1; }
+#modal .x:hover { color: var(--txt); }
+#modal h3 { font-size: 15px; margin: 6px 30px 10px 0; word-break: break-word; }
+#modal-body { overflow: auto; padding-right: 6px; }
+
+/* ---- rendered markdown --------------------------------------------------- */
+
+.md { font-size: 13px; line-height: 1.6; }
+.md h4, .md h5, .md h6 { margin: 14px 0 6px; font-size: 13px; color: var(--txt); }
+.md h4 { font-size: 14px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.md p { margin: 6px 0; word-break: break-word; }
+.md ul, .md ol { margin: 6px 0; padding-left: 22px; }
+.md li { margin: 2px 0; }
+.md code {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
   font-size: 12px;
-  white-space: pre-wrap;
   word-break: break-word;
 }
+.md pre {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow: auto;
+  margin: 8px 0;
+}
+.md pre code { background: none; border: none; padding: 0; white-space: pre; }
+.md .table-scroll { overflow-x: auto; margin: 8px 0; }
+.md table { border-collapse: collapse; font-size: 12px; min-width: 50%; }
+.md th, .md td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; vertical-align: top; }
+.md th { background: var(--bg); color: var(--txt); }
+.md blockquote { border-left: 3px solid var(--line); margin: 8px 0; padding: 2px 12px; color: var(--dim); }
+.md hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+.md a { color: #58a6ff; }

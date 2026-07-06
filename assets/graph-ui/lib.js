@@ -259,6 +259,137 @@ export function formatMemory(mem) {
 }
 
 // ---------------------------------------------------------------------------
+// Minimal markdown parser for the memory modal. Returns plain data (block/inline
+// descriptors), NEVER HTML strings — app.js builds real DOM nodes from it via
+// createElement/textContent, so no matter what a memory contains it can't inject
+// markup. Covers what memories actually use: headings, fenced code, tables, lists,
+// blockquotes, hr, paragraphs; inline code/bold/em/links.
+// ---------------------------------------------------------------------------
+
+/** Inline tokens: {type:"text"|"code"|"bold"|"em"|"link", text, href?}. */
+export function parseInlines(text) {
+  const out = [];
+  let rest = String(text ?? "");
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\s][^*]*\*)|(\[([^\]]+)\]\(([^)\s]+)\))/;
+  while (rest) {
+    const m = rest.match(re);
+    if (!m) {
+      if (rest) out.push({ type: "text", text: rest });
+      break;
+    }
+    if (m.index > 0) out.push({ type: "text", text: rest.slice(0, m.index) });
+    const tok = m[0];
+    if (m[1]) out.push({ type: "code", text: tok.slice(1, -1) });
+    else if (m[2]) out.push({ type: "bold", text: tok.slice(2, -2) });
+    else if (m[3]) out.push({ type: "em", text: tok.slice(1, -1) });
+    else out.push({ type: "link", text: m[5], href: m[6] });
+    rest = rest.slice(m.index + tok.length);
+  }
+  return out;
+}
+
+function splitTableRow(line) {
+  return line
+    .replace(/^\s*\|/, "")
+    .replace(/\|\s*$/, "")
+    .split("|")
+    .map((cell) => parseInlines(cell.trim()));
+}
+
+const TABLE_SEPARATOR = /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/;
+const LIST_ITEM = /^\s*([-*+]|\d+[.)])\s+(.*)$/;
+
+function isTableStart(lines, i) {
+  return lines[i].includes("|") && i + 1 < lines.length
+    && lines[i + 1].includes("-") && TABLE_SEPARATOR.test(lines[i + 1]);
+}
+
+/** Block descriptors: heading{level,inlines} | paragraph{inlines} | code{lang,text} |
+ * list{ordered,items:[inlines]} | table{header,rows} | quote{blocks} | hr. */
+export function parseMarkdown(text) {
+  const blocks = [];
+  const lines = String(text ?? "").split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+
+    const fence = line.match(/^```(\w*)\s*$/);
+    if (fence) {
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++; // closing fence (or EOF)
+      blocks.push({ type: "code", lang: fence[1] || "", text: buf.join("\n") });
+      continue;
+    }
+
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      blocks.push({ type: "heading", level: h[1].length, inlines: parseInlines(h[2]) });
+      i++;
+      continue;
+    }
+
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      blocks.push({ type: "hr" });
+      i++;
+      continue;
+    }
+
+    if (isTableStart(lines, i)) {
+      const header = splitTableRow(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].trim() && lines[i].includes("|")) {
+        rows.push(splitTableRow(lines[i]));
+        i++;
+      }
+      blocks.push({ type: "table", header, rows });
+      continue;
+    }
+
+    const li = line.match(LIST_ITEM);
+    if (li) {
+      const ordered = /^\d/.test(li[1]);
+      const items = [];
+      while (i < lines.length) {
+        const m = lines[i].match(LIST_ITEM);
+        if (!m) break;
+        items.push(parseInlines(m[2]));
+        i++;
+      }
+      blocks.push({ type: "list", ordered, items });
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        buf.push(lines[i].replace(/^\s*>\s?/, ""));
+        i++;
+      }
+      blocks.push({ type: "quote", blocks: parseMarkdown(buf.join("\n")) });
+      continue;
+    }
+
+    // Paragraph: swallow consecutive plain lines (stop at blank or any structural start).
+    const buf = [line];
+    i++;
+    while (
+      i < lines.length && lines[i].trim()
+      && !/^(#{1,6}\s|```|\s*([-*+]|\d+[.)])\s|\s*>|\s*(-{3,}|\*{3,}|_{3,})\s*$)/.test(lines[i])
+      && !isTableStart(lines, i)
+    ) {
+      buf.push(lines[i]);
+      i++;
+    }
+    blocks.push({ type: "paragraph", inlines: parseInlines(buf.join(" ")) });
+  }
+  return blocks;
+}
+
+// ---------------------------------------------------------------------------
 // FR-08: URL state (project + selected node + optional token) — a page reload/share
 // reproduces the same view.
 // ---------------------------------------------------------------------------

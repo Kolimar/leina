@@ -55,6 +55,11 @@ const els = {
   drawerSigText: document.getElementById("drawer-sig-text"),
   neighborsGroups: document.getElementById("neighbors-groups"),
   memoriesList: document.getElementById("memories-list"),
+  modalBackdrop: document.getElementById("modal-backdrop"),
+  modalClose: document.getElementById("modal-close"),
+  modalHead: document.getElementById("modal-head"),
+  modalTitle: document.getElementById("modal-title"),
+  modalBody: document.getElementById("modal-body"),
 };
 
 function setStatus(text) {
@@ -510,12 +515,142 @@ function renderDrawer(nodeId, detail) {
   renderNeighborGroups(detail.neighbors || []);
 }
 
+// ---------------------------------------------------------------------------
+// Markdown → DOM. lib.parseMarkdown returns plain data descriptors; this walk builds
+// real nodes with createElement/textContent only — server text never touches innerHTML.
+// ---------------------------------------------------------------------------
+
+function renderInlines(target, inlines) {
+  for (const inline of inlines) {
+    if (inline.type === "code") {
+      const code = document.createElement("code");
+      code.textContent = inline.text;
+      target.appendChild(code);
+    } else if (inline.type === "bold") {
+      const strong = document.createElement("strong");
+      strong.textContent = inline.text;
+      target.appendChild(strong);
+    } else if (inline.type === "em") {
+      const em = document.createElement("em");
+      em.textContent = inline.text;
+      target.appendChild(em);
+    } else if (inline.type === "link" && /^https?:\/\//.test(inline.href)) {
+      const a = document.createElement("a");
+      a.textContent = inline.text;
+      a.href = inline.href;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      target.appendChild(a);
+    } else {
+      // Plain text — including links whose href didn't pass the http(s) allowlist.
+      target.appendChild(document.createTextNode(inline.text));
+    }
+  }
+}
+
+function renderMarkdownBlocks(blocks) {
+  const frag = document.createDocumentFragment();
+  for (const block of blocks) {
+    if (block.type === "heading") {
+      const h = document.createElement(`h${Math.min(block.level + 3, 6)}`); // h1 → h4: modal headings stay small
+      renderInlines(h, block.inlines);
+      frag.appendChild(h);
+    } else if (block.type === "code") {
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      code.textContent = block.text;
+      pre.appendChild(code);
+      frag.appendChild(pre);
+    } else if (block.type === "list") {
+      const list = document.createElement(block.ordered ? "ol" : "ul");
+      for (const item of block.items) {
+        const li = document.createElement("li");
+        renderInlines(li, item);
+        list.appendChild(li);
+      }
+      frag.appendChild(list);
+    } else if (block.type === "table") {
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      for (const cell of block.header) {
+        const th = document.createElement("th");
+        renderInlines(th, cell);
+        headRow.appendChild(th);
+      }
+      thead.appendChild(headRow);
+      const tbody = document.createElement("tbody");
+      for (const row of block.rows) {
+        const tr = document.createElement("tr");
+        for (const cell of row) {
+          const td = document.createElement("td");
+          renderInlines(td, cell);
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      table.append(thead, tbody);
+      const scroll = document.createElement("div");
+      scroll.className = "table-scroll";
+      scroll.appendChild(table);
+      frag.appendChild(scroll);
+    } else if (block.type === "quote") {
+      const quote = document.createElement("blockquote");
+      quote.appendChild(renderMarkdownBlocks(block.blocks));
+      frag.appendChild(quote);
+    } else if (block.type === "hr") {
+      frag.appendChild(document.createElement("hr"));
+    } else {
+      const p = document.createElement("p");
+      renderInlines(p, block.inlines);
+      frag.appendChild(p);
+    }
+  }
+  return frag;
+}
+
+// ---------------------------------------------------------------------------
+// Memory modal — click a card, read the memory as rendered markdown.
+// ---------------------------------------------------------------------------
+
+function openMemoryModal(mem) {
+  const { title, body, date } = lib.formatMemory(mem);
+  const badge = lib.driftBadge(mem.driftState);
+
+  const badgeEl = document.createElement("span");
+  badgeEl.className = `badge ${badge.className}`;
+  badgeEl.textContent = badge.label;
+  const dateEl = document.createElement("span");
+  dateEl.className = "memory-date";
+  dateEl.textContent = date;
+  els.modalHead.replaceChildren(badgeEl, dateEl);
+
+  els.modalTitle.textContent = title;
+  els.modalBody.replaceChildren(renderMarkdownBlocks(lib.parseMarkdown(body || "(sin contenido)")));
+  els.modalBackdrop.hidden = false;
+  els.modalBody.scrollTop = 0;
+}
+
+function closeMemoryModal() {
+  els.modalBackdrop.hidden = true;
+  els.modalBody.replaceChildren();
+}
+
+els.modalClose.addEventListener("click", closeMemoryModal);
+els.modalBackdrop.addEventListener("click", (event) => {
+  if (event.target === els.modalBackdrop) closeMemoryModal();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !els.modalBackdrop.hidden) closeMemoryModal();
+});
+
 function renderMemoryCard(mem) {
-  const { title, body, preview, date } = lib.formatMemory(mem);
+  const { title, preview, date } = lib.formatMemory(mem);
   const badge = lib.driftBadge(mem.driftState);
 
   const item = document.createElement("div");
-  item.className = "memory-item";
+  item.className = "memory-item expandable";
+  item.title = "ver la memoria completa";
 
   const head = document.createElement("div");
   head.className = "memory-head";
@@ -535,21 +670,8 @@ function renderMemoryCard(mem) {
   previewEl.className = "memory-preview";
   previewEl.textContent = preview || "(sin contenido)";
 
-  const bodyEl = document.createElement("pre");
-  bodyEl.className = "memory-body";
-  bodyEl.textContent = body;
-  bodyEl.hidden = true;
-
-  item.append(head, titleEl, previewEl, bodyEl);
-  if (body) {
-    item.classList.add("expandable");
-    item.addEventListener("click", () => {
-      const expanded = !bodyEl.hidden;
-      bodyEl.hidden = expanded;
-      previewEl.hidden = !expanded;
-      item.classList.toggle("expanded", !expanded);
-    });
-  }
+  item.append(head, titleEl, previewEl);
+  item.addEventListener("click", () => openMemoryModal(mem));
   return item;
 }
 

@@ -249,3 +249,56 @@ test("(gl-24) formatMemory tolerates single-line and empty memories", () => {
   assert.equal(lib.formatMemory({ text: "" }).title, "(sin título)");
   assert.equal(lib.formatMemory({}).date, "");
 });
+
+// ---------------------------------------------------------------------------
+// Markdown parser (memory modal) — returns data descriptors, never HTML strings
+// ---------------------------------------------------------------------------
+
+test("(gl-25) parseMarkdown: headings, paragraphs and hr", () => {
+  const blocks = lib.parseMarkdown("# Título\n\ntexto de un párrafo\nque continúa\n\n---\n\notro párrafo");
+  assert.deepEqual(blocks.map((b: { type: string }) => b.type), ["heading", "paragraph", "hr", "paragraph"]);
+  assert.equal(blocks[0].level, 1);
+  assert.equal(blocks[1].inlines[0].text, "texto de un párrafo que continúa");
+});
+
+test("(gl-26) parseMarkdown: fenced code keeps raw text verbatim", () => {
+  const blocks = lib.parseMarkdown("```ts\nconst a = \"<b>\";\n// **not bold**\n```");
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].type, "code");
+  assert.equal(blocks[0].lang, "ts");
+  assert.equal(blocks[0].text, "const a = \"<b>\";\n// **not bold**");
+});
+
+test("(gl-27) parseMarkdown: tables split header and rows into inline cells", () => {
+  const blocks = lib.parseMarkdown("| Campo | Valor |\n|---|---|\n| líneas | ~2000 |\n| riesgo | Alto |");
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].type, "table");
+  assert.equal(blocks[0].header.length, 2);
+  assert.equal(blocks[0].rows.length, 2);
+  assert.equal(blocks[0].rows[0][0][0].text, "líneas");
+});
+
+test("(gl-28) parseMarkdown: unordered and ordered lists", () => {
+  const blocks = lib.parseMarkdown("- uno\n- dos\n\n1. primero\n2. segundo");
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].type, "list");
+  assert.equal(blocks[0].ordered, false);
+  assert.equal(blocks[0].items.length, 2);
+  assert.equal(blocks[1].ordered, true);
+});
+
+test("(gl-29) parseInlines: code, bold, em and links tokenized as data", () => {
+  const inlines = lib.parseInlines("usa `memory verified` con **drift** y [docs](https://example.com) ahora");
+  const types = inlines.map((t: { type: string }) => t.type);
+  assert.deepEqual(types, ["text", "code", "text", "bold", "text", "link", "text"]);
+  assert.equal(inlines[1].text, "memory verified");
+  assert.equal(inlines[5].href, "https://example.com");
+});
+
+test("(gl-30) parseMarkdown: blockquote nests parsed blocks; empty input → []", () => {
+  const blocks = lib.parseMarkdown("> cita con `código`\n> segunda línea");
+  assert.equal(blocks[0].type, "quote");
+  assert.equal(blocks[0].blocks[0].type, "paragraph");
+  assert.deepEqual(lib.parseMarkdown(""), []);
+  assert.deepEqual(lib.parseMarkdown(undefined), []);
+});
