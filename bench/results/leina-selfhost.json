@@ -1,0 +1,134 @@
+{
+  "meta": {
+    "target": "/home/kolimar/Descargas/Archivo",
+    "runs": 21,
+    "symbol": "main",
+    "node": "26.4.0",
+    "platform": "linux",
+    "arch": "x64",
+    "cpu": "AMD Ryzen 9 7900X3D 12-Core Processor",
+    "cores": 24,
+    "measuredAt": "2026-07-06T05:01:26.358Z"
+  },
+  "graph": {
+    "nodes": 2085,
+    "edges": 4648,
+    "files": 316
+  },
+  "build": [
+    {
+      "label": "build (cold, no cache)",
+      "p50": 2930
+    },
+    {
+      "label": "rebuild (warm extract cache)",
+      "p50": 2808
+    }
+  ],
+  "profile": {
+    "totalMs": 2602,
+    "stages": [
+      {
+        "name": "extract:tsmorph",
+        "ms": 2079,
+        "files": 291
+      },
+      {
+        "name": "extract:scip-go",
+        "ms": 4,
+        "files": 0
+      },
+      {
+        "name": "extract:scip-rust",
+        "ms": 3,
+        "files": 0
+      },
+      {
+        "name": "extract:scip-python",
+        "ms": 2,
+        "files": 0
+      },
+      {
+        "name": "extract:sidecar-csharp",
+        "ms": 1,
+        "files": 0
+      },
+      {
+        "name": "extract:sidecar-java",
+        "ms": 340,
+        "files": 2
+      },
+      {
+        "name": "extract:treesitter",
+        "ms": 89,
+        "files": 14
+      },
+      {
+        "name": "extract:yaml-infra",
+        "ms": 2,
+        "files": 9
+      },
+      {
+        "name": "list-sources",
+        "ms": 3
+      },
+      {
+        "name": "resolve",
+        "ms": 5
+      },
+      {
+        "name": "dedup",
+        "ms": 4
+      },
+      {
+        "name": "persist",
+        "ms": 26
+      },
+      {
+        "name": "communities",
+        "ms": 32
+      },
+      {
+        "name": "manifest",
+        "ms": 12
+      }
+    ]
+  },
+  "read": [
+    {
+      "label": "stats",
+      "p50": 123,
+      "p95": 128
+    },
+    {
+      "label": "affected \"main\"",
+      "p50": 128,
+      "p95": 132
+    },
+    {
+      "label": "query (natural language)",
+      "p50": 156,
+      "p95": 161
+    },
+    {
+      "label": "impact analyze \"main\"",
+      "p50": 127,
+      "p95": 133
+    },
+    {
+      "label": "audit (source→sink)",
+      "p50": 191,
+      "p95": 196
+    },
+    {
+      "label": "memory search",
+      "p50": 131,
+      "p95": 137
+    },
+    {
+      "label": "context build (session hook)",
+      "p50": 132,
+      "p95": 138
+    }
+  ]
+}

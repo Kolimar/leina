@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "target": "/home/kolimar/Descargas/Archivo",
+    "symbol": "buildGraph",
+    "tokenizer": "gpt-tokenizer cl100k (exact)",
+    "measuredAt": "2026-07-06T05:21:02.438Z"
+  },
+  "leina": {
+    "tokens": 504,
+    "commands": 1,
+    "filesIdentified": 45
+  },
+  "corpus": {
+    "sourceFiles": 307,
+    "wholeRepoTokens": 847101
+  },
+  "baselines": [
+    {
+      "baseline": "whole-repo dump (upper bound)",
+      "tokens": 847101,
+      "reads": 307,
+      "savingsPct": "99.9%",
+      "factor": "1681×"
+    },
+    {
+      "baseline": "hand-picked (grep the symbol, open every hit)",
+      "tokens": 52321,
+      "reads": 18,
+      "savingsPct": "99.0%",
+      "factor": "104×"
+    },
+    {
+      "baseline": "grep-flow floor (read every impacted file)",
+      "tokens": 123146,
+      "reads": 45,
+      "savingsPct": "99.6%",
+      "factor": "244×"
+    }
+  ]
+}
