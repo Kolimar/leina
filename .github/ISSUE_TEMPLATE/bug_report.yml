@@ -1,0 +1,60 @@
+name: Bug report
+description: Something isn't working the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more of this you fill in, the
+        faster it can be reproduced and fixed.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and full output
+      description: >
+        The exact `leina ...` command you ran and its full output, including stderr.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`leina doctor` output"
+      description: >
+        Read-only diagnostic — almost always useful. Run `leina doctor` (or
+        `npm run cli -- doctor` from a clone) and paste the output.
+      render: shell
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: Output of `node --version`.
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. macOS 15.1, Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+
+  - type: input
+    id: leina-version
+    attributes:
+      label: leina version
+      description: Output of `leina --version` (or `npm run cli -- --version` from a clone).
+    validations:
+      required: true

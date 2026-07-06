@@ -1,9 +1,38 @@
 # leina
 
+[![GitHub](https://img.shields.io/badge/GitHub-Kolimar%2Fleina-181717?logo=github)](https://github.com/Kolimar/leina)
 [![CI](https://github.com/Kolimar/leina/actions/workflows/ci.yml/badge.svg)](https://github.com/Kolimar/leina/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@kolimar/leina)](https://www.npmjs.com/package/@kolimar/leina)
-[![node](https://img.shields.io/node/v/@kolimar/leina)](#requirements)
+[![node](https://img.shields.io/node/v/@kolimar/leina)](#requisitos)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+<details>
+<summary><strong>Contenido</strong></summary>
+
+- [Por qué un grafo (y no solo vector RAG)](#por-qué-un-grafo-y-no-solo-vector-rag)
+- [Requisitos](#requisitos)
+- [Uso](#uso)
+  - [Consola interactiva](#consola-interactiva)
+  - [Inicio rápido](#inicio-rápido)
+  - [Build / consulta](#build--consulta)
+  - [Memory](#memory)
+  - [Servidor MCP](#servidor-mcp-transporte-dual)
+  - [Env store](#env-store-variables-para-skills-que-llaman-a-servicios)
+  - [Validación y contratos](#validación-y-contratos)
+  - [Impact / audit / events](#impact--audit--events)
+  - [Visualización / workspaces multi-repo](#visualización--workspaces-multi-repo)
+  - [Sidecars](#sidecars-extracción-de-nivel-compilador-para-java--c)
+- [Memory y detección de drift](#memory-y-detección-de-drift)
+- [Lenguajes](#lenguajes)
+- [Sidecars semánticos (C# y Java)](#sidecars-semánticos-c-y-java)
+- [Indexadores SCIP](#indexadores-scip-go-y-más-allá)
+- [Estructura del proyecto](#estructura-del-proyecto)
+- [Estado](#estado)
+- [Roadmap](#roadmap)
+- [Contribuir](#contribuir)
+- [Licencia](#licencia)
+
+</details>
 
 **Leina** es una **L**inked **E**ngineering **I**ntelligence **N**etwork for **A**gents
 (Red de Inteligencia de Ingeniería Conectada para Agentes):
@@ -107,52 +136,71 @@ point de la CLI, los assets embebidos y las gramáticas WASM.
 
 ## Uso
 
-```bash
-# These examples use the clone/contributor form `npm run cli -- <command>`.
-# If you ran `npm install -g @kolimar/leina`, drop the prefix and call `leina <command>`.
-#
-# ── Interactive console ─────────────────────────────────────────────────────
-# Everything below is also available through menus: install/update (pick asset
-# groups), init/deinit the current repo, health status, repair, env vars, uninstall.
-npm run cli -- tui                            # also: leina tui
+Estos ejemplos usan la forma clon/contribuidor `npm run cli -- <command>`. Si instalaste
+con `npm install -g @kolimar/leina`, sacá el prefijo y llamá `leina <command>` directamente.
 
-# ── Quick Start ─────────────────────────────────────────────────────────────
-# One command, once per machine: the "magic" setup (global share + symlinks +
-# user-global Exec grant + hooks, and turns on blanket mode). That's it —
-# leina is now available in every Devin session.
+### Consola interactiva
+
+Todo lo de abajo también está disponible por menús: install/update (elegir grupos de
+assets), init/deinit del repo actual, estado de salud, repair, variables de env, desinstalar.
+
+```bash
+npm run cli -- tui                            # also: leina tui
+```
+
+### Inicio rápido
+
+Un comando, una vez por máquina: el setup "mágico" (share global + symlinks + grant
+`Exec` user-global + hooks, y activa el modo blanket). Eso es todo — leina queda
+disponible en cada sesión de Devin.
+
+```bash
 npm run cli -- setup                         # also: leina setup
 # Undo everything machine-wide at any time:
 npm run cli -- disable
+```
 
-# Per project: nothing to remember. Under blanket mode the leina-setup skill
-# asks once per repo ("use leina here?") and runs init/deinit for you. Each
-# repo has a local, git-ignored consent flag: unknown -> ask once, enabled -> on,
-# disabled -> silent. The graph builds on demand the first time it's queried.
-# You can also wire a repo by hand:
+Por proyecto: no hay nada que recordar. Bajo blanket mode, la skill leina-setup pregunta
+una vez por repo ("¿usar leina acá?") y corre init/deinit por vos. Cada repo tiene un flag
+de consentimiento local, git-ignored: unknown -> pregunta una vez, enabled -> activo,
+disabled -> silencioso. El grafo se construye bajo demanda la primera vez que se consulta.
+También podés cablear un repo a mano:
+
+```bash
 npm run cli -- init <dir>                     # adaptive: LIGHT under blanket, FULL standalone
 npm run cli -- init <dir> --build             # also build the graph synchronously now
 npm run cli -- init <dir> --mcp               # register the MCP server in .mcp.json
 npm run cli -- init <dir> --claude-hooks      # Claude Code hooks (same gate Devin gets)
 npm run cli -- deinit <dir>                   # opt this repo out (consent=disabled) + strip wiring
+```
 
-# Prefer the granular pieces? They compose what `setup` does and each has an inverse:
-#   activate <-> deactivate   (global share/symlinks/user-config; no blanket)
-#   install-global            (deprecated alias of activate)
+¿Preferís las piezas granulares? Componen lo que hace `setup` y cada una tiene un
+inverso: `activate` ⟷ `deactivate` (share/symlinks/config user-global; sin blanket), y
+`install-global` (alias en desuso de `activate`).
 
-# Choose WHICH bundled skills/agents install (see assets/catalog.json for the full list,
-# groups and dependencies). Omit the flags to keep your previous choice; default is full.
+Elegí QUÉ skills/agentes incluidos instalar (ver `assets/catalog.json` para la lista
+completa, grupos y dependencias). Omití los flags para mantener tu elección previa; el
+default es full. Las dependencias se incluyen automáticamente (por ejemplo, elegir la
+skill sdd-explore trae su agente); pasar a una selección más chica limpia los symlinks
+de host que quedaron obsoletos.
+
+```bash
 npm run cli -- activate --preset minimal        # core plumbing only
 npm run cli -- activate --preset sdd            # core + the SDD workflow
 npm run cli -- activate --skills graph-viz,github-pr --agents none
-# Dependencies are auto-included (e.g. selecting the sdd-explore skill pulls its agent);
-# switching to a smaller selection sweeps the now-stale host symlinks.
+```
 
-# Choose which AI hosts to link into (default: devin). Claude Code gets the skills as
-# ~/.claude/skills/<name> and the agents as ~/.claude/agents/<name>.md (its native format).
-# --hosts alone changes WHERE without touching the asset selection.
+Elegí a qué hosts de IA conectarte (default: devin). Claude Code recibe las skills como
+`~/.claude/skills/<name>` y los agentes como `~/.claude/agents/<name>.md` (su formato
+nativo). `--hosts` solo cambia DÓNDE, sin tocar la selección de assets.
+
+```bash
 npm run cli -- activate --hosts devin,claude
+```
 
-# ── Build / query ───────────────────────────────────────────────────────────
+### Build / consulta
+
+```bash
 # build the graph for a project (writes <dir>/.leina/graph.db + manifest)
 npm run cli -- build <dir> [--json]          # --json also writes a portable graph.json
 npm run cli -- build <dir> --profile         # stage timings (unchanged files reuse the extract cache)
@@ -173,10 +221,15 @@ npm run cli -- status <dir>                   # freshness: is the graph stale vs
 npm run cli -- affected <dir> "<symbol>"     # blast radius: who depends on it
 npm run cli -- path <dir> "<a>" "<b>"        # shortest path between two symbols
 npm run cli -- query <dir> "a question"      # term-scored subgraph
+```
 
-# memory — persist and recall the *why*
-# Global DB: ~/.leina/memory.db (honoring $LEINA_HOME), keyed by project.
-# Always-on: no init required — any directory works, even ones without a git repo.
+### Memory
+
+Base de datos global: `~/.leina/memory.db` (respetando `$LEINA_HOME`), indexada por
+proyecto. Siempre activa: no requiere init — cualquier directorio funciona, incluso sin
+repo de git.
+
+```bash
 npm run cli -- memory save <dir> --title "..." --content "..." [--type decision] [--topic key] [--anchors a,b]
 npm run cli -- memory update <dir> <id> [--title ..] [--content ..] [--type ..]
 npm run cli -- memory search <dir> "a question" [--type ..] [--limit N]
@@ -195,17 +248,22 @@ npm run cli -- memory sync <dir>                    # absorb + rewrite the snaps
 npm run cli -- memory export <dir> --out mem.jsonl / memory import <dir> --in mem.jsonl
 # memory scopes: --scope project (default) | personal | workspace | path | skill | process |
 #                technology | security | infra   (search defaults to project; pass --scope to widen)
+```
 
-# ── MCP server (dual transport) ───────────────────────────────────────────────
-# The same capabilities, as MCP tools over stdio. Register ONCE at user scope and the
-# tools are available in every project (each tool takes `root`, defaulting to the
-# workspace the host launched the server in). Skills/AGENTS.md are transport-neutral:
-# agents prefer the mcp__leina__* tools when the host exposes them, else the CLI.
-# Tools mirror the capability registry: graph_query/affected/path/stats/build/status/
-# visualize, impact_analyze, memory_add/search/verified/context/get/update/
-# suggest_topic/session (batch via items[]/ids[]), context_build, audit_run, doctor_run.
-# Graph tools build the graph on first use; per-repo consent=disabled blocks tool calls.
-# CLI-only by design: env exec (names-not-values contract).
+### Servidor MCP (transporte dual)
+
+Las mismas capabilities, como MCP tools sobre stdio. Registralo UNA VEZ a nivel de
+usuario y las tools quedan disponibles en cada proyecto (cada tool toma `root`, que por
+defecto es el workspace donde el host lanzó el server). Skills/AGENTS.md son neutrales
+al transporte: los agentes prefieren las tools `mcp__leina__*` cuando el host las
+expone, si no usan la CLI. Las tools reflejan el registro de capabilities:
+`graph_query/affected/path/stats/build/status/visualize`, `impact_analyze`,
+`memory_add/search/verified/context/get/update/suggest_topic/session` (batch vía
+`items[]`/`ids[]`), `context_build`, `audit_run`, `doctor_run`. Las tools de grafo
+construyen el grafo en el primer uso; `consent=disabled` por repo bloquea las llamadas.
+Solo CLI por diseño: `env exec` (contrato nombres-no-valores).
+
+```bash
 npm run cli -- mcp                             # stdio server (hosts launch this)
 npm run cli -- mcp register                    # USER-GLOBAL: Claude Code / Cursor / Windsurf
 npm run cli -- mcp status                      # read-only per-host registration state
@@ -213,45 +271,65 @@ npm run cli -- mcp unregister                  # inverse of register
 npm run cli -- activate --mcp                  # or register as part of install/setup
 npm run cli -- init <dir> --mcp                # PROJECT-LEVEL .mcp.json (committable, teams)
 # manual registration for any host:  command "leina", args ["mcp"]
+```
 
-# ── Env store (variables for skills that call services) ──────────────────────
-# Global store at ~/.leina/.env (0600, plain text). NAMES-NOT-VALUES contract:
-# an AI agent only ever handles variable names — values enter via hidden TTY prompt
-# (or piped stdin for scripts), listings are masked, --reveal requires a real
-# terminal, and `env exec` injects values process-to-process so a skill can call an
-# authenticated service without the credential ever entering the model context.
+### Env store (variables para skills que llaman a servicios)
+
+Store global en `~/.leina/.env` (0600, texto plano). Contrato NOMBRES-NO-VALORES: un
+agente de IA solo maneja nombres de variables — los valores entran vía prompt de TTY
+oculto (o stdin para scripts), los listados quedan enmascarados, `--reveal` requiere una
+terminal real, y `env exec` inyecta valores proceso a proceso para que una skill llame a
+un servicio autenticado sin que la credencial entre nunca al contexto del modelo.
+
+```bash
 npm run cli -- env set MY_SERVICE_TOKEN        # prompts (hidden); or: echo "$V" | ... env set KEY
 npm run cli -- env list                         # names + masked values
 # (single quotes: the CHILD shell expands the var — the parent never sees the value)
 npm run cli -- env exec --only MY_SERVICE_TOKEN -- sh -c 'curl -H "Authorization: Bearer $MY_SERVICE_TOKEN" https://api...'
 npm run cli -- env unset MY_SERVICE_TOKEN
-# The bundled `authenticated-api` skill is the canonical worked example (SonarQube GET +
-# POST, and the stricter argv-free variants: curl -K - via stdin, or a script consuming
-# process.env). See assets/skills/authenticated-api/SKILL.md.
+```
 
-# ── Validation & contracts ────────────────────────────────────────────────────
+La skill incluida `authenticated-api` es el ejemplo de referencia (SonarQube GET y POST,
+y las variantes más estrictas sin argv: `curl -K -` vía stdin, o un script que consume
+`process.env`). Ver `assets/skills/authenticated-api/SKILL.md`.
+
+### Validación y contratos
+
+```bash
 npm run cli -- doctor [<dir>] [--json]       # health report; --json includes repoIdentity + confidence
 npm run cli -- verify [<dir>] [--json]       # same checks, exit 1 on fail (CI gate)
-npm run cli -- capabilities list [--json]    # the 6 transport-agnostic capabilities + schemas
+npm run cli -- capabilities list [--json]    # the 17 transport-agnostic capabilities + schemas
+```
 
-# ── Impact / audit / events ───────────────────────────────────────────────────
+### Impact / audit / events
+
+```bash
 npm run cli -- impact analyze <dir> "<symbol>" [--json]   # code→test→config→service blast radius
 npm run cli -- audit <dir> [--format md|json|html]        # source→sink candidate paths + findings[]
 npm run cli -- events tail <dir> [--json]                 # local event outbox (off by default)
+```
 
-# ── Visualize / multi-repo workspaces ─────────────────────────────────────────
+### Visualización / workspaces multi-repo
+
+```bash
 npm run cli -- visualize <dir> [--out <path>]             # interactive offline HTML graph viewer
 npm run cli -- workspace build <dir>                      # merged graph across member repos
 npm run cli -- workspace status|detect <dir>              # per-member freshness / detection JSON
 npm run cli -- workspace memory context|search <dir>      # federated memory across members
 npm run cli -- workspace visualize <dir> [--drilldown]    # constellation (repos as super-nodes)
+```
 
-# ── Sidecars (Java / C# compiler-grade extraction) ─────────────────────────────
+### Sidecars (extracción de nivel compilador para Java / C#)
+
+```bash
 npm run cli -- sidecar status                # are the C#/Java sidecars configured?
 npm run cli -- sidecar install csharp        # download a prebuilt binary (sha256-verified) — no toolchain needed
 npm run cli -- sidecar verify java           # verify against a fixture (honest skip if no toolchain)
+```
 
-# ── SCIP indexers (Go and beyond — compiler-grade via third-party binaries) ────
+### Indexadores SCIP (referencia rápida)
+
+```bash
 npm run cli -- scip status                  # is scip-go on PATH?
 npm run cli -- scip install go              # detect+instruct only — prints the install command
 npm run cli -- scip verify go               # verify against a fixture (honest skip if not installed)
@@ -271,18 +349,20 @@ npm run cli -- affected src "GraphStore"
 >
 > **Cómo funciona (guía conceptual):** [`docs/concepts/`](docs/concepts/README.md) explica el
 > funcionamiento interno — grafo, memoria, búsqueda, drift y hooks — con diagramas y
-> storytelling (en español).
+> storytelling. Escrita primero en español — hay [traducción al inglés](docs/i18n/en/concepts/README.md)
+> disponible para compartir con compañeros que no lean español.
 >
-> **Recorrido guiado, estilo preguntas y respuestas (en español):**
-> [`docs/guides/usage-guide.md`](docs/guides/usage-guide.md) cubre el mismo terreno que este
+> **Recorrido guiado, estilo preguntas y respuestas:**
+> [`docs/guides/usage-guide.md`](docs/guides/usage-guide.md) (español;
+> [traducción al inglés](docs/i18n/en/usage-guide.md)) cubre el mismo terreno que este
 > README y `GETTING_STARTED.md` desde un ángulo de "qué le puedo pedir a la IA", más un
 > recorrido SDD completo — una buena opción para compañeros de equipo menos fluidos con la CLI.
 >
-> **Toda la documentación, bilingüe, en tu navegador:** una vez publicada, la documentación
-> completa del proyecto (este README, las guías de arriba, la referencia de la CLI, el roadmap
-> y más) también está disponible como un único sitio buscable con un selector EN/ES — ver
-> [`docs/README.md`](docs/README.md) para el índice completo o generarlo localmente con
-> `npm run docs:site:build`.
+> **Toda la documentación, bilingüe, en tu navegador:** [kolimar.github.io/leina](https://kolimar.github.io/leina/)
+> aloja la documentación completa del proyecto (este README, las guías de arriba, la
+> referencia de la CLI, el roadmap y más) como un único sitio buscable con un selector
+> EN/ES — ver [`docs/README.md`](docs/README.md) para el índice completo o generarlo
+> localmente con `npm run docs:site:build`.
 
 ### Entrada por lotes (stdin JSON)
 
@@ -383,7 +463,7 @@ más, en el orden **tree-sitter → indexador SCIP → ts-morph/sidecar semánti
 TypeScript y los sidecars de Java/C# corren en proceso o como binarios construidos por leina;
 un indexador SCIP (`scip-go` hoy) es un binario de terceros que instalás vos mismo — el mismo
 contrato "nivel compilador si está presente, fallback sintáctico si no", solo que para
-herramientas que leina no posee. Ver [indexadores SCIP](#scip-indexers-go-and-beyond) más
+herramientas que leina no posee. Ver [indexadores SCIP](#indexadores-scip-go-y-más-allá) más
 abajo.
 
 **Estrategia de resolución.** Cada llamada/referencia se resuelve a su destino con una
@@ -521,8 +601,9 @@ src/
 
 ## Estado
 
-Validado de punta a punta sobre fixtures para los 7 lenguajes y sobre repos reales de código
-abierto:
+Validado de punta a punta sobre repos reales de código abierto para 3 de los 11 lenguajes
+soportados (TypeScript, Java, C# — los de extracción más pesada); los otros 8 están
+cubiertos por la suite de fixtures (`npm test`):
 
 | Repo | Lenguaje | Nodes | EXTRACTED |
 |---|---|---|---|
@@ -556,6 +637,12 @@ tests de la CLI (`npm test`) pasa.
    fase) y una skill delegadora por fase, más una skill orquestadora `leina-sdd` que conduce
    el flujo completo — todo instalado globalmente por `leina activate`.
 4. Clustering / god-nodes para codebases muy grandes.
+
+## Contribuir
+
+Issues y pull requests son bienvenidos — ver [`CONTRIBUTING.md`](CONTRIBUTING.md) para el
+setup de desarrollo, la arquitectura en dos minutos y las pautas de PR. ¿Encontraste un
+problema de seguridad? Ver [`SECURITY.md`](SECURITY.md) en vez de abrir un issue público.
 
 ## Licencia
 

@@ -574,10 +574,12 @@ stdin+stdout; en caso contrario falla apuntando a los equivalentes no interactiv
 Respaldado por `handleTui` (`src/cli/handlers/tui.ts`).
 
 ### `capabilities list [--json]`
-Lista las **6 capacidades del sistema** que exponen los casos de uso centrales como
+Lista las **17 capacidades del sistema** que exponen los casos de uso centrales como
 contratos agnósticos de transporte (`CommandContract`,
-`src/application/capabilities/registry.ts`): `graph.query`, `graph.status`, `memory.add`,
-`memory.search`, `context.build`, `audit.run`. Con `--json` imprime un array de
+`src/application/capabilities/registry.ts`), por ejemplo `graph.query`, `graph.status`,
+`memory.add`, `memory.search`, `context.build`, `audit.run` — corré el comando para ver
+la lista completa y actualizada en vez de confiar en este doc, ya que el registro crece
+con el tiempo. Con `--json` imprime un array de
 `{id, description, inputSchema, outputSchema, schemaVersion, transports}` (la referencia
 `fn` se omite del JSON). Cada output schema está versionado (`schemaVersion: 1`) y validado
 en `test/schema-validation.test.ts`. Este registro es la costura que le permite a un futuro

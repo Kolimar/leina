@@ -126,6 +126,10 @@ match while the code is dozens of commits behind).
 
 ## Global install surface
 
+> `install-global` is a deprecated alias of `activate` — prefer `leina activate` in new
+> scripts and docs. It is documented here at length because the mechanics it describes
+> (share versioning, symlinks, permission grants) are exactly what `activate` runs today.
+
 `leina install-global` populates a single source of truth under
 `~/.leina/share/{skills,agents,workflows}` and symlinks each entry into the Devin
 global directory:

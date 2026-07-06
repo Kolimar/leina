@@ -296,7 +296,7 @@ full contract, including POST requests with a token in the header and the strict
 | `leina verify [<dir>]` | Same checks as `doctor` with an actionable exit code (CI gate). |
 | `leina tui` | Interactive console: install/update, init/deinit, status, repair, env. |
 | `leina events tail [dir]` | Local event outbox (off unless `LEINA_EVENTS_PERSIST=1`). |
-| `leina capabilities list` | The 6 transport-agnostic capabilities with their schemas. |
+| `leina capabilities list` | The 17 transport-agnostic capabilities with their schemas. |
 
 `memory save`/`update`/`get` accept `--batch` (JSON array via stdin; `--atomic` on save/update).
 

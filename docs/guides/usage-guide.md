@@ -296,7 +296,7 @@ contrato completo, incluyendo POST con token en el header y las variantes más e
 | `leina verify [<dir>]` | Mismos checks que `doctor` con exit code accionable (gate de CI). |
 | `leina tui` | Consola interactiva: instalar/actualizar, init/deinit, estado, repair, env. |
 | `leina events tail [dir]` | Outbox local de eventos (apagado salvo `LEINA_EVENTS_PERSIST=1`). |
-| `leina capabilities list` | Las 6 capacidades transport-agnósticas con sus schemas. |
+| `leina capabilities list` | Las 17 capacidades transport-agnósticas con sus schemas. |
 
 `memory save`/`update`/`get` aceptan `--batch` (array JSON por stdin; `--atomic` en save/update).
 

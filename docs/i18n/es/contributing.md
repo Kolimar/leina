@@ -1,6 +1,7 @@
 # Contribuir a leina
 
 ¡Gracias por tu interés en mejorar leina! Los issues y pull requests son bienvenidos.
+Leé también el [Código de Conducta](CODE_OF_CONDUCT.md).
 
 ## Setup de desarrollo
 
