@@ -7,38 +7,38 @@
       "GraphRepository",
       "Observation"
     ],
-    "measuredAt": "2026-07-06T05:43:50.259Z"
+    "measuredAt": "2026-07-06T06:37:55.629Z"
   },
   "oracle": "files with a direct `import` of the symbol (verifiable lower bound on real dependents)",
-  "microRecall": 0.04504504504504504,
+  "microRecall": 0.9824561403508771,
   "rows": [
     {
       "symbol": "GraphNode",
-      "oracle": 50,
-      "recovered": 0,
-      "recall": 0,
-      "transitiveBonus": 0
+      "oracle": 51,
+      "recovered": 50,
+      "recall": 0.9803921568627451,
+      "transitiveBonus": 48
     },
     {
       "symbol": "GraphEdge",
-      "oracle": 41,
-      "recovered": 0,
-      "recall": 0,
-      "transitiveBonus": 0
+      "oracle": 43,
+      "recovered": 42,
+      "recall": 0.9767441860465116,
+      "transitiveBonus": 45
     },
     {
       "symbol": "GraphRepository",
       "oracle": 15,
-      "recovered": 5,
-      "recall": 0.3333333333333333,
-      "transitiveBonus": 26
+      "recovered": 15,
+      "recall": 1,
+      "transitiveBonus": 35
     },
     {
       "symbol": "Observation",
       "oracle": 5,
-      "recovered": 0,
-      "recall": 0,
-      "transitiveBonus": 1
+      "recovered": 5,
+      "recall": 1,
+      "transitiveBonus": 22
     }
   ]
 }

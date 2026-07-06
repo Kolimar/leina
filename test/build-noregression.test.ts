@@ -24,17 +24,24 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 // Baseline congelado ANTES del refactor (medido sobre el pipeline original).
+//
+// TS_ONLY.edges se actualizó de 6 -> 7 (sdd/tsmorph-reference-edges): el walk de
+// value-references (REQ-VR-1) añade `caller() --references--> callee.ts` — el
+// identificador `ns` de `ns.target()` (namespace import) alias-resuelve al módulo
+// `callee.ts`, una referencia real y no-espuria (distinta de la arista `calls` hacia
+// `callee.ts:target`, ya cubierta por linkCallEdges).
 const BASELINE = {
-  TS_ONLY: { nodes: 7, edges: 6 },
+  TS_ONLY: { nodes: 7, edges: 7 },
   MIXED: { nodes: 9, edges: 8 },
 } as const;
 
 // Snapshot congelado de distribución por kind/relation — etapa-7 baseline.
 // Valores literales medidos ANTES de aplicar la etapa (no calculados en runtime).
+// TS_ONLY.edgesByRelation.references=1 añadido por sdd/tsmorph-reference-edges (ver nota BASELINE).
 const KIND_SNAPSHOT = {
   TS_ONLY: {
     nodesByKind: { module: 4, function: 3 } as Record<string, number>,
-    edgesByRelation: { contains: 3, calls: 3 } as Record<string, number>,
+    edgesByRelation: { contains: 3, calls: 3, references: 1 } as Record<string, number>,
   },
   MIXED: {
     nodesByKind: { module: 6, function: 3 } as Record<string, number>,

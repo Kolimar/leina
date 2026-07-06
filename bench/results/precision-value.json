@@ -15,38 +15,38 @@
       "saveBatch",
       "replaceGraph"
     ],
-    "measuredAt": "2026-07-06T05:43:49.683Z"
+    "measuredAt": "2026-07-06T06:38:21.657Z"
   },
   "oracle": "files with a direct `import` of the symbol (verifiable lower bound on real dependents)",
-  "microRecall": 0.9512195121951219,
+  "microRecall": 1,
   "rows": [
     {
       "symbol": "GraphStore",
       "oracle": 20,
-      "recovered": 19,
-      "recall": 0.95,
-      "transitiveBonus": 12
+      "recovered": 20,
+      "recall": 1,
+      "transitiveBonus": 14
     },
     {
       "symbol": "dedup",
       "oracle": 5,
       "recovered": 5,
       "recall": 1,
-      "transitiveBonus": 0
+      "transitiveBonus": 1
     },
     {
       "symbol": "writeManifest",
       "oracle": 5,
       "recovered": 5,
       "recall": 1,
-      "transitiveBonus": 0
+      "transitiveBonus": 1
     },
     {
       "symbol": "detectCommunities",
       "oracle": 2,
       "recovered": 2,
       "recall": 1,
-      "transitiveBonus": 0
+      "transitiveBonus": 1
     },
     {
       "symbol": "ExtractCache",
@@ -60,13 +60,13 @@
       "oracle": 2,
       "recovered": 2,
       "recall": 1,
-      "transitiveBonus": 0
+      "transitiveBonus": 1
     },
     {
       "symbol": "buildActiveContext",
       "oracle": 5,
-      "recovered": 4,
-      "recall": 0.8,
+      "recovered": 5,
+      "recall": 1,
       "transitiveBonus": 1
     },
     {
@@ -81,7 +81,7 @@
       "oracle": 0,
       "recovered": 0,
       "recall": null,
-      "transitiveBonus": 5
+      "transitiveBonus": 6
     },
     {
       "symbol": "withGraphStore",
@@ -102,7 +102,7 @@
       "oracle": 0,
       "recovered": 0,
       "recall": null,
-      "transitiveBonus": 1
+      "transitiveBonus": 2
     }
   ]
 }

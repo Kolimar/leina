@@ -398,11 +398,98 @@ function linkCallEdges(ctx: ExtractCtx, sf: SourceFile, relPath: string): void {
   }
 }
 
+// Emit a `references` edge with local (from,to) dedup shared across both reference
+// walks. Distinct relations (calls/extends/implements) are NOT deduped against this —
+// `references` is additive, never a substitute for the more specific relation.
+function emitRef(
+  ctx: ExtractCtx,
+  fromId: string | undefined,
+  target: string | undefined,
+  relPath: string,
+  sourceLocation: string,
+  seen: Set<string>,
+): void {
+  if (!fromId || !target) return;
+  const key = `${fromId}\0${target}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  addEdge(ctx, fromId, target, "references", relPath, sourceLocation);
+}
+
+// Type-position references: import type, parameter/return/field annotations, and
+// nested generic type-args (`Map<string, GraphNode>` yields two TypeReference nodes,
+// both already present in getDescendantsOfKind — no manual recursion needed).
+function linkTypeReferences(ctx: ExtractCtx, sf: SourceFile, relPath: string, seen: Set<string>): void {
+  for (const tr of sf.getDescendantsOfKind(SyntaxKind.TypeReference)) {
+    // .getSymbol() on the TypeReferenceNode itself returns undefined — resolve the
+    // name-node (getTypeName()) instead.
+    const target = resolveSymbolId(tr.getTypeName(), ctx.declToId);
+    const fromId = enclosingId(tr, ctx.declToId);
+    emitRef(ctx, fromId, target, relPath, loc(tr), seen);
+  }
+}
+
+// Excludes for value-position Identifiers — anything already covered by a more
+// specific walk (calls, heritage, import/export bindings) or that sits in type
+// position (covered by linkTypeReferences) must NOT also produce a `references` edge
+// here, or the same pair would be counted twice under two different relations/paths.
+function isExcludedValueId(id: Node): boolean {
+  const p = id.getParent();
+  if (!p) return false;
+  // callee of Call/New — already covered by linkCallEdges.
+  if (
+    (TsNode.isCallExpression(p) || TsNode.isNewExpression(p)) &&
+    p.getExpression() === id
+  ) {
+    return true;
+  }
+  // name-node of `obj.NAME` — keep scope to standalone identifiers only.
+  if (TsNode.isPropertyAccessExpression(p) && p.getNameNode() === id) return true;
+  // import/export binding identifiers — the binding itself isn't a use.
+  const pk = p.getKind();
+  if (
+    pk === SyntaxKind.ImportSpecifier ||
+    pk === SyntaxKind.ImportClause ||
+    pk === SyntaxKind.NamespaceImport ||
+    pk === SyntaxKind.ImportEqualsDeclaration ||
+    pk === SyntaxKind.ExportSpecifier
+  ) {
+    return true;
+  }
+  // heritage (`extends`/`implements`) — already covered by the heritage walks.
+  if (id.getFirstAncestorByKind(SyntaxKind.HeritageClause)) return true;
+  // type position — already covered by linkTypeReferences.
+  if (id.getFirstAncestorByKind(SyntaxKind.TypeReference)) return true;
+  if (TsNode.isQualifiedName(p)) return true;
+  return false;
+}
+
+// Value-position references: identifiers that alias-resolve to a registered
+// declaration but aren't calls, heritage, import bindings, or type positions (all
+// handled elsewhere). Covers symbols passed as values (`fn: buildGraph as ...`,
+// `registerHandler(myHandler)`).
+function linkValueReferences(ctx: ExtractCtx, sf: SourceFile, relPath: string, seen: Set<string>): void {
+  for (const id of sf.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    if (isExcludedValueId(id)) continue;
+    const target = resolveSymbolId(id, ctx.declToId);
+    const fromId = enclosingId(id, ctx.declToId);
+    emitRef(ctx, fromId, target, relPath, loc(id), seen);
+  }
+}
+
+// Owns the per-file dedup set shared by both reference walks.
+function linkReferenceEdges(ctx: ExtractCtx, sf: SourceFile, relPath: string): void {
+  const seen = new Set<string>();
+  linkTypeReferences(ctx, sf, relPath, seen);
+  linkValueReferences(ctx, sf, relPath, seen);
+}
+
 function linkHeritageAndCalls(ctx: ExtractCtx, sf: SourceFile): void {
   const relPath = ctx.rel(sf.getFilePath());
   for (const cls of sf.getClasses()) linkClassHeritage(ctx, cls, relPath);
   for (const itf of sf.getInterfaces()) linkInterfaceHeritage(ctx, itf, relPath);
   linkCallEdges(ctx, sf, relPath);
+  linkReferenceEdges(ctx, sf, relPath);
 }
 
 export function extractTsProject(
