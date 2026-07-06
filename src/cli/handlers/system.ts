@@ -337,6 +337,10 @@ export function printRootHelp(): void {
       `  visualize <dir> [--out <path>] [--drilldown]\n` +
       `                          export an interactive offline HTML graph viewer; on a\n` +
       `                          workspace root renders constellation (or --drilldown) mode\n` +
+      `  graph serve [dir] [--port <n>] [--host <h>]\n` +
+      `                          foreground read-only HTTP server: stats/tree/search/node\n` +
+      `                          detail + anchored memories over the graph; JSON API only,\n` +
+      `                          loopback-bound (127.0.0.1/::1/localhost), Ctrl+C to stop\n` +
       `  workspace <build|status|detect|memory|visualize> [dir]\n` +
       `                          multi-repo workspace: merged graph, per-member freshness,\n` +
       `                          federated memory (context|search), constellation viz\n` +

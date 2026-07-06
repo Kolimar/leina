@@ -196,6 +196,28 @@ switch (cmd) {
     break;
 
   // ---------------------------------------------------------------------------
+  // Graph sub-command dispatcher (graph-serve) — build/refresh/status/stats/affected/
+  // path/query/visualize stay top-level (unchanged); `graph serve` is the one new
+  // sub-command living under its own group, per design's open question.
+  // ---------------------------------------------------------------------------
+  case "graph": {
+    const [graphSub, ...graphRest] = rest;
+    switch (graphSub) {
+      case "serve": {
+        // Lazy: node:http + the cli/serve/* transport must not tax the ~0.15s
+        // read-path startup of every other command.
+        const { handleServe } = await import("./handlers/serve.ts");
+        await handleServe(graphRest);
+        break;
+      }
+      default:
+        process.stderr.write("Usage: leina graph serve [<dir>] [--port <n>] [--host <h>]\n");
+        process.exit(1);
+    }
+    break;
+  }
+
+  // ---------------------------------------------------------------------------
   // Workspace sub-command dispatcher
   // ---------------------------------------------------------------------------
   case "workspace": {
