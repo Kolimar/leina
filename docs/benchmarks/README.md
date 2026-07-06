@@ -74,6 +74,24 @@ This repo is TypeScript-dominated (291/316 files via ts-morph), so the warm cach
 little here — the cache pays off on polyglot repos where tree-sitter files dominate.
 `leina build <dir> --profile` shows exactly where your repo's time goes.
 
+### Cross-corpus — the read path is flat regardless of repo size
+
+Same harness, run against [`zod`](https://github.com/colinhacks/zod) (an unrelated external
+TypeScript repo, 418 files). Raw: [`zod-speed.json`](../../bench/results/zod-speed.json),
+[`zod-tokens.json`](../../bench/results/zod-tokens.json).
+
+| corpus | files | cold build | read path (p50 range) | token answer vs grep-floor |
+|---|---:|---:|---:|---:|
+| leina (self) | 316 | 2.93 s | 123–191 ms | 504 tok vs 123k (**244×**) |
+| zod (external) | 418 | 5.07 s | 122–188 ms | 651 tok vs 100k (**154×**) |
+
+The build scales with file count (bigger repo → longer parse), but **the read path barely
+moves** — reads hit SQLite indexes, not the extractor, so `affected`/`impact`/`query` stay
+near the same ~130 ms floor whether the graph has 2k or 6k edges. zod also flips the grep
+failure mode from Fase 2: there a textual grep for `ZodType` matches **38** files but only
+**27** are real dependents — grep over-matches (comments, strings) where on leina it
+under-matched. leina returns the exact 27 either way.
+
 ## Run it on your own repo
 
 ```
@@ -87,9 +105,10 @@ set) go here as they are measured.
 ## Token savings — answering "what breaks if I touch X?"
 
 Wall-clock is the easy half. The number that actually moves an agent's cost is **tokens
-spent to answer a structural question**. `leina impact analyze X` returns the complete,
-transitive blast radius as a compact JSON list. Without a graph, an agent has to *read
-source* to derive — and verify — the same answer. Harness: `bench/tokens.ts`.
+spent to answer a structural question**. `leina impact analyze X` returns X's *impact set*
+— the files structurally connected to it (what depends on X and what X depends on) — as a
+compact JSON list. Without a graph, an agent has to *read source* to derive, and verify,
+the same set. Harness: `bench/tokens.ts`.
 
 Three deterministic baselines, no LLM in the loop, all counted with the **same tokenizer**
 (`gpt-tokenizer`, cl100k, exact):
@@ -102,7 +121,7 @@ Three deterministic baselines, no LLM in the loop, all counted with the **same t
 <div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">whole-repo dump (upper bound)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:100%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#f59e0b,#ef4444)"></span></span><span style="flex:0 0 8rem;opacity:.7">847k tok</span></div>
 </div>
 
-Symbol `buildGraph` (45 transitive dependents), leina's own repo — 307 source files,
+Symbol `buildGraph` (45 files in its impact set), leina's own repo — 307 source files,
 847k tokens total. Raw: [`bench/results/tokens-buildGraph.json`](../../bench/results/tokens-buildGraph.json).
 
 | baseline (same question, no graph) | tokens | files to read | vs leina |
@@ -127,9 +146,45 @@ Symbol `buildGraph` (45 transitive dependents), leina's own repo — 307 source 
 
 Run it on your own repo: `node --experimental-strip-types bench/tokens.ts <repo> <symbol> --json`.
 
-## Retrieval precision — coming with its ground truth
+## Retrieval recall — does `affected` recover the dependents you can verify?
 
-The last table — **precision/recall of `impact analyze`** against a hand-labeled set of
-real commits (task → files that actually had to change) — is being built as a versioned
-corpus under `bench/precision/`. It lands here *with* its labeled dataset and selection
-method, not before: a precision number without published ground truth is not a benchmark.
+For a dependency graph the honest precision question is recall: when you ask "who depends
+on X?", does `affected` return the files that genuinely do? The oracle is verifiable and
+non-circular — every file with a direct `import` of X from within the repo (a strict
+*lower bound* on real dependents). Harness: `bench/precision/run.ts`. It also counts the
+**transitive** dependents leina surfaces *beyond* that import floor — the indirect ones a
+grep-for-imports flow never reaches.
+
+The result splits sharply, and honestly, by symbol kind:
+
+<!-- bars from bench/results/precision-{value,type}.json; scale = 100% recall -->
+<div style="font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:.5rem 0">
+<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">value symbols (fn / class)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:95%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#10b981,#34d399)"></span></span><span style="flex:0 0 7rem;opacity:.85">95.1% recall</span></div>
+<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">type-only symbols (interface)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:4.5%;min-width:6px;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#f59e0b,#ef4444)"></span></span><span style="flex:0 0 7rem;opacity:.7">4.5% recall</span></div>
+</div>
+
+| symbol kind | verifiable import-dependents | recovered | recall |
+|---|---:|---:|---:|
+| value (functions, classes) — calls/refs/implements | 41 | 39 | **95.1%** |
+| type-only (interfaces, type aliases) | 111 | 5 | **4.5%** |
+
+Raw: [`precision-value.json`](../../bench/results/precision-value.json), [`precision-type.json`](../../bench/results/precision-type.json).
+
+**What this actually says — the limitation is the headline, not a footnote:**
+
+- **On value dependencies leina is near-complete (95%)** and adds real transitive reach:
+  it recovers virtually every file that calls, references, or implements a symbol, *plus*
+  indirect dependents a textual import search misses.
+- **On type-only dependencies leina is currently blind (~5%).** `affected GraphNode`
+  reports "nothing depends on it" while 50 files import that type. leina models *value*
+  edges (call/reference/implements), not *type-annotation* edges — so changing an
+  interface's shape is not yet surfaced by `affected`. This is a real, documented gap, not
+  a rounding error, and the benchmark exists precisely to keep us honest about it.
+- The harness also caught a specific anomaly — a heavily-called function reporting zero
+  dependents — now tracked as an extraction bug. A benchmark that never finds anything
+  wrong isn't measuring anything.
+
+Method limits, stated plainly: the oracle counts single-line and multi-line internal
+`import`s (it misses re-exports and dynamic imports), and it is a *lower bound* — so recall
+here is conservative. Extending the corpus to external repos and a commit-labeled set is
+tracked under `bench/precision/`.

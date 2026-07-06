@@ -80,6 +80,24 @@ en caliente ahorra poco aquí — se amortiza en repos políglotas donde predomi
 archivos de tree-sitter. `leina build <dir> --profile` muestra exactamente en qué se va
 el tiempo en tu repo.
 
+### Cross-corpus — el read path es plano sin importar el tamaño del repo
+
+El mismo arnés, corrido contra [`zod`](https://github.com/colinhacks/zod) (un repo externo
+de TypeScript no relacionado, 418 archivos). Crudo: [`zod-speed.json`](../../../bench/results/zod-speed.json),
+[`zod-tokens.json`](../../../bench/results/zod-tokens.json).
+
+| corpus | archivos | build frío | read path (rango p50) | respuesta token vs piso grep |
+|---|---:|---:|---:|---:|
+| leina (propio) | 316 | 2.93 s | 123–191 ms | 504 tok vs 123k (**244×**) |
+| zod (externo) | 418 | 5.07 s | 122–188 ms | 651 tok vs 100k (**154×**) |
+
+El build escala con la cantidad de archivos (repo más grande → parseo más largo), pero **el
+read path casi no se mueve** — las lecturas pegan a índices SQLite, no al extractor, así que
+`affected`/`impact`/`query` quedan cerca del mismo piso de ~130 ms tenga el grafo 2k o 6k
+edges. zod además invierte el modo de fallo de grep de la Fase 2: ahí un grep textual de
+`ZodType` matchea **38** archivos pero solo **27** son dependientes reales — grep sobre-matchea
+(comentarios, strings) donde en leina sub-matcheaba. leina devuelve los 27 exactos igual.
+
 ## Ejecútalo en tu propio repo
 
 ```
@@ -94,9 +112,9 @@ conjunto de precisión de extracción) van aquí a medida que se midan.
 
 El tiempo de reloj es la mitad fácil. El número que de verdad mueve el costo de un agente
 son los **tokens gastados en responder una pregunta estructural**. `leina impact analyze X`
-devuelve el blast radius transitivo completo como una lista JSON compacta. Sin grafo, un
-agente tiene que *leer código fuente* para derivar — y verificar — la misma respuesta.
-Arnés: `bench/tokens.ts`.
+devuelve el *conjunto de impacto* de X — los archivos conectados estructuralmente a él (lo
+que depende de X y lo que X usa) — como una lista JSON compacta. Sin grafo, un agente tiene
+que *leer código fuente* para derivar, y verificar, el mismo conjunto. Arnés: `bench/tokens.ts`.
 
 Tres baselines deterministas, sin LLM en el loop, todos contados con el **mismo
 tokenizer** (`gpt-tokenizer`, cl100k, exacto):
@@ -109,8 +127,8 @@ tokenizer** (`gpt-tokenizer`, cl100k, exacto):
 <div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">volcado del repo (cota sup.)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:100%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#f59e0b,#ef4444)"></span></span><span style="flex:0 0 8rem;opacity:.7">847k tok</span></div>
 </div>
 
-Símbolo `buildGraph` (45 dependientes transitivos), el propio repo de leina — 307 archivos
-fuente, 847k tokens en total. Crudo: [`bench/results/tokens-buildGraph.json`](../../../bench/results/tokens-buildGraph.json).
+Símbolo `buildGraph` (45 archivos en su conjunto de impacto), el propio repo de leina — 307
+archivos fuente, 847k tokens en total. Crudo: [`bench/results/tokens-buildGraph.json`](../../../bench/results/tokens-buildGraph.json).
 
 | baseline (misma pregunta, sin grafo) | tokens | archivos a leer | vs leina |
 |---|---:|---:|---:|
@@ -134,10 +152,45 @@ fuente, 847k tokens en total. Crudo: [`bench/results/tokens-buildGraph.json`](..
 
 Ejecútalo en tu repo: `node --experimental-strip-types bench/tokens.ts <repo> <símbolo> --json`.
 
-## Precisión de recuperación — próximamente, con su ground truth
+## Recall de recuperación — ¿`affected` recupera los dependientes verificables?
 
-La última tabla — **precisión/recall de `impact analyze`** contra un conjunto etiquetado a
-mano de commits reales (tarea → archivos que de verdad hubo que cambiar) — se está
-construyendo como un corpus versionado bajo `bench/precision/`. Aterriza aquí *con* su
-dataset etiquetado y método de selección, no antes: un número de precisión sin ground
-truth publicado no es un benchmark.
+Para un grafo de dependencias, la pregunta de precisión honesta es el recall: cuando
+preguntás "¿quién depende de X?", ¿`affected` devuelve los archivos que realmente lo hacen?
+El oráculo es verificable y no circular — todo archivo con un `import` directo de X desde
+dentro del repo (una *cota inferior* estricta de los dependientes reales). Arnés:
+`bench/precision/run.ts`. También cuenta los dependientes **transitivos** que leina revela
+*más allá* de ese piso de imports — los indirectos que un flujo grep-de-imports nunca alcanza.
+
+El resultado se parte nítido, y honestamente, por tipo de símbolo:
+
+<!-- barras desde bench/results/precision-{value,type}.json; escala = 100% recall -->
+<div style="font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:.5rem 0">
+<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">símbolos-valor (fn / clase)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:95%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#10b981,#34d399)"></span></span><span style="flex:0 0 7rem;opacity:.85">95.1% recall</span></div>
+<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">símbolos solo-tipo (interfaz)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:4.5%;min-width:6px;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#f59e0b,#ef4444)"></span></span><span style="flex:0 0 7rem;opacity:.7">4.5% recall</span></div>
+</div>
+
+| tipo de símbolo | dependientes-import verificables | recuperados | recall |
+|---|---:|---:|---:|
+| valor (funciones, clases) — calls/refs/implements | 41 | 39 | **95.1%** |
+| solo-tipo (interfaces, type aliases) | 111 | 5 | **4.5%** |
+
+Crudo: [`precision-value.json`](../../../bench/results/precision-value.json), [`precision-type.json`](../../../bench/results/precision-type.json).
+
+**Qué dice esto de verdad — la limitación es el titular, no una nota al pie:**
+
+- **En dependencias de valor leina es casi completo (95%)** y suma alcance transitivo real:
+  recupera casi todo archivo que llama, referencia o implementa un símbolo, *más* los
+  dependientes indirectos que una búsqueda textual de imports se pierde.
+- **En dependencias solo-tipo leina está hoy ciego (~5%).** `affected GraphNode` reporta
+  "nada depende de él" mientras 50 archivos importan ese tipo. leina modela aristas de
+  *valor* (call/reference/implements), no de *anotación de tipo* — así que cambiar la forma
+  de una interfaz aún no lo avisa `affected`. Es un gap real y documentado, no un error de
+  redondeo, y el benchmark existe justo para mantenernos honestos sobre eso.
+- El arnés también atrapó una anomalía específica — una función muy llamada reportando cero
+  dependientes — ahora registrada como bug de extracción. Un benchmark que nunca encuentra
+  nada mal no está midiendo nada.
+
+Límites del método, dichos claro: el oráculo cuenta `import`s internos de una y varias
+líneas (se pierde re-exports e imports dinámicos), y es una *cota inferior* — así que el
+recall acá es conservador. Extender el corpus a repos externos y a un set etiquetado por
+commits se registra bajo `bench/precision/`.

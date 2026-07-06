@@ -1,0 +1,134 @@
+{
+  "meta": {
+    "target": "/tmp/claude-1000/-home-kolimar-Descargas-Archivo/b03acfc9-9883-4fd9-ba45-7cab17bd5f44/scratchpad/corpora/zod",
+    "runs": 11,
+    "symbol": "ZodType",
+    "node": "26.4.0",
+    "platform": "linux",
+    "arch": "x64",
+    "cpu": "AMD Ryzen 9 7900X3D 12-Core Processor",
+    "cores": 24,
+    "measuredAt": "2026-07-06T05:31:40.711Z"
+  },
+  "graph": {
+    "nodes": 2204,
+    "edges": 6080,
+    "files": 418
+  },
+  "build": [
+    {
+      "label": "build (cold, no cache)",
+      "p50": 5072
+    },
+    {
+      "label": "rebuild (warm extract cache)",
+      "p50": 4936
+    }
+  ],
+  "profile": {
+    "totalMs": 4733,
+    "stages": [
+      {
+        "name": "extract:tsmorph",
+        "ms": 4584,
+        "files": 402
+      },
+      {
+        "name": "extract:scip-go",
+        "ms": 0,
+        "files": 0
+      },
+      {
+        "name": "extract:scip-rust",
+        "ms": 0,
+        "files": 0
+      },
+      {
+        "name": "extract:scip-python",
+        "ms": 0,
+        "files": 0
+      },
+      {
+        "name": "extract:sidecar-csharp",
+        "ms": 0,
+        "files": 0
+      },
+      {
+        "name": "extract:sidecar-java",
+        "ms": 0,
+        "files": 0
+      },
+      {
+        "name": "extract:treesitter",
+        "ms": 34,
+        "files": 5
+      },
+      {
+        "name": "extract:yaml-infra",
+        "ms": 4,
+        "files": 11
+      },
+      {
+        "name": "list-sources",
+        "ms": 2
+      },
+      {
+        "name": "resolve",
+        "ms": 6
+      },
+      {
+        "name": "dedup",
+        "ms": 8
+      },
+      {
+        "name": "persist",
+        "ms": 24
+      },
+      {
+        "name": "communities",
+        "ms": 55
+      },
+      {
+        "name": "manifest",
+        "ms": 16
+      }
+    ]
+  },
+  "read": [
+    {
+      "label": "stats",
+      "p50": 123,
+      "p95": 126
+    },
+    {
+      "label": "affected \"ZodType\"",
+      "p50": 135,
+      "p95": 141
+    },
+    {
+      "label": "query (natural language)",
+      "p50": 158,
+      "p95": 169
+    },
+    {
+      "label": "impact analyze \"ZodType\"",
+      "p50": 139,
+      "p95": 145
+    },
+    {
+      "label": "audit (source→sink)",
+      "p50": 190,
+      "p95": 194
+    },
+    {
+      "label": "memory search",
+      "p50": 133,
+      "p95": 139
+    },
+    {
+      "label": "context build (session hook)",
+      "p50": 134,
+      "p95": 136
+    }
+  ]
+}

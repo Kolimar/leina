@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "target": "/tmp/claude-1000/-home-kolimar-Descargas-Archivo/b03acfc9-9883-4fd9-ba45-7cab17bd5f44/scratchpad/corpora/zod",
+    "symbol": "ZodType",
+    "tokenizer": "gpt-tokenizer cl100k (exact)",
+    "measuredAt": "2026-07-06T05:32:03.674Z"
+  },
+  "leina": {
+    "tokens": 651,
+    "commands": 1,
+    "filesIdentified": 27
+  },
+  "corpus": {
+    "sourceFiles": 406,
+    "wholeRepoTokens": 670199
+  },
+  "baselines": [
+    {
+      "baseline": "whole-repo dump (upper bound)",
+      "tokens": 670199,
+      "reads": 406,
+      "savingsPct": "99.9%",
+      "factor": "1029×"
+    },
+    {
+      "baseline": "hand-picked (grep the symbol, open every hit)",
+      "tokens": 248544,
+      "reads": 38,
+      "savingsPct": "99.7%",
+      "factor": "382×"
+    },
+    {
+      "baseline": "grep-flow floor (read every impacted file)",
+      "tokens": 100037,
+      "reads": 27,
+      "savingsPct": "99.3%",
+      "factor": "154×"
+    }
+  ]
+}

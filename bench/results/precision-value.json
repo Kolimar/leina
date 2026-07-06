@@ -1,0 +1,108 @@
+{
+  "meta": {
+    "target": "/home/kolimar/Descargas/Archivo",
+    "symbols": [
+      "GraphStore",
+      "dedup",
+      "writeManifest",
+      "detectCommunities",
+      "ExtractCache",
+      "resolve",
+      "buildActiveContext",
+      "detectSourcesAndSinks",
+      "tokenize",
+      "withGraphStore",
+      "saveBatch",
+      "replaceGraph"
+    ],
+    "measuredAt": "2026-07-06T05:43:49.683Z"
+  },
+  "oracle": "files with a direct `import` of the symbol (verifiable lower bound on real dependents)",
+  "microRecall": 0.9512195121951219,
+  "rows": [
+    {
+      "symbol": "GraphStore",
+      "oracle": 20,
+      "recovered": 19,
+      "recall": 0.95,
+      "transitiveBonus": 12
+    },
+    {
+      "symbol": "dedup",
+      "oracle": 5,
+      "recovered": 5,
+      "recall": 1,
+      "transitiveBonus": 0
+    },
+    {
+      "symbol": "writeManifest",
+      "oracle": 5,
+      "recovered": 5,
+      "recall": 1,
+      "transitiveBonus": 0
+    },
+    {
+      "symbol": "detectCommunities",
+      "oracle": 2,
+      "recovered": 2,
+      "recall": 1,
+      "transitiveBonus": 0
+    },
+    {
+      "symbol": "ExtractCache",
+      "oracle": 2,
+      "recovered": 2,
+      "recall": 1,
+      "transitiveBonus": 1
+    },
+    {
+      "symbol": "resolve",
+      "oracle": 2,
+      "recovered": 2,
+      "recall": 1,
+      "transitiveBonus": 0
+    },
+    {
+      "symbol": "buildActiveContext",
+      "oracle": 5,
+      "recovered": 4,
+      "recall": 0.8,
+      "transitiveBonus": 1
+    },
+    {
+      "symbol": "detectSourcesAndSinks",
+      "oracle": 0,
+      "recovered": 0,
+      "recall": null,
+      "transitiveBonus": 0
+    },
+    {
+      "symbol": "tokenize",
+      "oracle": 0,
+      "recovered": 0,
+      "recall": null,
+      "transitiveBonus": 5
+    },
+    {
+      "symbol": "withGraphStore",
+      "oracle": 0,
+      "recovered": 0,
+      "recall": null,
+      "transitiveBonus": 2
+    },
+    {
+      "symbol": "saveBatch",
+      "oracle": 0,
+      "recovered": 0,
+      "recall": null,
+      "transitiveBonus": 1
+    },
+    {
+      "symbol": "replaceGraph",
+      "oracle": 0,
+      "recovered": 0,
+      "recall": null,
+      "transitiveBonus": 1
+    }
+  ]
+}
