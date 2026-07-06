@@ -18,6 +18,11 @@ const IGNORE_DIRS = new Set([
   ".venv",
   "venv",
   "target",
+  // .NET build outputs: obj/ holds generated .cs (*.g.cs, AssemblyInfo) that would
+  // otherwise be indexed as sources and re-stale the graph on every dotnet build.
+  // The Roslyn sidecar already skips these — keep both lists in sync.
+  "obj",
+  "bin",
 ]);
 
 /**

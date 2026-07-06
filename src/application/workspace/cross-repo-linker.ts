@@ -151,7 +151,7 @@ function matchConfidence(importModule: string, packageName: string): PkgEvidence
 // ---------------------------------------------------------------------------
 
 const SOURCE_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".java", ".cs"]);
-const SKIP_DIRS = new Set(["node_modules", ".git", ".leina", "dist", "build", "out", "__pycache__"]);
+const SKIP_DIRS = new Set(["node_modules", ".git", ".leina", "dist", "build", "out", "__pycache__", "obj", "bin"]);
 
 /** Recursively list source files in a directory. */
 function listSourceFiles(dir: string): string[] {

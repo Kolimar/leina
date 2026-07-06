@@ -34,6 +34,32 @@ function stamp(dir: string): void {
   writeManifest(dir, listSourceFiles(dir));
 }
 
+// --- source discovery -------------------------------------------------------
+
+test("listSourceFiles: .NET build outputs (obj/, bin/) are not sources", () => {
+  const dir = mkdtempSync(join(tmpdir(), "leina-fresh-"));
+  try {
+    mkdirSync(join(dir, "src"));
+    mkdirSync(join(dir, "obj", "Debug"), { recursive: true });
+    mkdirSync(join(dir, "bin", "Debug"), { recursive: true });
+    writeFileSync(join(dir, "src", "App.cs"), "class App {}\n");
+    writeFileSync(join(dir, "obj", "Debug", "App.g.cs"), "class Generated {}\n");
+    writeFileSync(join(dir, "bin", "Debug", "Copied.cs"), "class Copied {}\n");
+
+    const files = listSourceFiles(dir);
+    assert.deepEqual(files, [join(dir, "src", "App.cs")]);
+
+    // A dotnet build regenerating obj/ must not re-stale the graph.
+    writeManifest(dir, files);
+    writeFileSync(join(dir, "obj", "Debug", "Fresh.g.cs"), "class Fresh {}\n");
+    const r = isStale(dir);
+    assert.equal(r.stale, false);
+    assert.equal(r.reason, "fresh");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- isStale matrix ---------------------------------------------------------
 
 test("isStale: untouched manifest is fresh", () => {

@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-07-06
+
+### Fixed
+- Graph source discovery now skips .NET build outputs (`obj/`, `bin/`): generated
+  files (`*.g.cs`, `AssemblyInfo.cs`) were indexed as sources, inflating the file
+  count and re-staling the graph after every `dotnet build`. The workspace
+  cross-repo scanner skips them too, matching the Roslyn sidecar's ignore list.
+
 ## [1.0.0] — 2026-07-05
 
 Initial public release of **leina** — Linked Engineering Intelligence Network for Agents.

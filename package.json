@@ -1,6 +1,6 @@
 {
   "name": "@kolimar/leina",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Linked Engineering Intelligence Network for Agents — queryable code knowledge graph + drift-checked project memory for AI assistants",
   "author": "Alejandro Alfonzo",
   "license": "MIT",
