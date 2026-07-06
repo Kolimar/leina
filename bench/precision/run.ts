@@ -69,7 +69,7 @@ function leinaDependents(symbol: string): Set<string> {
   return files;
 }
 
-type Row = { symbol: string; oracle: number; recovered: number; recall: number; transitiveBonus: number };
+interface Row { symbol: string; oracle: number; recovered: number; recall: number; transitiveBonus: number }
 const rows: Row[] = [];
 
 for (const symbol of symbols) {

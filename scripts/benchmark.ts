@@ -51,7 +51,7 @@ function percentile(xs: number[], p: number): number {
   return s[idx]!;
 }
 
-type Sample = { label: string; p50: number; p95: number; samples: number[] };
+interface Sample { label: string; p50: number; p95: number; samples: number[] }
 
 function timed(label: string, cmdArgs: string[], n: number, input?: string): Sample {
   const samples: number[] = [];
@@ -75,6 +75,7 @@ function parseProfile(out: string): { totalMs: number; stages: { name: string; m
   const extractRe = /extract:(\S+)\s+(\d+)ms\s+\((\d+) files\)/g;
   for (let m; (m = extractRe.exec(out)); ) stages.push({ name: `extract:${m[1]}`, ms: Number(m[2]), files: Number(m[3]) });
   for (const name of ["list sources", "resolve", "dedup", "persist", "communities", "manifest"]) {
+    // eslint-disable-next-line security/detect-non-literal-regexp -- `name` iterates the hardcoded literal list above
     const m = new RegExp(`${name.replace(" ", "\\s+")}\\s+(\\d+)ms`).exec(out);
     if (m) stages.push({ name: name.replace(" ", "-"), ms: Number(m[1]) });
   }

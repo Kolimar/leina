@@ -176,9 +176,11 @@ export default tseslint.config(
     },
   },
 
-  // -- tests: pragmatic relaxations -------------------------------------------
+  // -- tests + benchmarks: pragmatic relaxations --------------------------------
+  // bench/ is result-crunching tooling in the same spirit as tests: it JSON.parses
+  // CLI/corpus output and asserts/aggregates over untyped shapes.
   {
-    files: ["test/**/*.ts"],
+    files: ["test/**/*.ts", "bench/**/*.ts"],
     rules: {
       // Fixtures and assertions legitimately use non-null (`!`) and loose shapes.
       "@typescript-eslint/no-non-null-assertion": "off",
