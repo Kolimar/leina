@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] — 2026-07-07
+
+### Fixed
+- `--help` / `-h` after a subcommand no longer gets consumed as the `<dir>` positional.
+  Commands that read `<dir>` from their first argument (`status`/`stats`/`affected`/`path`/
+  `query`) treated `--help` as a directory — an earlier build even created a stray
+  `--help/.leina/graph.db`. The dispatcher now intercepts `--help`/`-h` and prints help, and
+  those handlers reject a leading `--` token as a directory (matching `build`/`refresh`/
+  `serve`/`visualize`). Covered by a 10-case regression test.
+
+### Documentation
+- Clarified that `visualize` and `graph serve` are **different tools**, not two forms of the
+  same view: `visualize` exports a static, shareable `.html` file for one project; `graph serve`
+  runs a live local server with a multi-project selector and per-node anchored memory. Added a
+  comparison table to the getting-started guide, listed `graph serve` in the usage guide's visual
+  tools (it was missing), and cross-referenced both ways in the README and CLI reference — all in
+  both languages. Also translated the `graph serve` sections that were missing from the Spanish
+  README and CLI reference.
+
 ## [1.1.1] — 2026-07-07
 
 ### Fixed
