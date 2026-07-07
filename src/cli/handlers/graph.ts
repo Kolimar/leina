@@ -128,7 +128,7 @@ export async function handleRefresh(rest: string[]): Promise<void> {
 }
 
 export function handleStatus(rest: string[]): void {
-  const root = rest[0] ?? ".";
+  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : ".";
   const s = isStale(root);
   const manifest = readManifest(root);
   const posture = loadFreshnessConfig(root);
@@ -140,7 +140,8 @@ export function handleStatus(rest: string[]): void {
 }
 
 export function handleStats(rest: string[]): void {
-  const store = openStore(rest[0] ?? ".");
+  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : ".";
+  const store = openStore(root);
   const s = store.stats();
   store.close();
   console.log(`nodes: ${s.nodes}`);
@@ -152,7 +153,7 @@ export function handleStats(rest: string[]): void {
 }
 
 export async function handleAffected(rest: string[]): Promise<void> {
-  const root = rest[0] ?? fail("usage: affected <dir> <symbol|file> [depth]");
+  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: affected <dir> <symbol|file> [depth]");
   const label = rest[1] ?? fail("usage: affected <dir> <symbol|file> [depth]");
   const depth = rest[2] ? Number(rest[2]) : 3;
   const store = await openFreshStore(root);
@@ -170,7 +171,7 @@ export async function handleAffected(rest: string[]): Promise<void> {
 }
 
 export async function handlePath(rest: string[]): Promise<void> {
-  const root = rest[0] ?? fail("usage: path <dir> <from> <to>");
+  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: path <dir> <from> <to>");
   const store = await openFreshStore(root);
   const a = resolveSeed(store, rest[1] ?? fail("missing <from>"));
   const b = resolveSeed(store, rest[2] ?? fail("missing <to>"));
@@ -188,7 +189,7 @@ export async function handlePath(rest: string[]): Promise<void> {
 }
 
 export async function handleQuery(rest: string[]): Promise<void> {
-  const root = rest[0] ?? fail("usage: query <dir> <question>");
+  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: query <dir> <question>");
   const question = rest.slice(1).join(" ");
   const store = await openFreshStore(root);
   const res = queryGraph(store, question);

@@ -51,6 +51,20 @@ import { readPackageVersion } from "../version.ts";
 
 const [cmd, ...rest] = process.argv.slice(2);
 
+// `--help`/`-h` after a subcommand must print help, never be consumed as a positional.
+// Several handlers resolve <dir> from their first arg, so without this guard `leina stats
+// --help` (and friends) treated "--help" as a directory — building/opening a graph in a
+// folder literally named "--help". No command uses --help/-h as a functional value, so
+// intercepting them here is safe. Top-level help/version tokens fall through to the switch.
+if (
+  cmd !== undefined &&
+  !["help", "--help", "-h", "version", "--version", "-v"].includes(cmd) &&
+  (rest.includes("--help") || rest.includes("-h"))
+) {
+  printRootHelp();
+  process.exit(0);
+}
+
 switch (cmd) {
   case "version":
   case "--version":
