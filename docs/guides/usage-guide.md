@@ -1,6 +1,6 @@
 # Guía de uso — leina
 
-> **¿Qué es leina?** Es una herramienta **de línea de comandos (CLI)** que le da a tus asistentes de IA (Devin para terminal) **dos capacidades** que por defecto no tienen:
+> **¿Qué es leina?** Es una herramienta **de línea de comandos (CLI)** que le da a tus asistentes de IA (Devin, Claude Code, Cursor, VS Code, Codex, Gemini CLI, LM Studio y cualquier otro host compatible con MCP) **dos capacidades** que por defecto no tienen:
 >
 > - un **grafo de conocimiento** del código — saber qué depende de qué, qué se rompe si tocás algo, cómo se conectan las piezas;
 > - una **memoria persistente** del proyecto — decisiones, fixes, descubrimientos y contexto que sobreviven entre sesiones.
@@ -30,8 +30,8 @@ Estos los tenés que verificar **una sola vez** en tu máquina:
 | Requisito | Para qué sirve | Cómo verificar |
 |---|---|---|
 | **Node.js ≥ 22.13** | Es el motor sobre el que corre leina. Con Node 22/23 los comandos `memory` funcionan pero la búsqueda corre en modo degradado (LIKE, sin stemming ni BM25). **Se recomienda Node ≥ 24** para obtener búsqueda full-text completa (SQLite FTS5); el comando `leina doctor` indica si hay que actualizar. | `node --version` |
-| **Git** | Para clonar el repositorio. | `git --version` |
-| **Devin para terminal** (Devin local) | Es la IA que consume leina corriendo los comandos por vos. | `devin --version` |
+| **Git** *(opcional)* | Solo si vas a correr leina desde un clon (contribuidores). Para el uso normal con `npm install -g` no hace falta. | `git --version` |
+| **Un host de IA** | La IA que consume leina. Dos formas de conectarla: **MCP** (universal — Claude Code, Cursor, Windsurf, VS Code, Codex, Gemini CLI, LM Studio, Zed, …) o los **hooks** de auto-inyección (solo Devin y Claude Code). Ver el paso 7 de [`getting-started`](../GETTING_STARTED.md#7-connect-it-to-your-ai). | según el host |
 
 > 💡 Si usás un manejador de versiones de Node (`fnm`, `nvm`, `Volta`, `scoop`), no necesitás cambiar nada — leina corre como cualquier comando de tu PATH.
 
@@ -41,7 +41,7 @@ Si te falta alguno, instalalo antes de seguir.
 
 ## Parte 1 — Setup
 
-El setup es **un solo comando, una sola vez por máquina**. Después de eso no tenés que acordarte de nada por proyecto: cuando uses Devin en un repo, la propia IA te pregunta si querés usar leina ahí.
+El setup es **un solo comando, una sola vez por máquina**. Después de eso no tenés que acordarte de nada por proyecto: cuando uses Devin o Claude Code en un repo, la propia IA te pregunta (vía el skill `leina-setup`) si querés usar leina ahí.
 
 ### El comando mágico (una sola vez por máquina)
 
@@ -49,26 +49,23 @@ El setup es **un solo comando, una sola vez por máquina**. Después de eso no t
 
 ```bash
 npm install -g @kolimar/leina
-leina setup              # activa todo: share + symlinks de skills/agents en ~/.config/devin,
-                                # grant Exec user-global, hooks, y enciende el modo "blanket"
+leina tui                # consola interactiva: elegís "install" → assets + hosts + MCP, sin flags
 ```
 
-Con eso leina queda disponible en **cualquier** sesión de Devin de la máquina. ¿Querés deshacerlo todo más adelante? Un comando:
+`leina tui` es la forma más fácil: un menú te guía por qué assets instalar, en qué hosts de IA
+(Devin, Claude Code, Cursor, Windsurf), el modo blanket y el registro MCP. ¿Preferís un solo
+comando sin prompts? `leina setup` hace la instalación recomendada de una (todos los assets +
+blanket; agregá `--mcp` para registrar el server MCP también).
+
+Con eso leina queda disponible en **cualquier** sesión de tu IA en la máquina. ¿Querés deshacerlo todo más adelante? Un comando:
 
 ```bash
 leina disable            # revierte setup por completo (symlinks, config user-global, blanket)
 ```
 
-**O desde un clon** (contribuidores o para correr lo último sin publicar):
-
-```bash
-git clone <url-del-repo> leina
-cd leina
-npm install
-npm run cli -- setup
-```
-
-> Los comandos de esta guía van como `leina <cmd>` (instalación global). Desde un clon, usá `npm run cli -- <cmd>`.
+> **¿Contribuís a leina o querés correr lo último sin publicar?** Ese es el único motivo para
+> trabajar desde un clon en vez de la instalación global — el setup de desarrollo (`git clone`,
+> `npm install`, `npm run cli -- <cmd>`) vive en [`CONTRIBUTING.md`](../../CONTRIBUTING.md), no acá.
 
 **Verificar que quedó bien:**
 
@@ -119,7 +116,7 @@ No hay que repetir nada: con blanket, cada repo nuevo te lo ofrece la IA la prim
 
 Con leina activo, tu IA (Devin) gana capacidades nuevas que ejecuta como comandos `leina`. Acá está el catálogo.
 
-> 💡 **Tip de subagentes en SDD.** Devin local puede delegar cada fase de SDD a un subagente dedicado con su propio contexto limpio. Para cambios serios (features, refactors, migraciones) eso mejora la calidad: el orquestador integra resultados sin "ensuciarse" con los detalles intermedios.
+> 💡 **Tip de subagentes en SDD.** Los hosts con subagentes (Devin, Claude Code) pueden delegar cada fase de SDD a un subagente dedicado con su propio contexto limpio. Para cambios serios (features, refactors, migraciones) eso mejora la calidad: el orquestador integra resultados sin "ensuciarse" con los detalles intermedios.
 
 ### 2.1 — Entender el código sin grepearlo
 
@@ -191,17 +188,18 @@ hábitos que hacen que el sistema rinda de verdad.
 
 ### El flujo de una sesión
 
-**Al arrancar** no tenés que preparar nada. El hook de `SessionStart` ya hizo dos cosas por
-vos (solo en repos con consentimiento `enabled`):
+**Al arrancar** no tenés que preparar nada **en Devin y Claude Code**: ahí el hook de
+`SessionStart` ya hizo dos cosas por vos (solo en repos con consentimiento `enabled`):
 
 - **inyectó contexto**: la IA arranca sabiendo las decisiones y sesiones recientes del
   proyecto (el equivalente de `leina memory context`) y el estado del grafo;
 - **auto-reparó el grafo**: si no existía o estaba desactualizado, disparó un build en
   segundo plano — la próxima consulta ya lo encuentra fresco.
 
-Si querés forzar el repaso vos mismo, alcanza con pedirlo: _"¿qué sabemos ya de este
-proyecto? ¿En qué quedamos la última vez?"_ — eso se traduce en `memory context` +
-`memory verified`.
+> **En los demás hosts (vía MCP)** no hay hooks, así que la inyección automática no ocurre —
+> pero el efecto es el mismo pidiéndolo: la IA llama las tools `memory_context` / `graph_status`
+> on-demand. En cualquier host, forzás el repaso con: _"¿qué sabemos ya de este proyecto? ¿En qué
+> quedamos la última vez?"_ — eso se traduce en `memory context` + `memory verified`.
 
 **Durante la sesión**, los dos hábitos que más pagan:
 
@@ -223,7 +221,12 @@ cada fase quedan en memoria, así que podés cortar y retomar en otra sesión si
 resumen de lo que hicimos"_ (→ `memory session`). Es lo que la próxima sesión va a leer al
 arrancar.
 
-### Qué hacen los hooks sin que se lo pidas
+### Qué hacen los hooks sin que se lo pidas (Devin y Claude Code)
+
+> Los hooks son la integración de **Devin y Claude Code** — los dos hosts con un mecanismo de
+> hooks. En el resto de los hosts leina se conecta por **MCP**: las mismas capacidades como tools,
+> que la IA llama on-demand (sin auto-inyección). Ver el paso 7 de
+> [`getting-started`](../GETTING_STARTED.md#7-connect-it-to-your-ai).
 
 | Momento | Qué pasa |
 |---|---|
@@ -305,7 +308,7 @@ contrato completo, incluyendo POST con token en el header y las variantes más e
 Si algo no anda — comando no encontrado, "No graph at ...", grafo stale, tests fallando — la receta es siempre la misma:
 
 1. Posicionate en la **raíz del repositorio de leina** (donde clonaste/instalaste la herramienta).
-2. Abrí Devin local ahí mismo y **contale el problema con el mensaje de error exacto**.
+2. Abrí tu IA ahí mismo y **contale el problema con el mensaje de error exacto**.
 
 Con la herramienta apuntando a su propio repo, la IA tiene a mano el código, las skills y la memoria del proyecto, así que en la gran mayoría de los casos diagnostica y soluciona sola (versión de Node, binario fuera del PATH, proyecto sin `build`, posture `refuse`, etc.).
 

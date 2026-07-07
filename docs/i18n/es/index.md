@@ -101,10 +101,9 @@ más importa. Ambos enfoques son complementarios; esto es la mitad del grafo.
 ```bash
 # use it anywhere — installs the `leina` binary on your PATH
 npm install -g @kolimar/leina
-
-# or, working from a clone (contributors / latest unreleased code):
-npm install
 ```
+
+> ¿Contribuís a leina o querés correr lo último sin publicar? Trabajás desde un clon en vez de la instalación global — el setup de desarrollo (`git clone`, `npm install`, `npm run cli -- <cmd>`) está en [`CONTRIBUTING.md`](../../../CONTRIBUTING.md).
 
 ### Gestores de paquetes
 
@@ -136,8 +135,7 @@ point de la CLI, los assets embebidos y las gramáticas WASM.
 
 ## Uso
 
-Estos ejemplos usan la forma clon/contribuidor `npm run cli -- <command>`. Si instalaste
-con `npm install -g @kolimar/leina`, sacá el prefijo y llamá `leina <command>` directamente.
+Estos ejemplos usan la forma de instalación global `leina <command>`. ¿Trabajás desde un clon (contribuidores)? Usá `npm run cli -- <command>` — mirá [`CONTRIBUTING.md`](../../../CONTRIBUTING.md).
 
 ### Consola interactiva
 
@@ -145,19 +143,20 @@ Todo lo de abajo también está disponible por menús: install/update (elegir gr
 assets), init/deinit del repo actual, estado de salud, repair, variables de env, desinstalar.
 
 ```bash
-npm run cli -- tui                            # also: leina tui
+leina tui
 ```
 
 ### Inicio rápido
 
 Un comando, una vez por máquina: el setup "mágico" (share global + symlinks + grant
 `Exec` user-global + hooks, y activa el modo blanket). Eso es todo — leina queda
-disponible en cada sesión de Devin.
+disponible en cada sesión de Devin y Claude Code (y, vía MCP, cualquier otro host que
+registres — ver [MCP server](#mcp-server-dual-transport)).
 
 ```bash
-npm run cli -- setup                         # also: leina setup
+leina setup
 # Undo everything machine-wide at any time:
-npm run cli -- disable
+leina disable
 ```
 
 Por proyecto: no hay nada que recordar. Bajo blanket mode, la skill leina-setup pregunta
@@ -167,11 +166,11 @@ disabled -> silencioso. El grafo se construye bajo demanda la primera vez que se
 También podés cablear un repo a mano:
 
 ```bash
-npm run cli -- init <dir>                     # adaptive: LIGHT under blanket, FULL standalone
-npm run cli -- init <dir> --build             # also build the graph synchronously now
-npm run cli -- init <dir> --mcp               # register the MCP server in .mcp.json
-npm run cli -- init <dir> --claude-hooks      # Claude Code hooks (same gate Devin gets)
-npm run cli -- deinit <dir>                   # opt this repo out (consent=disabled) + strip wiring
+leina init <dir>                     # adaptive: LIGHT under blanket, FULL standalone
+leina init <dir> --build             # also build the graph synchronously now
+leina init <dir> --mcp               # register the MCP server in .mcp.json
+leina init <dir> --claude-hooks      # Claude Code hooks (same gate Devin gets)
+leina deinit <dir>                   # opt this repo out (consent=disabled) + strip wiring
 ```
 
 ¿Preferís las piezas granulares? Componen lo que hace `setup` y cada una tiene un
@@ -185,9 +184,9 @@ skill sdd-explore trae su agente); pasar a una selección más chica limpia los 
 de host que quedaron obsoletos.
 
 ```bash
-npm run cli -- activate --preset minimal        # core plumbing only
-npm run cli -- activate --preset sdd            # core + the SDD workflow
-npm run cli -- activate --skills graph-viz,github-pr --agents none
+leina activate --preset minimal        # core plumbing only
+leina activate --preset sdd            # core + the SDD workflow
+leina activate --skills graph-viz,github-pr --agents none
 ```
 
 Elegí a qué hosts de IA conectarte (default: devin). Claude Code recibe las skills como
@@ -195,32 +194,32 @@ Elegí a qué hosts de IA conectarte (default: devin). Claude Code recibe las sk
 nativo). `--hosts` solo cambia DÓNDE, sin tocar la selección de assets.
 
 ```bash
-npm run cli -- activate --hosts devin,claude
+leina activate --hosts devin,claude
 ```
 
 ### Build / consulta
 
 ```bash
 # build the graph for a project (writes <dir>/.leina/graph.db + manifest)
-npm run cli -- build <dir> [--json]          # --json also writes a portable graph.json
-npm run cli -- build <dir> --profile         # stage timings (unchanged files reuse the extract cache)
-npm run cli -- refresh <dir>                 # force a full rebuild
+leina build <dir> [--json]          # --json also writes a portable graph.json
+leina build <dir> --profile         # stage timings (unchanged files reuse the extract cache)
+leina refresh <dir>                 # force a full rebuild
 
 # diagnose health: node version, parser wasm assets, global share freshness, host symlinks,
 # and the project (graph freshness, AGENTS.md/.gitignore/.devin wiring). Exits non-zero if
 # any check fails. Read-only — never writes, never opens a DB file (it checks that DBs
 # exist, not that they are internally sound).
-npm run cli -- doctor [<dir>]
+leina doctor [<dir>]
 # auto-fix what doctor found: re-runs the idempotent install writers (global + repo wiring),
 # scoped to prior installs; respects deinit; never touches DBs.
-npm run cli -- repair [<dir>]
+leina repair [<dir>]
 
 # inspect — query/affected/path auto-rebuild a stale graph before answering
-npm run cli -- stats <dir>                    # node/edge counts + confidence breakdown
-npm run cli -- status <dir>                   # freshness: is the graph stale vs the code?
-npm run cli -- affected <dir> "<symbol>"     # blast radius: who depends on it
-npm run cli -- path <dir> "<a>" "<b>"        # shortest path between two symbols
-npm run cli -- query <dir> "a question"      # term-scored subgraph
+leina stats <dir>                    # node/edge counts + confidence breakdown
+leina status <dir>                   # freshness: is the graph stale vs the code?
+leina affected <dir> "<symbol>"     # blast radius: who depends on it
+leina path <dir> "<a>" "<b>"        # shortest path between two symbols
+leina query <dir> "a question"      # term-scored subgraph
 ```
 
 ### Memory
@@ -230,22 +229,22 @@ proyecto. Siempre activa: no requiere init — cualquier directorio funciona, in
 repo de git.
 
 ```bash
-npm run cli -- memory save <dir> --title "..." --content "..." [--type decision] [--topic key] [--anchors a,b]
-npm run cli -- memory update <dir> <id> [--title ..] [--content ..] [--type ..]
-npm run cli -- memory search <dir> "a question" [--type ..] [--limit N]
-npm run cli -- memory verified <dir> "a question"   # drift-classified: USABLE / WARNING / DO-NOT-USE
-npm run cli -- memory get <dir> <id>
-npm run cli -- memory context <dir>
-npm run cli -- memory session <dir> --content "..." [--title "..."]
-npm run cli -- memory session-start <dir> [--title "..."]
-npm run cli -- memory suggest-topic <dir> --title "..." [--type ..]
-npm run cli -- memory current-project <dir>         # show derived project key + detection method
-npm run cli -- memory merge-projects <dir> --from <old-key> --to <new-key> [--dry-run]
-npm run cli -- memory migrate <dir>                 # fold legacy per-repo memory.db into global DB
+leina memory save <dir> --title "..." --content "..." [--type decision] [--topic key] [--anchors a,b]
+leina memory update <dir> <id> [--title ..] [--content ..] [--type ..]
+leina memory search <dir> "a question" [--type ..] [--limit N]
+leina memory verified <dir> "a question"   # drift-classified: USABLE / WARNING / DO-NOT-USE
+leina memory get <dir> <id>
+leina memory context <dir>
+leina memory session <dir> --content "..." [--title "..."]
+leina memory session-start <dir> [--title "..."]
+leina memory suggest-topic <dir> --title "..." [--type ..]
+leina memory current-project <dir>         # show derived project key + detection method
+leina memory merge-projects <dir> --from <old-key> --to <new-key> [--dry-run]
+leina memory migrate <dir>                 # fold legacy per-repo memory.db into global DB
 # Portable memory: decisions travel WITH the repo (no server). `sync` merges the committable
 # snapshot .leina/memory-export.jsonl both ways; export/import move JSONL between machines.
-npm run cli -- memory sync <dir>                    # absorb + rewrite the snapshot; commit it
-npm run cli -- memory export <dir> --out mem.jsonl / memory import <dir> --in mem.jsonl
+leina memory sync <dir>                    # absorb + rewrite the snapshot; commit it
+leina memory export <dir> --out mem.jsonl / memory import <dir> --in mem.jsonl
 # memory scopes: --scope project (default) | personal | workspace | path | skill | process |
 #                technology | security | infra   (search defaults to project; pass --scope to widen)
 ```
@@ -264,14 +263,31 @@ construyen el grafo en el primer uso; `consent=disabled` por repo bloquea las ll
 Solo CLI por diseño: `env exec` (contrato nombres-no-valores).
 
 ```bash
-npm run cli -- mcp                             # stdio server (hosts launch this)
-npm run cli -- mcp register                    # USER-GLOBAL: Claude Code / Cursor / Windsurf
-npm run cli -- mcp status                      # read-only per-host registration state
-npm run cli -- mcp unregister                  # inverse of register
-npm run cli -- activate --mcp                  # or register as part of install/setup
-npm run cli -- init <dir> --mcp                # PROJECT-LEVEL .mcp.json (committable, teams)
-# manual registration for any host:  command "leina", args ["mcp"]
+leina mcp                             # stdio server (hosts launch this)
+leina mcp register                    # USER-GLOBAL: Claude Code / Cursor / Windsurf
+leina mcp register --hosts cursor     # configurá solo el/los host(s) que usás
+leina mcp status                      # read-only per-host registration state
+leina mcp unregister                  # inverse of register
+leina activate --mcp                  # or register as part of install/setup
+leina init <dir> --mcp                # PROJECT-LEVEL .mcp.json (committable, teams)
 ```
+
+**Cualquier host compatible con MCP funciona** — `leina mcp register` auto-configura Claude Code,
+Cursor y Windsurf; para el resto, agregás el server a la config MCP propia de ese host a mano. El
+comando de lanzamiento es siempre el mismo (`command: "leina"`, `args: ["mcp"]`); la mayoría usa el
+entry estándar `mcpServers`:
+
+```json
+{ "mcpServers": { "leina": { "command": "leina", "args": ["mcp"] } } }
+```
+
+Algunos usan otra envoltura — **VS Code** (`.vscode/mcp.json`, clave `servers`, con `"type":"stdio"`),
+**OpenAI Codex CLI** (`~/.codex/config.toml`, `[mcp_servers.leina]`), **Zed** (`context_servers`,
+`"source":"custom"`) — más **Gemini CLI**, **LM Studio**, **Cline** y **JetBrains AI Assistant /
+Junie** en la forma estándar. Mirá [`docs/GETTING_STARTED.md`](../../GETTING_STARTED.md#7-connect-it-to-your-ai)
+para la tabla por host (ubicación de la config + comando exacto). Como MCP es universal — y la
+inyección de contexto por hooks se limita a Devin y Claude Code — **MCP es la forma recomendada de
+conectar cualquier otro host.**
 
 ### Env store (variables para skills que llaman a servicios)
 
@@ -282,11 +298,11 @@ terminal real, y `env exec` inyecta valores proceso a proceso para que una skill
 un servicio autenticado sin que la credencial entre nunca al contexto del modelo.
 
 ```bash
-npm run cli -- env set MY_SERVICE_TOKEN        # prompts (hidden); or: echo "$V" | ... env set KEY
-npm run cli -- env list                         # names + masked values
+leina env set MY_SERVICE_TOKEN        # prompts (hidden); or: echo "$V" | ... env set KEY
+leina env list                         # names + masked values
 # (single quotes: the CHILD shell expands the var — the parent never sees the value)
-npm run cli -- env exec --only MY_SERVICE_TOKEN -- sh -c 'curl -H "Authorization: Bearer $MY_SERVICE_TOKEN" https://api...'
-npm run cli -- env unset MY_SERVICE_TOKEN
+leina env exec --only MY_SERVICE_TOKEN -- sh -c 'curl -H "Authorization: Bearer $MY_SERVICE_TOKEN" https://api...'
+leina env unset MY_SERVICE_TOKEN
 ```
 
 La skill incluida `authenticated-api` es el ejemplo de referencia (SonarQube GET y POST,
@@ -296,50 +312,50 @@ y las variantes más estrictas sin argv: `curl -K -` vía stdin, o un script que
 ### Validación y contratos
 
 ```bash
-npm run cli -- doctor [<dir>] [--json]       # health report; --json includes repoIdentity + confidence
-npm run cli -- verify [<dir>] [--json]       # same checks, exit 1 on fail (CI gate)
-npm run cli -- capabilities list [--json]    # the 17 transport-agnostic capabilities + schemas
+leina doctor [<dir>] [--json]       # health report; --json includes repoIdentity + confidence
+leina verify [<dir>] [--json]       # same checks, exit 1 on fail (CI gate)
+leina capabilities list [--json]    # the 17 transport-agnostic capabilities + schemas
 ```
 
 ### Impact / audit / events
 
 ```bash
-npm run cli -- impact analyze <dir> "<symbol>" [--json]   # code→test→config→service blast radius
-npm run cli -- audit <dir> [--format md|json|html]        # source→sink candidate paths + findings[]
-npm run cli -- events tail <dir> [--json]                 # local event outbox (off by default)
+leina impact analyze <dir> "<symbol>" [--json]   # code→test→config→service blast radius
+leina audit <dir> [--format md|json|html]        # source→sink candidate paths + findings[]
+leina events tail <dir> [--json]                 # local event outbox (off by default)
 ```
 
 ### Visualización / workspaces multi-repo
 
 ```bash
-npm run cli -- visualize <dir> [--out <path>]             # interactive offline HTML graph viewer
-npm run cli -- workspace build <dir>                      # merged graph across member repos
-npm run cli -- workspace status|detect <dir>              # per-member freshness / detection JSON
-npm run cli -- workspace memory context|search <dir>      # federated memory across members
-npm run cli -- workspace visualize <dir> [--drilldown]    # constellation (repos as super-nodes)
+leina visualize <dir> [--out <path>]             # interactive offline HTML graph viewer
+leina workspace build <dir>                      # merged graph across member repos
+leina workspace status|detect <dir>              # per-member freshness / detection JSON
+leina workspace memory context|search <dir>      # federated memory across members
+leina workspace visualize <dir> [--drilldown]    # constellation (repos as super-nodes)
 ```
 
 ### Sidecars (extracción de nivel compilador para Java / C#)
 
 ```bash
-npm run cli -- sidecar status                # are the C#/Java sidecars configured?
-npm run cli -- sidecar install csharp        # download a prebuilt binary (sha256-verified) — no toolchain needed
-npm run cli -- sidecar verify java           # verify against a fixture (honest skip if no toolchain)
+leina sidecar status                # are the C#/Java sidecars configured?
+leina sidecar install csharp        # download a prebuilt binary (sha256-verified) — no toolchain needed
+leina sidecar verify java           # verify against a fixture (honest skip if no toolchain)
 ```
 
 ### Indexadores SCIP (referencia rápida)
 
 ```bash
-npm run cli -- scip status                  # is scip-go on PATH?
-npm run cli -- scip install go              # detect+instruct only — prints the install command
-npm run cli -- scip verify go               # verify against a fixture (honest skip if not installed)
+leina scip status                  # is scip-go on PATH?
+leina scip install go              # detect+instruct only — prints the install command
+leina scip verify go               # verify against a fixture (honest skip if not installed)
 ```
 
 Ejemplo (ejecutado contra el propio `src/` de este repo):
 
 ```bash
-npm run cli -- build src
-npm run cli -- affected src "GraphStore"
+leina build src
+leina affected src "GraphStore"
 #   openStore()  [references]  cli/index.ts:L48
 ```
 
@@ -372,8 +388,8 @@ para una transacción de todo o nada.
 
 ```bash
 echo '[{"title":"a","content":"x"},{"title":"b","content":"y"}]' \
-  | npm run cli -- memory save <dir> --batch --atomic
-echo '["id1","id2"]' | npm run cli -- memory get <dir> --batch
+  | leina memory save <dir> --batch --atomic
+echo '["id1","id2"]' | leina memory get <dir> --batch
 ```
 
 ### Freshness

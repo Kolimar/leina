@@ -5,6 +5,55 @@ Todos los cambios notables de este proyecto se documentarán en este archivo.
 El formato se basa en [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 y este proyecto sigue [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] — 2026-07-07
+
+### Arreglado
+- `bin.leina` en `package.json` normalizado (`./dist/cli/index.js` → `dist/cli/index.js`),
+  silenciando el warning que npm ya autocorregía al publicar. Sin cambio funcional.
+
+### Documentación
+- Se reorientó la documentación de instalación alrededor del **paquete publicado**. `readme.md`,
+  `GETTING_STARTED.md` y la guía de uso ahora lideran con `npm install -g @kolimar/leina` +
+  `leina tui` como camino principal (un Inicio rápido de tres comandos) y relegan el flujo desde
+  un clon a `CONTRIBUTING.md`. Los ejemplos de "Uso" del README pasaron de la forma de clon
+  `npm run cli -- <cmd>` a `leina <cmd>`.
+- Nueva sección **"Conectalo a tu IA"** que documenta las dos superficies de integración: el
+  **server MCP** universal (`leina mcp`, stdio) con una tabla de registro por host — Claude Code,
+  Cursor, Windsurf (auto vía `leina mcp register`), más VS Code, OpenAI Codex CLI, Gemini CLI,
+  LM Studio, Zed, Cline y JetBrains/Junie (manual, con la ubicación y el formato de config de cada
+  host) — y la auto-inyección por **hooks**, ahora acotada explícitamente a Devin y Claude Code
+  (los demás hosts llaman las tools MCP on-demand). Se corrigió la lista de hosts para enlace de
+  assets a solo Devin y Claude Code (Cursor/Windsurf consumen MCP, no el share de skills/agents).
+- Aplicado en ambos idiomas: `GETTING_STARTED.md` / `docs/i18n/es/getting-started.md`,
+  `docs/guides/usage-guide.md` / `docs/i18n/en/usage-guide.md`, `readme.md` /
+  `docs/i18n/es/index.md`.
+
+## [1.1.0] — 2026-07-06
+
+### Agregado
+- **`leina graph serve`**: un servidor HTTP read-only en foreground (`node:http`, sin
+  dependencias nuevas) que expone el grafo + la memoria anclada de un proyecto como una API JSON
+  (`/api/projects`, `.../graph`, `.../stats`, `.../tree`, `.../search`, `.../nodes/:id`,
+  `.../nodes/:id/memories`), más una UI exploradora en JS vanilla: el grafo completo se renderiza
+  de entrada (layout de fuerza congelado tras estabilizar, tamaño de nodo por grado, etiquetas que
+  aparecen al hacer zoom), con dropdown de búsqueda en vivo, chips de filtro por kind/relación
+  (el estructural `contains` apagado por defecto), un árbol de carpetas colapsable, un drawer de
+  nodo que lista cada relación incidente en ambas direcciones como grupos navegables, y tarjetas
+  de memoria con badge de drift (título/fecha/preview, expandibles). Bindea estricto a loopback,
+  admite un token de auth comparado en tiempo constante (`LEINA_SERVE_TOKEN`) y auto-registra el
+  proyecto en un nuevo registro global (`~/.leina/projects.json`, también actualizado por
+  `build`/`refresh`/`init`).
+- **`leina memory reanchor`**: re-ancla conservadoramente observaciones existentes, extrayendo
+  solo referencias explícitas a paths/símbolos de su texto y verificando cada candidato contra el
+  grafo vivo antes de crear el ancla — los candidatos ambiguos o no resueltos se descartan. Aditivo
+  e idempotente por `(observation_id, node_id)`; admite `--dry-run`.
+- **Referencias de tipo + valor en el extractor ts-morph**: `affected` sub-reportaba el blast
+  radius porque los dependientes solo-de-tipo (`import type`, anotaciones) y los símbolos importados
+  usados como valor pero nunca llamados no producían aristas. Dos nuevas pasadas emiten aristas
+  `references` probadas por el compilador — el recall solo-de-tipo subió de 4.5% a 98.2%, e
+  interfaces como `GraphNode` (0 → 221 dependientes) y `GraphEdge` (0 → 198) dejaron de reportar
+  "nada depende de esto".
+
 ## [1.0.1] — 2026-07-06
 
 ### Arreglado

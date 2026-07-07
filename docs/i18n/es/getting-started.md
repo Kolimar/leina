@@ -1,187 +1,244 @@
-# Primeros pasos — para quien nunca usó leina
+# Primeros pasos
 
-Esta guía asume que nunca usaste leina antes. Seguila de arriba abajo.
+¿Es tu primera vez con leina? Seguí esta guía de arriba abajo — son tres comandos y un par de
+preguntas.
 
-> 🌐 **¿Preferís un recorrido guiado, estilo preguntas y respuestas, en español?** Mirá
-> [`docs/guides/usage-guide.md`](guides/usage-guide.md) — mismo terreno, otro ángulo ("qué
-> le puedo pedir a la IA"), más un recorrido completo de SDD.
+> 🌐 **¿Preferís un recorrido estilo preguntas y respuestas** ("qué le puedo pedir a la IA"), más
+> un tour completo de SDD? Mirá [`docs/guides/usage-guide.md`](guides/usage-guide.md).
 
-**leina es una CLI** — no hay ningún servidor que conectar. Construís un grafo una vez y
-después lo consultás (junto con una memoria de proyecto local) a través de comandos `leina`. Un
-host de IA como Devin ejecuta esos mismos comandos por su shell; el `AGENTS.md` commiteado le
-indica cómo hacerlo.
+**leina es una CLI.** No hay ningún servidor que correr. La instalás una vez, la apuntás a un
+código para construir un **grafo de conocimiento** (qué depende de qué, qué se rompe si tocás algo)
+y obtenés una **memoria de proyecto** (decisiones, causas raíz de bugs, descubrimientos) que
+sobrevive entre sesiones. Tu host de IA — Devin, Claude Code, Cursor, Windsurf — razona sobre esa
+estructura en vez de re-leer el repo en cada conversación.
 
-> **Placeholders usados en toda la guía** — reemplazalos por tus rutas reales:
-> - `<leina>` — la carpeta donde clonaste/descargaste este repo (solo aplica a la forma de clon).
+> **Un placeholder usado abajo** — reemplazalo por tu ruta real:
 > - `<your-project>` — la ruta absoluta al código que querés que la IA entienda
->   (por ejemplo `D:\work\my-app` en Windows, `/home/you/my-app` en Linux/macOS).
+>   (por ejemplo `/home/you/my-app`, o `D:\work\my-app` en Windows).
+
+---
+
+## Inicio rápido
+
+Tres comandos y listo:
+
+```bash
+npm install -g @kolimar/leina        # 1. instalar (necesita Node 22.13+, se recomienda 24+)
+leina tui                            # 2. elegí "install" → tu host de IA + MCP
+leina build <your-project>           # 3. construí el grafo de tu código
+```
+
+Eso es todo — tu IA ya conoce tu código. Opcional: `leina visualize <your-project>` para *ver* el
+grafo en tu navegador. El resto de la guía explica cada paso y qué pedirle a tu IA.
 
 ---
 
 ## 1. Instalá Node 22.13+ (se recomienda Node 24+)
 
 ```bash
-node --version      # debe ser v22.13.0 o superior
+node --version      # tiene que ser v22.13.0 o superior
 ```
 
-leina usa el `node:sqlite` incorporado (sin dependencias nativas) y ejecuta TypeScript
-directamente — no hace falta paso de build. Node 22.13.0 es el mínimo (el primer 22.x Active LTS
-donde `node:sqlite` está disponible sin el flag `--experimental-sqlite`).
+leina usa el `node:sqlite` incorporado (sin dependencias nativas) y corre TypeScript directamente
+— sin paso de build. Node 22.13.0 es el mínimo; **se recomienda fuertemente Node 24+** — en 22/23
+la búsqueda en memoria corre en modo degradado LIKE (match por substring, sin ranking BM25) e
+imprime un warning en cada comando `memory`. Actualizá con `fnm install 24 && fnm use 24`,
+`nvm install 24 && nvm use 24`, o bajalo de https://nodejs.org.
 
-**Se recomienda fuertemente Node 24+.** En Node 22/23, la búsqueda de memoria corre en modo
-degradado LIKE (sin porter stemming ni ranking BM25 — solo coincidencia de substring). Se imprime
-una advertencia en stderr en cada comando `memory`. Para obtener la calidad completa de búsqueda
-de texto, actualizá:
-
-```bash
-# con fnm
-fnm install 24 && fnm use 24
-
-# con nvm
-nvm install 24 && nvm use 24
-```
-
-O descargalo desde https://nodejs.org.
-
-## 2. Instalá y configurá leina (una vez por máquina)
-
-**Recomendado — instalación global.** Pone el binario `leina` en tu PATH, y luego `setup` hace
-todo a nivel de máquina en un solo paso — puebla el share de skills/agents, lo symlinkea en los
-directorios globales de Devin, escribe el grant `Exec` user-global + los hooks, y activa el
-**modo blanket**:
+## 2. Instalá leina y abrí la consola de setup
 
 ```bash
 npm install -g @kolimar/leina
-leina setup              # el comando "mágico" de un solo paso
+leina tui
 ```
 
-Después de `setup`, leina está disponible en cada sesión de Devin. Para deshacer todo a nivel de
-máquina más adelante, ejecutá `leina disable`.
+`leina tui` es la base interactiva — manejás todo el setup desde un menú en vez de memorizar flags.
+Elegí **install** y te va guiando por:
 
-**O desde un clon** (contribuidores, o para correr el último código sin publicar):
+- **qué grupos de assets** instalar (skills, agents, hooks — `core` siempre va incluido);
+- **en qué hosts de IA** enlazar los skills/agents — **Devin** y **Claude Code**, los dos hosts que
+  consumen los archivos de skill/agent de leina de forma nativa;
+- **modo blanket** — cada repo se auto-configura con un prompt de consentimiento único, así nunca
+  más das de alta un proyecto a mano;
+- **registro MCP** — expone las herramientas de leina (`graph_affected`, `memory_search`, …) como
+  tools nativas a **Claude Code, Cursor, Windsurf** — y, a mano, a *cualquier* IA compatible con MCP
+  (Codex, Gemini CLI, LM Studio, …; ver paso 7).
+
+El mismo TUI después maneja todo: **status** (resumen de salud), **this project**
+(init/deinit + `.mcp.json` por repo), **repair**, **env vars** (credenciales enmascaradas para
+skills) y **uninstall**. Cada acción mapea a un comando no-interactivo, así que nada acá es
+exclusivo del TUI.
+
+> **¿Preferís un solo comando sin prompts?** `leina setup` hace la instalación recomendada
+> (todos los assets + modo blanket) de una; agregá `--mcp` para registrar el server MCP también.
+> Deshacé todo más tarde con `leina disable`.
+
+Verificá que quedó bien:
 
 ```bash
-cd <leina>
-npm install
-npm run cli -- setup
+leina --help
+leina doctor        # chequea versión de Node, el share global y los enlaces a los hosts
 ```
 
-> Los comandos de más abajo están escritos como `leina <cmd>` (instalación global). Desde un
-> clon, usá `npm run cli -- <cmd>` en su lugar — por ejemplo `npm run cli -- build <your-project>`.
-
-> **¿Preferís las piezas por separado?** `setup` compone `activate` (share/symlinks/config
-> user-global globales, sin blanket); su inverso es `deactivate`. `install-global` es un alias
-> deprecado de `activate`.
-
-## 3. Construí el grafo de TU proyecto
+## 3. Apuntá leina a tu proyecto
 
 ```bash
 leina build <your-project>
 ```
 
-Esto escribe `<your-project>/.leina/graph.db`. Ese archivo `.db` *es* el grafo. Rara vez lo
-reconstruís a mano: `query`/`affected`/`path` reconstruyen automáticamente un grafo stale antes
-de responder, y los hooks de Devin que instala `init` ejecutan un `refresh` después de cada
-edición.
+Esto escribe `<your-project>/.leina/graph.db` — ese archivo `.db` **es** el grafo. Rara vez
+reconstruís a mano: las consultas reconstruyen solas un grafo desactualizado antes de responder, y
+los hooks instalados lo refrescan tras cada edición.
 
-> ✅ Chequeo de salud: `leina stats <your-project>` debería imprimir un conteo de nodos/aristas.
-> Si dice 0 nodos, la ruta está mal o el proyecto no tiene archivos soportados.
+> ✅ Chequeo rápido: `leina stats <your-project>` debería imprimir conteos de nodos/aristas.
+> `0 nodes` significa que la ruta está mal o el proyecto no tiene archivos soportados.
 
----
+**Dar de alta un proyecto.** Con el modo blanket encendido (del paso 2), no lo hacés a mano — la
+primera vez que usás tu IA en un repo te pregunta una vez, *"¿usás leina acá?"*, y lo configura por
+vos. Cada repo guarda un flag de consentimiento local y git-ignored (`.leina/consent`): `unknown` →
+te pregunta una vez, `enabled` → activo, `disabled` → silencio. leina nunca construye un grafo en un
+repo que no aceptaste. Para hacerlo a mano: `leina init <your-project>` (agregá `--build` para
+construir ahora) / `leina deinit <your-project>`.
 
-## 4. Sumá un proyecto — `leina init` (generalmente automático)
+## 4. Mirá tu código como un grafo
 
-Con el modo blanket activo (desde `setup`), **normalmente no ejecutás esto a mano**. La primera
-vez que usás Devin en un repo, la skill `leina-setup` pregunta una sola vez — "¿usar leina acá?"
-— y ejecuta `init` (Sí) o `deinit` (No) por vos. Cada repo mantiene un **flag de consentimiento
-local, git-ignored** (`.leina/consent`): `unknown` → se pregunta una vez, `enabled` → activo,
-`disabled` → silencio. leina nunca construye un grafo en un repo al que no te sumaste.
-
-Para hacerlo a mano:
+La forma más rápida de sentir lo que leina sabe es *verlo*:
 
 ```bash
-leina init <your-project> [--profile devin|windsurf] [--freshness auto|refuse] [--build] [--name <project-name>]
-leina deinit <your-project>    # opt out: consent=disabled + retira el wiring
+leina visualize <your-project>          # escribe <your-project>/.leina/graph.html
 ```
 
-`init` es **adaptativo** — siempre escribe el flag de consentimiento `enabled` y el bloque de
-`.gitignore`, y luego escribe solo lo que hace falta:
+Un visor HTML interactivo, offline y autocontenido — nodos agrupados y coloreados por capa,
+dimensionados según qué tan conectados están, con los principales "god nodes" etiquetados. Clic en
+un nodo para su panel de detalle; búsqueda, filtro por carpeta, freeze de la física. Ideal para
+onboarding: *ver* la arquitectura real, no el diagrama viejo de la wiki.
 
-- **LIGHT (blanket activo):** nada más. El share/grant/hooks a nivel de máquina de `setup` ya
-  cubren el repo, así que `AGENTS.md` y `.devin/*` serían redundantes.
-- **FULL (standalone, sin blanket):** también escribe el bloque de protocolo `AGENTS.md`
-  commiteable, el `.devin/hooks.v1.json` con alcance de proyecto, y un grant `Exec(leina)`
-  **repo-local** en `.devin/config.json` — dejando el repo autocontenido. **Nunca** toca el
-  `~/.config/devin/config.json` user-global.
+¿Querés un servidor navegable en vivo en vez de un archivo estático?
 
-`init` **no** hace auto-build; pasá `--build` para construir el grafo sincrónicamente ahora
-(de lo contrario se construye a demanda la primera vez que consultás). `--name <project-name>`
-fija la clave del proyecto en un `.leina/config.json` commiteable. Usá `--freshness refuse` para
-configuraciones de grafo commiteado / CI (una lectura stale pide un rebuild en vez de dispararlo).
-
----
+```bash
+leina graph serve <your-project>        # explorador HTTP read-only en http://localhost:...
+```
 
 ## 5. Consultá el grafo
 
 ```bash
 leina affected <your-project> "GraphStore"      # blast radius: quién depende de esto
-leina query <your-project> "how does the CLI reach the database"
+leina query <your-project> "cómo llega el CLI a la base de datos"
 leina path <your-project> "run" "GraphStore"    # camino más corto entre dos símbolos
-leina status <your-project>                     # ¿está stale el grafo respecto del código?
-leina stats <your-project>                      # conteo de nodos/aristas + confianza
+leina status <your-project>                     # ¿está el grafo desactualizado vs el código?
+leina stats <your-project>                      # conteos de nodos/aristas + confianza
 leina refresh <your-project>                    # fuerza un rebuild completo
 ```
 
-`query` / `affected` / `path` pasan por la **freshness gate**: bajo la postura por defecto
-`auto` reconstruyen un grafo stale antes de responder; bajo `refuse` te indican que corras
-`refresh` primero.
+`query` / `affected` / `path` pasan por el **freshness gate**: bajo la posture `auto` (por defecto)
+reconstruyen un grafo stale antes de responder; bajo `refuse` te dicen que corras `refresh` primero
+(usá `refuse` para setups con grafo commiteado / CI).
 
 ## 6. Memoria de proyecto (el *porqué*)
 
 La memoria persiste decisiones, causas raíz de bugs y descubrimientos en una DB **global** en
-`~/.leina/memory.db` (respetando `$LEINA_HOME`), particionada por una clave de proyecto
-derivada — así que sobrevive entre sesiones y se comparte entre todos tus repos. (Una
-`<your-project>/.leina/memory.db` heredada por-repo se puede plegar en la DB global con
-`leina memory migrate <your-project>`.)
+`~/.leina/memory.db` (respeta `$LEINA_HOME`), particionada por una clave de proyecto derivada — así
+sobrevive entre sesiones y se comparte entre todos tus repos.
 
 ```bash
-leina memory save <your-project> --title "..." --content "..." [--type decision] [--topic key] [--anchors Sym1,Sym2]
-leina memory search <your-project> "a question"
-leina memory verified <your-project> "a question"   # drift-checked: USABLE / WARNING / DO-NOT-USE
-leina memory get <your-project> <id>
-leina memory context <your-project>                 # sesiones recientes + últimas observaciones
-leina memory update <your-project> <id> [--content "..."]
-leina memory session <your-project> --content "session summary"
+leina memory save <your-project> --title "..." --content "..." [--type decision] [--anchors Sym1,Sym2]
+leina memory search <your-project> "una pregunta"
+leina memory verified <your-project> "una pregunta"   # drift-check: USABLE / WARNING / DO-NOT-USE
+leina memory context <your-project>                   # sesiones recientes + últimas observaciones
+leina memory session <your-project> --content "resumen de la sesión"
 ```
 
-`--anchors` vincula una observación a símbolos reales del grafo, de modo que `memory verified`
-pueda después re-chequear cada nota guardada contra el grafo vivo (detección de drift: si el
-código anclado cambió, la nota se marca como stale/WARNING en vez de confiarse silenciosamente).
+`--anchors` liga una nota a símbolos reales del grafo, así `memory verified` puede re-chequearla
+contra el grafo vivo después — si el código anclado cambió, la nota se marca stale en vez de
+confiarse en silencio.
 
-**Batch (JSON por stdin).** `save`, `update` y `get` aceptan `--batch` para colapsar muchas
-escrituras/lecturas en un solo proceso (`--atomic` para save/update):
+## 7. Conectalo a tu IA
+
+leina llega a tu IA por dos vías. **MCP es el camino universal — arrancá por ahí, y configurá solo
+el/los host(s) que realmente usás.**
+
+### A. Server MCP — anda con cualquier IA compatible con MCP (recomendado)
+
+leina trae un server MCP estándar, que se lanza por stdio como `leina mcp`. Cualquier host que hable
+MCP llama sus herramientas (`graph_affected`, `memory_search`, `graph_visualize`, …) de forma nativa
+— sin protocolo de shell.
+
+**Hosts que leina configura por vos** — un comando (o elegí "MCP" en `leina tui`, o `leina setup --mcp`):
 
 ```bash
-echo '[{"title":"a","content":"x"},{"title":"b","content":"y"}]' \
-  | leina memory save <your-project> --batch --atomic
-echo '["id1","id2"]' | leina memory get <your-project> --batch
+leina mcp register --hosts claude,cursor,windsurf   # listá solo los que usás
+leina mcp status                                    # por host: registrado o no
+leina mcp unregister --hosts cursor                 # inverso
 ```
+
+**Cualquier otro host** — agregás leina a la config MCP propia de ese host. El entry del server es
+siempre el mismo comando; solo cambian el archivo y la clave que lo envuelve. La mayoría usa la forma
+estándar `mcpServers`:
+
+```json
+{ "mcpServers": { "leina": { "command": "leina", "args": ["mcp"] } } }
+```
+
+| Host | Cómo agregarlo | Archivo de config · clave |
+|---|---|---|
+| Claude Code | `leina mcp register --hosts claude` (o `claude mcp add --scope user leina -- leina mcp`) | `~/.claude.json` / proyecto `.mcp.json` · `mcpServers` |
+| Cursor | `leina mcp register --hosts cursor` | `~/.cursor/mcp.json` o `.cursor/mcp.json` · `mcpServers` |
+| Windsurf | `leina mcp register --hosts windsurf` | `~/.codeium/windsurf/mcp_config.json` · `mcpServers` |
+| VS Code (Copilot) | `code --add-mcp '{"name":"leina","command":"leina","args":["mcp"]}'` | `.vscode/mcp.json` · **`servers`** † |
+| OpenAI Codex CLI | `codex mcp add leina -- leina mcp` | `~/.codex/config.toml` · **`[mcp_servers.leina]`** (TOML) † |
+| Gemini CLI | `gemini mcp add leina leina mcp` | `~/.gemini/settings.json` o `.gemini/settings.json` · `mcpServers` |
+| LM Studio | editar config y reiniciar la app | `~/.lmstudio/mcp.json` · `mcpServers` |
+| Zed | Agent Panel → Add Custom Server, o editar settings | `~/.config/zed/settings.json` o `.zed/settings.json` · **`context_servers`** † |
+| Cline (VS Code) | ícono MCP Servers → Configure | `cline_mcp_settings.json` de Cline · `mcpServers` |
+| JetBrains AI Assistant / Junie | Settings → Tools → AI Assistant → MCP, o el `mcp.json` de Junie | `~/.junie/mcp/mcp.json` / `.junie/mcp/mcp.json` · `mcpServers` |
+
+† Tres hosts lo envuelven distinto — mismo command/args, otra forma:
+
+```jsonc
+// VS Code — la clave es `servers`, agregá "type": "stdio"
+{ "servers": { "leina": { "type": "stdio", "command": "leina", "args": ["mcp"] } } }
+```
+```toml
+# OpenAI Codex — ~/.codex/config.toml
+[mcp_servers.leina]
+command = "leina"
+args = ["mcp"]
+```
+```jsonc
+// Zed — la clave es `context_servers`, agregá "source": "custom"
+{ "context_servers": { "leina": { "source": "custom", "command": "leina", "args": ["mcp"], "env": {} } } }
+```
+
+Una vez registrado, solo preguntá — *"¿cuál es el blast radius de `GraphStore`?"* — y la IA llama
+`graph_affected` sola. Cada tool toma un argumento `root`, que por defecto es el directorio donde el
+host lanzó el server. (Los formatos de config cambian seguido — si un host rechaza el entry, mirá su
+doc MCP actual; el comando de lanzamiento `leina mcp` no cambia nunca.)
+
+### B. Hooks — contexto de sesión automático (solo Devin y Claude Code)
+
+Además de MCP, dos hosts pueden **inyectar** automáticamente la memoria reciente + el estado del
+grafo al arrancar cada sesión (y mantener el grafo fresco tras cada edición), así la IA conoce el
+proyecto antes de que escribas — sin llamar ninguna tool:
+
+- **Devin** lee el `AGENTS.md` commiteado + `.devin/hooks.v1.json` automáticamente (cloud + CLI).
+  Para Devin cloud (una VM), hacé que `leina` esté disponible en el snapshot vía Repository Setup →
+  *Install Dependencies* (`npm install -g @kolimar/leina`).
+- **Claude Code** obtiene lo mismo vía `.claude/settings.json` — `leina init <your-project>
+  --claude-hooks` (o cuando elegís Claude Code durante la instalación).
+
+Cualquier otro host no tiene mecanismo de hooks, así que no puede auto-inyectar — pero por MCP la IA
+trae el mismo contexto on-demand (`memory_context`, `graph_status`). Por eso MCP es el camino que
+recomendamos para todos.
+
+Para un grafo commiteado (CI, o compartir con Devin cloud), corré `leina build . --json` y commiteá
+`.leina/graph.json` — el `.db` está git-ignored; el `.json` portable es lo que commiteás — y después
+`init` con `--freshness refuse`.
 
 ---
 
-## 7. Usalo con Devin
-
-No hay nada que registrar: el `AGENTS.md` commiteado lo lee Devin automáticamente (cloud +
-CLI), así que el protocolo de uso viaja con el repo, y el `init` que escribe el
-`.devin/hooks.v1.json` mantiene el grafo fresco después de las ediciones y empuja al agente
-hacia la CLI. Simplemente hacele preguntas a Devin sobre el código — por ejemplo *"¿cuál es el
-blast radius de `GraphStore`?"* — y va a correr `leina affected` / `query` por su cuenta.
-
-Para Devin (cloud, corre en una VM), hacé que `leina` esté disponible en el snapshot de la VM
-vía Repository Setup → *Install Dependencies* (por ejemplo `npm install -g @kolimar/leina`). Para un
-grafo commiteado, corré `leina build . --json` y commiteá `.leina/graph.json` (el `.db` está
-git-ignored; el `graph.json` portable es lo que se commitea) e inicializá con
-`init` con `--freshness refuse`.
+> **¿Contribuís a leina o corrés código sin publicar?** Ese es el único motivo para trabajar desde
+> un clon en vez de la instalación global — el setup de desarrollo (`git clone`, `npm install`,
+> `npm run cli -- <cmd>`) vive en [`CONTRIBUTING.md`](../CONTRIBUTING.md), no acá.
 
 ---
 
@@ -189,7 +246,7 @@ git-ignored; el `graph.json` portable es lo que se commitea) e inicializá con
 
 **`command not found: leina`**
 - La instalación global no está en el PATH; reinstalá con `npm install -g @kolimar/leina`, o usá la
-  forma de clon (`npm run cli -- <cmd>` desde `<leina>`).
+  forma de clon (`npm run cli -- <cmd>`).
 
 **`No graph at <...>` al correr una consulta**
 - Todavía no hiciste `build` de ese proyecto (paso 3): `leina build <your-project>`.
@@ -198,15 +255,12 @@ git-ignored; el `graph.json` portable es lo que se commitea) e inicializá con
 - Corriste `init --freshness refuse`. Reconstruí explícitamente: `leina refresh <your-project>`.
 
 **`No node matches "..."` desde `affected`/`path`**
-- Las etiquetas se emparejan por display label; las funciones se muestran como `name()`.
-  Revisá `leina stats` o probá con otra capitalización, por ejemplo `affected . "GraphStore"`.
+- Las etiquetas se matchean por display label; las funciones se muestran como `name()`. Revisá
+  `leina stats` o probá otra capitalización, por ejemplo `affected . "GraphStore"`.
 
-**Las llamadas de C# / Java se ven sintácticas / EXTRACTED bajo**
-- Estas obtienen resolución de nivel compilador de los sidecars semánticos (Roslyn para C#,
-  JavaParser para Java). Sus fuentes se distribuyen como plantillas `.tmpl`; construí uno a
-  demanda con `leina sidecar build [csharp|java]`, que cachea un binario autocontenido bajo
-  `~/.leina/sidecars/<lang>/dist` (no hace falta .NET/JVM para ejecutarlo después). Sin un
-  sidecar, el lenguaje cae de vuelta a tree-sitter y de todos modos construye — solo que de
-  forma sintáctica (~23% de las aristas de llamada de C# / ~15% de Java quedan AMBIGUOUS).
-  Sobreescribí la ubicación del binario con `LEINA_CSHARP_SIDECAR` / `LEINA_JAVA_SIDECAR`.
-  Mirá la sección "Semantic sidecars" del README.
+**Llamadas C# / Java se ven sintácticas / EXTRACTED bajo**
+- Estas obtienen resolución nivel-compilador de los sidecars semánticos (Roslyn para C#, JavaParser
+  para Java). Construí uno on demand con `leina sidecar build [csharp|java]`, que cachea un binario
+  autocontenido bajo `~/.leina/sidecars/<lang>/dist` (no hace falta .NET/JVM para correrlo después).
+  Sin sidecar el lenguaje cae a tree-sitter e igual construye — solo que sintácticamente. Mirá la
+  sección "Semantic sidecars" del README.

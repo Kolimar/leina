@@ -5,7 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.1] — 2026-07-07
+
+### Fixed
+- `bin.leina` in `package.json` normalized (`./dist/cli/index.js` → `dist/cli/index.js`),
+  silencing the warning npm already auto-corrected at publish time. No functional change.
+
+### Documentation
+- Reoriented the install docs around the **published package**. `readme.md`,
+  `GETTING_STARTED.md` and the usage guide now lead with `npm install -g @kolimar/leina` +
+  `leina tui` as the primary path (a three-command Quickstart) and demote the from-a-clone
+  workflow to `CONTRIBUTING.md`. The README "Usage" examples switched from the clone form
+  `npm run cli -- <cmd>` to `leina <cmd>`.
+- New **"Connect it to your AI"** section documenting the two integration surfaces: the
+  universal **MCP server** (`leina mcp`, stdio) with a per-host registration table — Claude
+  Code, Cursor, Windsurf (auto via `leina mcp register`), plus VS Code, OpenAI Codex CLI,
+  Gemini CLI, LM Studio, Zed, Cline and JetBrains/Junie (manual, with each host's config
+  location and format) — and the **hooks** auto-injection, now explicitly scoped to Devin and
+  Claude Code (every other host calls the MCP tools on demand). Corrected the asset-link host
+  list to Devin and Claude Code only (Cursor/Windsurf consume MCP, not the skills/agents share).
+- Applied across both languages: `GETTING_STARTED.md` / `docs/i18n/es/getting-started.md`,
+  `docs/guides/usage-guide.md` / `docs/i18n/en/usage-guide.md`, `readme.md` /
+  `docs/i18n/es/index.md`.
+
+## [1.1.0] — 2026-07-06
 
 ### Added
 - **`leina graph serve`**: a read-only, foreground HTTP server (`node:http`, zero new
@@ -24,6 +47,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   extracting only explicit path/symbol references from their text and verifying each
   candidate against the live graph before minting — ambiguous or unresolved candidates are
   discarded. Additive and idempotent per `(observation_id, node_id)`; supports `--dry-run`.
+- **Type + value references in the ts-morph extractor**: `affected` under-reported blast
+  radius because type-only dependents (`import type`, annotations) and imported symbols used
+  as values but never called produced no edges. Two new pass-2 walks emit compiler-proven
+  `references` edges — type-only recall rose 4.5% → 98.2%, and interfaces like `GraphNode`
+  (0 → 221 dependents) and `GraphEdge` (0 → 198) stopped reporting "nothing depends on it".
 
 ## [1.0.1] — 2026-07-06
 
