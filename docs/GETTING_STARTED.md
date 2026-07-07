@@ -100,22 +100,35 @@ manually: `leina init <your-project>` (add `--build` to build now) / `leina dein
 
 ## 4. See your code as a graph
 
-The fastest way to feel what leina knows is to *look* at it:
+Two **different** tools render the graph — they look alike (same viewer) but are not
+interchangeable. Pick by what you need:
+
+**`leina visualize`** — exports a **static, self-contained HTML file** you can share, commit, or
+open offline forever:
 
 ```bash
 leina visualize <your-project>          # writes <your-project>/.leina/graph.html
 ```
 
-An interactive, offline, self-contained HTML viewer — nodes grouped and coloured by layer, sized by
-how connected they are, the top "god nodes" labelled. Click a node for its detail drawer; search,
-filter by folder, freeze the physics. Great for onboarding: *see* the real architecture, not the
-stale wiki diagram.
+Nodes grouped and coloured by layer, sized by how connected they are, the top "god nodes" labelled.
+Click a node for its detail drawer; search, filter by folder, freeze the physics. It's a *snapshot*
+of one project — great for onboarding or sending someone the real architecture.
 
-Want a live, browsable server instead of a static file?
+**`leina graph serve`** — runs a **live, local server** with things a static file can't have: a
+**multi-project selector** and each node's **anchored memory** (drift-badged):
 
 ```bash
-leina graph serve <your-project>        # read-only HTTP explorer at http://localhost:...
+leina graph serve <your-project>        # read-only HTTP explorer at http://127.0.0.1:7423 (Ctrl+C to stop)
 ```
+
+|  | `leina visualize` | `leina graph serve` |
+|---|---|---|
+| Output | a `.html` **file** | a running **server** (`:7423`) |
+| Lives | forever, offline | only while the process runs |
+| Scope | the one project you pass | every built project (a selector) |
+| Shows memory | no | yes — per node, drift-badged |
+| Share / commit | yes (it's a file) | no (loopback-only) |
+| Reach for it when | sharing a snapshot, onboarding, offline | browsing live, inspecting memory, many repos |
 
 ## 5. Query the graph
 

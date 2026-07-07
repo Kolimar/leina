@@ -257,9 +257,13 @@ contrato completo, incluyendo POST con token en el header y las variantes más e
 
 ### Herramientas visuales para vos (no para la IA)
 
-- `leina visualize <dir>` — un HTML interactivo y offline del grafo (búsqueda, filtros,
-  comunidades). Ideal para onboarding: _ver_ la arquitectura real, no la del diagrama viejo
-  de la wiki.
+- `leina visualize <dir>` — exporta un **archivo HTML** estático, offline y autocontenido del grafo
+  (búsqueda, filtros, comunidades). Como es un archivo, lo compartís/commiteás y lo abrís cuando
+  quieras. Ideal para onboarding: _ver_ la arquitectura real, no la del diagrama viejo de la wiki.
+- `leina graph serve <dir>` — **no es lo mismo**: levanta un **server local en vivo** (read-only,
+  `:7423`, Ctrl+C para cortar) con lo que un archivo estático no puede tener — un **selector
+  multi-proyecto** y la **memoria anclada** de cada nodo (con badge de drift). Usalo para explorar en
+  vivo o inspeccionar memoria; `visualize` para compartir un snapshot.
 - `leina audit <dir> --format html` — rutas candidatas source→sink para triage de
   seguridad.
 - En monorepos / carpetas con varios repos: `leina workspace visualize` muestra la

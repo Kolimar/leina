@@ -257,9 +257,13 @@ full contract, including POST requests with a token in the header and the strict
 
 ### Visual tools for you (not for the AI)
 
-- `leina visualize <dir>` — an interactive, offline HTML view of the graph (search, filters,
-  communities). Ideal for onboarding: _seeing_ the real architecture, not the old wiki
-  diagram.
+- `leina visualize <dir>` — exports a static, offline, self-contained **HTML file** of the graph
+  (search, filters, communities). Being a file, you can share/commit it and open it whenever. Ideal
+  for onboarding: _seeing_ the real architecture, not the old wiki diagram.
+- `leina graph serve <dir>` — **not the same thing**: it starts a **live local server** (read-only,
+  `:7423`, Ctrl+C to stop) with what a static file can't have — a **multi-project selector** and each
+  node's **anchored memory** (drift-badged). Use it to browse live or inspect memory; use `visualize`
+  to share a snapshot.
 - `leina audit <dir> --format html` — candidate source→sink paths for security
   triage.
 - In monorepos / folders with several repos: `leina workspace visualize` shows the

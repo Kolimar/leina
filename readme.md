@@ -327,6 +327,10 @@ leina workspace memory context|search <dir>      # federated memory across membe
 leina workspace visualize <dir> [--drilldown]    # constellation (repos as super-nodes)
 ```
 
+> `visualize` writes a **static, shareable `.html` file** for one project. For a **live local
+> server** with a multi-project selector and per-node anchored memory, see
+> [`graph serve`](#graph-explorer-server-graph-serve) below — same viewer, different tool.
+
 ### Sidecars (Java / C# compiler-grade extraction)
 
 ```bash
@@ -441,6 +445,10 @@ project selector, node/edge-kind chips, a folder tree, and a detail drawer with
 the project into `~/.leina/projects.json` (the same registry `build`/`refresh`/`init` upsert
 into). Stop it with Ctrl+C. See [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md#graph-serve-dir---port-n---host-h)
 for the full flag/config reference.
+
+> Not to be confused with [`visualize`](#visualize--multi-repo-workspaces): that exports a
+> **static, shareable `.html` file** for a single project. `graph serve` is a **live server** —
+> multi-project selector, per-node anchored memory, but only while it runs.
 
 ## Memory & drift detection
 

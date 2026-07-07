@@ -102,22 +102,36 @@ construir ahora) / `leina deinit <your-project>`.
 
 ## 4. Mirá tu código como un grafo
 
-La forma más rápida de sentir lo que leina sabe es *verlo*:
+Hay **dos** herramientas distintas para ver el grafo — se parecen (mismo visor) pero **no** son
+intercambiables. Elegí según lo que necesites:
+
+**`leina visualize`** — exporta un **archivo HTML** estático, offline y autocontenido que podés
+compartir, commitear o abrir para siempre:
 
 ```bash
 leina visualize <your-project>          # escribe <your-project>/.leina/graph.html
 ```
 
-Un visor HTML interactivo, offline y autocontenido — nodos agrupados y coloreados por capa,
-dimensionados según qué tan conectados están, con los principales "god nodes" etiquetados. Clic en
-un nodo para su panel de detalle; búsqueda, filtro por carpeta, freeze de la física. Ideal para
-onboarding: *ver* la arquitectura real, no el diagrama viejo de la wiki.
+Nodos agrupados y coloreados por capa, dimensionados según qué tan conectados están, con los
+principales "god nodes" etiquetados. Clic en un nodo para su panel de detalle; búsqueda, filtro por
+carpeta, freeze de la física. Es un *snapshot* de un proyecto — ideal para onboarding o mandarle a
+alguien la arquitectura real.
 
-¿Querés un servidor navegable en vivo en vez de un archivo estático?
+**`leina graph serve`** — levanta un **server local en vivo** con cosas que un archivo estático no
+puede tener: un **selector multi-proyecto** y la **memoria anclada** de cada nodo (con badge de drift):
 
 ```bash
-leina graph serve <your-project>        # explorador HTTP read-only en http://localhost:...
+leina graph serve <your-project>        # explorador HTTP read-only en http://127.0.0.1:7423 (Ctrl+C para cortar)
 ```
+
+|  | `leina visualize` | `leina graph serve` |
+|---|---|---|
+| Salida | un **archivo** `.html` | un **server** corriendo (`:7423`) |
+| Vive | para siempre, offline | solo mientras corre el proceso |
+| Alcance | el proyecto que le pasás | todos los proyectos construidos (selector) |
+| Muestra memoria | no | sí — por nodo, con badge de drift |
+| Compartir / commitear | sí (es un archivo) | no (solo loopback) |
+| Usalo para | compartir un snapshot, onboarding, offline | explorar en vivo, ver memoria, varios repos |
 
 ## 5. Consultá el grafo
 

@@ -329,11 +329,17 @@ leina events tail <dir> [--json]                 # local event outbox (off by de
 
 ```bash
 leina visualize <dir> [--out <path>]             # interactive offline HTML graph viewer
+leina graph serve <dir> [--port 7423]            # live local server (multi-project + memory)
 leina workspace build <dir>                      # merged graph across member repos
 leina workspace status|detect <dir>              # per-member freshness / detection JSON
 leina workspace memory context|search <dir>      # federated memory across members
 leina workspace visualize <dir> [--drilldown]    # constellation (repos as super-nodes)
 ```
+
+> `visualize` escribe un **archivo `.html` estático y compartible** de un proyecto. `graph serve`
+> es otra cosa: un **server local en vivo** (read-only, `:7423`, Ctrl+C) con selector
+> multi-proyecto y la memoria anclada de cada nodo — mismo visor, herramienta distinta. Tabla
+> comparativa en el paso 4 de [`getting-started`](../../GETTING_STARTED.md#4-see-your-code-as-a-graph).
 
 ### Sidecars (extracción de nivel compilador para Java / C#)
 
@@ -435,6 +441,24 @@ fuerza una reconstrucción.
 pueda más tarde re-chequear cada observación guardada contra el grafo vivo (detección de
 drift). Pasá `--topic <key>` para evolucionar una entrada existente en su lugar en vez de
 crear un duplicado.
+
+### Servidor explorador del grafo (`graph serve`)
+
+```bash
+leina graph serve <dir> [--port 7423] [--host 127.0.0.1]
+```
+
+Un servidor `node:http` read-only y en foreground (sin dependencias nuevas) sobre el mismo grafo +
+memoria anclada que el resto de la CLI: una API JSON (`/api/projects`, `.../stats`, `.../tree`,
+`.../search`, `.../nodes/:id`, `.../nodes/:id/memories`) más una pequeña UI exploradora en JS
+vanilla — selector de proyectos, chips por kind de nodo/arista, un árbol de carpetas y un drawer de
+detalle con `declaredBy`/`invokedBy` y memorias con badge de drift. Bindea estrictamente a loopback
+y auto-registra el proyecto en `~/.leina/projects.json` (el mismo registro que `build`/`refresh`/
+`init` actualizan). Cortalo con Ctrl+C.
+
+> No confundir con [`visualize`](#visualización--workspaces-multi-repo): eso exporta un **archivo
+> `.html` estático y compartible** de un solo proyecto. `graph serve` es un **server en vivo** —
+> selector multi-proyecto, memoria anclada por nodo, pero solo mientras corre.
 
 ## Memory y detección de drift
 

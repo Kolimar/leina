@@ -89,6 +89,12 @@ Pasa por la **freshness gate** (igual que `query`/`affected`):
 
 Al tener éxito imprime: `Exported graph.html ({N} nodes, {E} edges) -> {outPath}`.
 
+> **`visualize` vs `graph serve`:** no son intercambiables. `visualize` es un **archivo `.html`
+> estático** de un solo proyecto (sin memoria, sin server); `graph serve` es un **server local en
+> vivo** con selector multi-proyecto y la memoria anclada de cada nodo, que corre solo mientras el
+> proceso está arriba. Mismo visor, herramienta distinta — tabla comparativa en el paso 4 de
+> [`getting-started`](../../GETTING_STARTED.md#4-see-your-code-as-a-graph).
+
 **Workspace-aware:** si `<dir>` es la raíz de un workspace (ver *Comandos de workspace* más
 abajo), se evita la freshness gate de repo único (rompería el grafo fusionado) y la
 exportación usa en su lugar el store de workspace fusionado. El render por defecto es modo
@@ -98,6 +104,41 @@ autodetección.
 
 Respaldado por `handleVisualize` (`src/cli/handlers/visualize.ts`) →
 `renderGraphHtml` / `renderConstellationHtml` (`src/application/graph/html-export.ts`).
+
+### `graph serve [<dir>] [--port <n>] [--host <h>]`
+Levanta un servidor HTTP **read-only, en foreground** (`node:http`, sin dependencias de framework)
+que expone el grafo + la memoria anclada de `<dir>` como una API JSON, más una UI exploradora en JS
+vanilla en `/` (`assets/graph-ui/`, el mismo `vis-network.min.js` vendoreado que `visualize`). Pasa
+por la misma freshness gate que las otras lecturas del grafo antes de arrancar, y auto-registra
+`<dir>` en el registro global de proyectos (`~/.leina/projects.json`) — el mismo registro que
+`build`/`refresh`/`init` actualizan de forma oportunista, que alimenta el selector de proyectos de
+la UI.
+
+La config resuelve **port → host → token** con una precedencia de 3 niveles (env >
+`.leina/config.json` clave `"serve"` > defaults): `LEINA_SERVE_PORT`/`LEINA_SERVE_HOST`/
+`LEINA_SERVE_TOKEN`, con default a port `7423`, host `127.0.0.1`, sin token
+(`src/infrastructure/config/serve.ts`). El bind es **estrictamente loopback** — un valor de
+`--host`/config/env no-loopback se rechaza antes de que el servidor bindee (NFR-02). Si hay un token
+configurado, los requests sin token coincidente reciben `401`; la comparación es de tiempo constante.
+
+API JSON (todo read-only; no-GET → `405`; los errores son `{"error":{"code","message"}}`):
+
+| Método | Path | Notas |
+|---|---|---|
+| GET | `/api/projects` | todos los proyectos del registro global |
+| GET | `/api/projects/:key/stats` | conteos de nodos/aristas por kind y por relación |
+| GET | `/api/projects/:key/tree` | árbol de carpetas/archivos para el selector de proyectos |
+| GET | `/api/projects/:key/search?q=` | búsqueda por label |
+| GET | `/api/projects/:key/nodes/:id` | detalle de nodo + aristas `declaredBy`/`invokedBy` |
+| GET | `/api/projects/:key/nodes/:id/memories?limit=` | últimas observaciones ancladas, clasificadas por drift |
+
+Corre en **foreground** hasta Ctrl+C (`SIGINT` cierra cada conexión abierta y libera el puerto — sin
+proceso zombie). Respaldado por `handleServe` (`src/cli/handlers/serve.ts`) → `cli/serve/router.ts` +
+`cli/serve/handlers.ts` → `application/graph/serve-payloads.ts`.
+
+> **`graph serve` vs `visualize`:** no son intercambiables. `visualize` exporta un **archivo `.html`
+> estático y compartible** de un solo proyecto; `graph serve` es un **server en vivo** (selector
+> multi-proyecto + memoria anclada por nodo) que corre solo mientras el proceso está arriba.
 
 ---
 

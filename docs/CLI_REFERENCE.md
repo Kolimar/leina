@@ -80,6 +80,10 @@ Routes through the **freshness gate** (same as `query`/`affected`):
 
 On success prints: `Exported graph.html ({N} nodes, {E} edges) -> {outPath}`.
 
+> **`visualize` vs `graph serve`:** this is a one-shot **static file** for a single project (no
+> memory, no server). For a **live server** with a multi-project selector and per-node anchored
+> memory, use [`graph serve`](#graph-serve-dir---port-n---host-h). Same viewer, different tool.
+
 **Workspace-aware:** if `<dir>` is a workspace root (see *Workspace commands* below), the
 single-repo freshness gate is bypassed (it would clobber the merged graph) and the export
 uses the merged workspace store instead. Default render is **constellation** mode (each repo
@@ -118,6 +122,10 @@ JSON API (all read-only; non-GET → `405`; errors are `{"error":{"code","messag
 Runs in the **foreground** until Ctrl+C (`SIGINT` closes every open connection and releases the
 port — no zombie process). Backed by `handleServe` (`src/cli/handlers/serve.ts`) → `cli/serve/router.ts`
 + `cli/serve/handlers.ts` → `application/graph/serve-payloads.ts`.
+
+> **`graph serve` vs `visualize`:** not interchangeable. [`visualize`](#visualize-dir---out-path---drilldown---single--workspace)
+> exports a **static, shareable `.html` file** for one project; `graph serve` is a **live server**
+> (multi-project selector + per-node anchored memory) that only runs while the process is up.
 
 ---
 
