@@ -2,7 +2,7 @@
 // Each handler receives the argv tail (everything after the top-level command).
 
 import { join, resolve as resolvePath } from "node:path";
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { isStale, readManifest } from "../../application/graph/manifest.ts";
 import { acquireForegroundBuildLock, buildLockPath } from "../background-build.ts";
 import { loadFreshnessConfig } from "../../infrastructure/config/freshness.ts";
@@ -12,7 +12,13 @@ import { makeLeinaEvent } from "../../domain/events/model.ts";
 import { emitEvent } from "../../application/events/emit.ts";
 import { fail } from "../io.ts";
 import { deriveProjectKey } from "../../application/project/detect-key.ts";
-import { recordProject } from "../../infrastructure/config/project-registry-store.ts";
+import { pruneRegistry } from "../../application/project/registry.ts";
+import {
+  projectRegistryPath,
+  readProjectRegistry,
+  recordProject,
+  writeProjectRegistry,
+} from "../../infrastructure/config/project-registry-store.ts";
 
 
 // `build --profile` — stage timings for deciding where incremental work pays off.
@@ -186,6 +192,38 @@ export async function handlePath(rest: string[]): Promise<void> {
   for (const s of steps) {
     console.log(`  --${s.relation}(${s.confidence})--> ${s.to.label}`);
   }
+}
+
+// `graph gc` — housekeeping for the global project registry (~/.leina/projects.json).
+// Reads normally filter out roots that have vanished (a deleted /tmp checkout, a moved
+// repo), so stale entries are harmless — but they accumulate forever. This drops them for
+// good. `--dry-run` reports what would be removed without rewriting; `--json` emits the
+// same result as machine-readable output. Fail-open like every other registry operation.
+export function handleGraphGc(rest: string[]): void {
+  const dryRun = rest.includes("--dry-run");
+  const asJson = rest.includes("--json");
+  const { kept, removed } = pruneRegistry(readProjectRegistry(), existsSync);
+  if (!dryRun && removed.length > 0) writeProjectRegistry(kept);
+
+  if (asJson) {
+    console.log(
+      JSON.stringify(
+        { path: projectRegistryPath(), dryRun, kept: kept.length, removed: removed.map((e) => e.root) },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  console.log(`registry: ${projectRegistryPath()}`);
+  if (removed.length === 0) {
+    console.log(`Nothing to prune — all ${kept.length} registered root(s) still exist.`);
+    return;
+  }
+  console.log(`${dryRun ? "Would remove" : "Removed"} ${removed.length} stale root(s), kept ${kept.length}:`);
+  for (const e of removed) console.log(`  - ${e.root} (${e.projectKey})`);
+  if (dryRun) console.log("(dry run — registry left unchanged)");
 }
 
 export async function handleQuery(rest: string[]): Promise<void> {

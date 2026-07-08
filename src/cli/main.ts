@@ -21,6 +21,7 @@
 import {
   handleAffected,
   handleBuild,
+  handleGraphGc,
   handlePath,
   handleQuery,
   handleRefresh,
@@ -224,8 +225,15 @@ switch (cmd) {
         await handleServe(graphRest);
         break;
       }
+      case "gc":
+        handleGraphGc(graphRest);
+        break;
       default:
-        process.stderr.write("Usage: leina graph serve [<dir>] [--port <n>] [--host <h>]\n");
+        process.stderr.write(
+          "Usage: leina graph <serve|gc> [options]\n" +
+            "  serve [<dir>] [--port <n>] [--host <h>]  live graph explorer\n" +
+            "  gc [--dry-run] [--json]                  prune vanished roots from the project registry\n",
+        );
         process.exit(1);
     }
     break;

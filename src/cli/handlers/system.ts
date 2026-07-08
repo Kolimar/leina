@@ -341,6 +341,9 @@ export function printRootHelp(): void {
       `                          foreground read-only HTTP server: stats/tree/search/node\n` +
       `                          detail + anchored memories over the graph; JSON API only,\n` +
       `                          loopback-bound (127.0.0.1/::1/localhost), Ctrl+C to stop\n` +
+      `  graph gc [--dry-run] [--json]\n` +
+      `                          prune vanished roots from the global project registry\n` +
+      `                          (~/.leina/projects.json); reads already ignore them\n` +
       `  workspace <build|status|detect|memory|visualize> [dir]\n` +
       `                          multi-repo workspace: merged graph, per-member freshness,\n` +
       `                          federated memory (context|search), constellation viz\n` +

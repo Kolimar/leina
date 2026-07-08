@@ -37,6 +37,28 @@ export function upsertProject(list: ProjectEntry[], entry: ProjectEntry): Projec
   return next;
 }
 
+/** The outcome of pruning a registry: entries kept vs. dropped (see `pruneRegistry`). */
+export interface PruneResult {
+  kept: ProjectEntry[];
+  removed: ProjectEntry[];
+}
+
+/**
+ * Partition `list` into entries whose root still exists (`kept`) and those whose root is
+ * gone (`removed`). Unlike `withAvailability` — which annotates but never drops, so a
+ * moved-back repo auto-heals — this is the explicit, user-invoked garbage collection
+ * (`leina graph gc`): the caller writes back only `kept`. Pure: `exists` is injected and
+ * the input list is never mutated.
+ */
+export function pruneRegistry(list: ProjectEntry[], exists: (root: string) => boolean): PruneResult {
+  const kept: ProjectEntry[] = [];
+  const removed: ProjectEntry[] = [];
+  for (const entry of list) {
+    (exists(entry.root) ? kept : removed).push(entry);
+  }
+  return { kept, removed };
+}
+
 /**
  * Annotate each entry with `unavailable: true` when its root is no longer reachable.
  * Roots are NEVER dropped from the list — a disconnected drive or a repo moved back into

@@ -9,6 +9,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  pruneRegistry,
   upsertProject,
   withAvailability,
   type ProjectEntry,
@@ -19,6 +20,7 @@ import {
   writeProjectRegistry,
   recordProject,
 } from "../src/infrastructure/config/project-registry-store.ts";
+import { handleGraphGc } from "../src/cli/handlers/graph.ts";
 
 // ---------------------------------------------------------------------------
 // upsertProject — pure merge, keyed by root
@@ -71,6 +73,106 @@ test("withAvailability: missing root is flagged unavailable, never dropped", () 
   assert.equal(out.length, 2, "roots are annotated, not removed");
   assert.equal(out.find((p) => p.root === "/repo/a")!.unavailable, undefined);
   assert.equal(out.find((p) => p.root === "/repo/b")!.unavailable, true);
+});
+
+// ---------------------------------------------------------------------------
+// pruneRegistry — explicit GC: partitions kept vs removed, never mutates input
+// ---------------------------------------------------------------------------
+
+test("pruneRegistry: partitions into existing (kept) and vanished (removed)", () => {
+  const list = [entry("/repo/a"), entry("/repo/gone"), entry("/repo/b")];
+  const { kept, removed } = pruneRegistry(list, (root) => root !== "/repo/gone");
+  assert.deepEqual(kept.map((p) => p.root).sort(), ["/repo/a", "/repo/b"]);
+  assert.deepEqual(removed.map((p) => p.root), ["/repo/gone"]);
+});
+
+test("pruneRegistry: all roots present → nothing removed", () => {
+  const list = [entry("/repo/a"), entry("/repo/b")];
+  const { kept, removed } = pruneRegistry(list, () => true);
+  assert.equal(kept.length, 2);
+  assert.equal(removed.length, 0);
+});
+
+test("pruneRegistry: is pure — does not mutate the input list", () => {
+  const list = [entry("/repo/a"), entry("/repo/gone")];
+  const snapshot = JSON.stringify(list);
+  pruneRegistry(list, (root) => root !== "/repo/gone");
+  assert.equal(JSON.stringify(list), snapshot, "input list must be unchanged");
+});
+
+// ---------------------------------------------------------------------------
+// `graph gc` handler — end-to-end against a real registry file + real roots
+// ---------------------------------------------------------------------------
+
+/** Run `fn` with console.log captured; returns everything logged, joined by newlines. */
+function captureLog(fn: () => void): string {
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => void lines.push(args.join(" "));
+  try {
+    fn();
+  } finally {
+    console.log = original;
+  }
+  return lines.join("\n");
+}
+
+test("(gc-1) graph gc prunes vanished roots and keeps live ones", () => {
+  withHome((home) => {
+    // Two roots that really exist on disk, one that never will.
+    const liveA = mkdtempSync(join(tmpdir(), "leina-gc-live-"));
+    const liveB = mkdtempSync(join(tmpdir(), "leina-gc-live-"));
+    const gone = join(home, "definitely-not-here");
+    try {
+      writeProjectRegistry([entry(liveA), entry(gone), entry(liveB)]);
+      const out = captureLog(() => handleGraphGc([]));
+      assert.match(out, /Removed 1 stale root\(s\), kept 2/);
+      assert.match(out, new RegExp(gone.replace(/[/\\]/g, "\\$&")));
+
+      const after = readProjectRegistry();
+      assert.deepEqual(after.map((p) => p.root).sort(), [liveA, liveB].sort());
+    } finally {
+      rmSync(liveA, { recursive: true, force: true });
+      rmSync(liveB, { recursive: true, force: true });
+    }
+  });
+});
+
+test("(gc-2) graph gc --dry-run reports but never rewrites the file", () => {
+  withHome((home) => {
+    const gone = join(home, "vanished");
+    writeProjectRegistry([entry(gone)]);
+    const out = captureLog(() => handleGraphGc(["--dry-run"]));
+    assert.match(out, /Would remove 1 stale root\(s\)/);
+    assert.match(out, /dry run — registry left unchanged/);
+    // File untouched: the stale entry is still there.
+    assert.deepEqual(readProjectRegistry().map((p) => p.root), [gone]);
+  });
+});
+
+test("(gc-3) graph gc --json emits machine-readable result", () => {
+  withHome((home) => {
+    const gone = join(home, "vanished");
+    writeProjectRegistry([entry(gone)]);
+    const out = captureLog(() => handleGraphGc(["--json"]));
+    const parsed = JSON.parse(out) as { dryRun: boolean; kept: number; removed: string[] };
+    assert.equal(parsed.kept, 0);
+    assert.deepEqual(parsed.removed, [gone]);
+    assert.equal(parsed.dryRun, false);
+  });
+});
+
+test("(gc-4) graph gc on a clean registry reports nothing to prune", () => {
+  withHome(() => {
+    const live = mkdtempSync(join(tmpdir(), "leina-gc-clean-"));
+    try {
+      writeProjectRegistry([entry(live)]);
+      const out = captureLog(() => handleGraphGc([]));
+      assert.match(out, /Nothing to prune — all 1 registered root\(s\) still exist/);
+    } finally {
+      rmSync(live, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

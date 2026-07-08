@@ -31,7 +31,8 @@ test("(sc-1) unknown `graph` sub-command → usage message, exit 1; build/visual
   try {
     const bad = run(env, "graph", "nope");
     assert.equal(bad.status, 1);
-    assert.match(bad.stderr, /Usage: leina graph serve/);
+    assert.match(bad.stderr, /Usage: leina graph <serve\|gc>/);
+    assert.match(bad.stderr, /gc \[--dry-run\]/);
 
     // build stays a top-level command, not moved under `graph` (design: "visualize intacto").
     const built = run(env, "build", dir);
