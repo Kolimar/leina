@@ -57,7 +57,7 @@ test("(mcpg-1) register: json-file hosts written only when installed; claude ski
   const env = sandboxEnv(home);
   try {
     // Nothing installed: cursor/windsurf skipped, claude skipped (no binary).
-    const r1 = runCli(env, "mcp", "register");
+    const r1 = runCli(env, "mcp", "register", "--hosts", "cursor,windsurf,claude");
     assert.equal(r1.status, 0, r1.stdout + r1.stderr);
     assert.match(r1.stdout, /· Cursor: .*not installed/);
     assert.match(r1.stdout, /· Windsurf: .*not installed/);
@@ -66,14 +66,14 @@ test("(mcpg-1) register: json-file hosts written only when installed; claude ski
 
     // Cursor "installed" (dir exists): register writes its config.
     mkdirSync(join(home, ".cursor"), { recursive: true });
-    const r2 = runCli(env, "mcp", "register");
+    const r2 = runCli(env, "mcp", "register", "--hosts", "cursor,windsurf,claude");
     assert.equal(r2.status, 0);
     assert.match(r2.stdout, /\+ Cursor: /);
     const cfg = JSON.parse(readFileSync(join(home, ".cursor", "mcp.json"), "utf8"));
     assert.deepEqual(cfg.mcpServers.leina, { command: "leina", args: ["mcp"] });
 
     // Idempotent: second run → unchanged.
-    const r3 = runCli(env, "mcp", "register");
+    const r3 = runCli(env, "mcp", "register", "--hosts", "cursor,windsurf,claude");
     assert.match(r3.stdout, /= Cursor: already registered/);
   } finally {
     rmSync(home, { recursive: true, force: true });

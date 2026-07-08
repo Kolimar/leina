@@ -31,6 +31,21 @@ function parseHosts(rest: string[]): McpHostId[] | undefined {
   return ids as McpHostId[];
 }
 
+// Vendor-neutral: `mcp register` never picks which hosts to register on its own — the user
+// must name them with --hosts (leina used to register to EVERY installed MCP host silently).
+// The suggestion lists the known MCP hosts and which are actually installed on this machine.
+function requireMcpHosts(rest: string[]): McpHostId[] {
+  const hosts = parseHosts(rest);
+  if (hosts !== undefined) return hosts;
+  const installed = inspectMcpGlobal().filter((s) => s.state !== "not-installed").map((s) => s.host);
+  const hint = installed.length > 0 ? `installed here: ${installed.join(", ")}` : "none installed on this machine";
+  return fail(
+    `mcp register: --hosts is required — leina will not choose which MCP hosts to register.\n` +
+      `  Known MCP hosts: ${MCP_HOSTS.map((h) => h.id).join(", ")} (${hint}).\n` +
+      `  Example: leina mcp register --hosts ${installed[0] ?? MCP_HOSTS[0]!.id}`,
+  );
+}
+
 const MARK: Record<McpHostResult["action"], string> = {
   written: "+",
   unchanged: "=",
@@ -47,8 +62,9 @@ export function printMcpResults(results: McpHostResult[]): void {
 }
 
 export function handleMcpRegister(rest: string[]): void {
+  const hosts = requireMcpHosts(rest);
   console.log("leina mcp register — user-global registration (one server, every project):");
-  printMcpResults(registerMcpGlobal(parseHosts(rest)));
+  printMcpResults(registerMcpGlobal(hosts));
   console.log(`\nProject-level alternative (committable, for teams): leina init <dir> --mcp`);
 }
 
