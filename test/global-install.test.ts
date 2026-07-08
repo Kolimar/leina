@@ -588,7 +588,7 @@ test("(alias-a) install-global deprecation notice goes to stderr; stdout has the
       USERPROFILE: home,
     };
     env.APPDATA = join(home, ".config");
-    const { status, stdout, stderr } = spawnCli(["install-global"], env);
+    const { status, stdout, stderr } = spawnCli(["install-global", "--hosts", "devin"], env);
     assert.equal(status, 0, "exit code 0");
     assert.match(stderr, /install-global.*deprecated.*activate/, "deprecation on stderr");
     assert.doesNotMatch(stdout, /deprecated/, "deprecation NOT on stdout");
@@ -615,8 +615,8 @@ test("(alias-b) install-global and activate produce the same on-disk result (sym
         USERPROFILE: home2,
       };
       env2.APPDATA = join(home2, ".config");
-      const r1 = spawnCli(["activate", "--no-user-hooks"], env1);
-      const r2 = spawnCli(["install-global", "--no-user-hooks"], env2);
+      const r1 = spawnCli(["activate", "--no-user-hooks", "--hosts", "devin"], env1);
+      const r2 = spawnCli(["install-global", "--no-user-hooks", "--hosts", "devin"], env2);
       assert.equal(r1.status, 0, "activate exits 0");
       assert.equal(r2.status, 0, "install-global exits 0");
       // Both share roots populated (version sentinel present)

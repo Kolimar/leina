@@ -30,20 +30,34 @@ function makeSandbox(): { env: NodeJS.ProcessEnv; home: string; cleanup: () => v
 }
 
 function run(env: NodeJS.ProcessEnv, ...args: string[]) {
+  // Host-requiring subcommands now need an explicit --hosts; default to the
+  // historical devin wiring when a caller doesn't specify one.
+  const hostCmds = new Set(["setup", "activate", "init", "install-global"]);
+  const finalArgs =
+    hostCmds.has(args[0] ?? "") && !args.includes("--hosts")
+      ? [...args, "--hosts", "devin"]
+      : args;
   const r = spawnSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, ...args],
+    ["--no-warnings", "--experimental-strip-types", CLI, ...finalArgs],
     { encoding: "utf8", env },
   );
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
-test("(mh-a) default activate links Devin only — no ~/.claude is created", () => {
-  const { env, home, cleanup } = makeSandbox();
+test("(mh-a) bare activate without --hosts fails — leina never picks a host", () => {
+  const { env, cleanup } = makeSandbox();
   try {
-    assert.equal(run(env, "activate").status, 0);
-    assert.ok(existsSync(join(home, ".config", "devin", "skills", "leina-setup")));
-    assert.ok(!existsSync(join(home, ".claude")), "no ~/.claude without --hosts claude");
+    // Invoke the CLI directly (not via `run`, which would inject --hosts): a bare
+    // activate in a fresh sandbox with no persisted selection must be rejected —
+    // leina no longer silently defaults to any host.
+    const r = spawnSync(
+      process.execPath,
+      ["--no-warnings", "--experimental-strip-types", CLI, "activate"],
+      { encoding: "utf8", env },
+    );
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /--hosts is required/);
   } finally {
     cleanup();
   }

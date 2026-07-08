@@ -34,9 +34,16 @@ function runCli(
   env: NodeJS.ProcessEnv,
   ...args: string[]
 ): { status: number; stdout: string; stderr: string } {
+  // Host-requiring subcommands now need an explicit --hosts; default to the
+  // historical devin wiring when a caller doesn't specify one.
+  const hostCmds = new Set(["setup", "activate", "init", "install-global"]);
+  const finalArgs =
+    hostCmds.has(args[0] ?? "") && !args.includes("--hosts")
+      ? [...args, "--hosts", "devin"]
+      : args;
   const r = spawnSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, ...args],
+    ["--no-warnings", "--experimental-strip-types", CLI, ...finalArgs],
     { encoding: "utf8", env },
   );
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };

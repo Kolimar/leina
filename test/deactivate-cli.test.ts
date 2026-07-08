@@ -57,9 +57,13 @@ function runCli(
   env: NodeJS.ProcessEnv,
   ...args: string[]
 ): { status: number; stdout: string; stderr: string } {
+  const needsHost =
+    ["setup", "activate", "init", "install-global"].includes(args[0] ?? "") &&
+    !args.includes("--hosts");
+  const finalArgs = needsHost ? [...args, "--hosts", "devin"] : args;
   const r = spawnSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, ...args],
+    ["--no-warnings", "--experimental-strip-types", CLI, ...finalArgs],
     { encoding: "utf8", env },
   );
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };

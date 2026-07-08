@@ -37,6 +37,11 @@ function sandboxEnv(home: string): NodeJS.ProcessEnv {
 }
 
 function runCli(env: NodeJS.ProcessEnv, ...args: string[]) {
+  // Host-selecting commands now require an explicit --hosts. Default the vendor-neutral
+  // tests to "devin" when they don't pass one, leaving mcp register/unregister untouched.
+  if (["setup", "activate", "init", "install-global"].includes(args[0]!) && !args.includes("--hosts")) {
+    args = [...args, "--hosts", "devin"];
+  }
   return spawnSync(
     process.execPath,
     ["--no-warnings", "--experimental-strip-types", CLI, ...args],

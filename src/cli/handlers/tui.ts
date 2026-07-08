@@ -18,11 +18,12 @@ import { isStale, readManifest } from "../../application/graph/manifest.ts";
 import { loadFreshnessConfig } from "../../infrastructure/config/freshness.ts";
 import { loadServeConfig } from "../../infrastructure/config/serve.ts";
 import {
+  detectInstalledHosts,
   entryAssetsRoot,
   isBlanketActive,
   isGlobalActivated,
 } from "../../infrastructure/install/global.ts";
-import { DEFAULT_HOSTS, HOSTS, shareSelectionFile } from "../../infrastructure/install/share-paths.ts";
+import { HOSTS, shareSelectionFile } from "../../infrastructure/install/share-paths.ts";
 import {
   deserializeSelection,
   parseCatalog,
@@ -151,8 +152,11 @@ async function installFlow(catalog: Catalog | null): Promise<void> {
   }
 
   // Which AI hosts to link into.
+  // Pre-select the user's persisted hosts, or — on a first run — the hosts actually
+  // detected on this machine (a suggestion, NOT a decision: the multiselect is `required`,
+  // so nothing is wired unless the user confirms). Never defaults to a fixed vendor.
   const persistedHosts =
-    deserializeSelection(readIfExists(shareSelectionFile()))?.hosts ?? [...DEFAULT_HOSTS];
+    deserializeSelection(readIfExists(shareSelectionFile()))?.hosts ?? detectInstalledHosts();
   const hosts = await p.multiselect({
     message: "Link the assets into which AI hosts?",
     options: HOSTS.map((h) => ({ value: h.id, label: h.label, hint: h.skillsRoot() })),

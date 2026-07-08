@@ -34,9 +34,12 @@ const TEST_ENV = {
 };
 
 function runInit(project: string, ...args: string[]): string {
+  // Vendor-neutral init requires an explicit --hosts (or a persisted selection). These legacy
+  // tests were written against the old devin default; re-wire devin here so their assertions hold.
+  const hostArgs = args.includes("--hosts") ? args : [...args, "--hosts", "devin"];
   return execFileSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...args],
+    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...hostArgs],
     { encoding: "utf8", env: TEST_ENV },
   );
 }
@@ -303,7 +306,7 @@ test("(I3-no-user-global) init FULL nunca escribe ~/.config/devin/config.json (I
   try {
     execFileSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin", "--hosts", "devin"],
       { encoding: "utf8", env: { ...process.env, LEINA_HOME: isolatedHome, HOME: isolatedHome, USERPROFILE: isolatedHome } },
     );
     const userGlobal = join(isolatedHome, ".config", "devin", "config.json");
@@ -416,9 +419,12 @@ function spawnInit(
   env: NodeJS.ProcessEnv,
   ...args: string[]
 ): { status: number; stdout: string; stderr: string } {
+  // Vendor-neutral init requires an explicit --hosts; these legacy callers relied on the old
+  // devin default, so re-wire devin unless the caller already named hosts.
+  const hostArgs = args.includes("--hosts") ? args : [...args, "--hosts", "devin"];
   const result = spawnSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...args],
+    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...hostArgs],
     { encoding: "utf8", env },
   );
   return {
@@ -472,7 +478,7 @@ test("(i-no-nudge) init emits NO nudge when global activation is present", () =>
     // Pre-activate by running `activate` first
     spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "activate", "--no-user-hooks"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "activate", "--no-user-hooks", "--hosts", "devin"],
       { encoding: "utf8", env },
     );
     assert.ok(
@@ -501,7 +507,7 @@ test("(i-autobuild-1) init sin --build nunca crea graph.db ni dice 'Building gra
   try {
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin", "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     assert.equal(result.status, 0, `exit 0 (stdout: ${result.stdout}, stderr: ${result.stderr})`);
@@ -524,7 +530,7 @@ test("(i-autobuild-2) init con graph.db pre-existente no dice 'Building graph in
 
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin", "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     assert.equal(result.status, 0, `exit 0 (stdout: ${result.stdout}, stderr: ${result.stderr})`);
@@ -557,7 +563,7 @@ test("(I1-1) init LIGHT (blanket activo): solo consent + gitignore; AGENTS.md y 
     };
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin"],
       { encoding: "utf8", env },
     );
     assert.equal(result.status, 0, `exit 0 (stderr: ${result.stderr})`);
@@ -603,7 +609,7 @@ test("(I1-2) init FULL (sin blanket): todos los artefactos del repo; user-global
     };
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin"],
       { encoding: "utf8", env },
     );
     assert.equal(result.status, 0, `exit 0 (stderr: ${result.stderr})`);
@@ -656,7 +662,7 @@ test("(I1-3) init LIGHT idempotente — re-init no duplica bloques en .gitignore
       HOME: isolatedHome,
       USERPROFILE: isolatedHome,
     };
-    const args = ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir];
+    const args = ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin"];
     spawnSync(process.execPath, args, { encoding: "utf8", env });
     const gitignoreFirst = readFileSync(join(dir, ".gitignore"), "utf8");
 
@@ -681,7 +687,7 @@ test("(I2-2) init --build construye el grafo síncronamente en foreground (graph
   try {
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--build"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--build", "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV, timeout: 90_000 },
     );
     assert.equal(result.status, 0, `exit 0 (stderr: ${result.stderr})`);
@@ -700,7 +706,7 @@ test("(i-R5-agent-devin-alias) --agent devin is a back-compat alias: exit 0 and 
   try {
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin", "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     assert.equal(result.status, 0, `exit 0 (stderr: ${result.stderr})`);
@@ -719,12 +725,12 @@ test("(i-R5-agent-devin-alias-identical) --agent devin produces AGENTS.md identi
   try {
     spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dirAgent, "--agent", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dirAgent, "--agent", "devin", "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dirProfile, "--profile", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dirProfile, "--profile", "devin", "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     const agentContent   = readFileSync(join(dirAgent, "AGENTS.md"), "utf8");
@@ -741,7 +747,7 @@ test("(i-R5-agent-windsurf-fails) --agent windsurf fails with exit ≠ 0 and std
   try {
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "windsurf"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "windsurf", "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     assert.notEqual(result.status, 0, "exit code must be non-zero");
@@ -756,7 +762,7 @@ test("(i-R5-profile-windsurf-caps) --profile windsurf writes ## Capabilities sec
   try {
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--profile", "windsurf"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--profile", "windsurf", "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     assert.equal(result.status, 0, `exit 0 (stderr: ${result.stderr})`);
@@ -773,7 +779,7 @@ test("(i-R5-profile-windsurf-caps) --profile windsurf writes ## Capabilities sec
 test("(i-R5-profile-windsurf-idempotent) double --profile windsurf init produces byte-identical AGENTS.md", () => {
   const dir = tmpProject();
   try {
-    const args = ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--profile", "windsurf"];
+    const args = ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--profile", "windsurf", "--hosts", "devin"];
     spawnSync(process.execPath, args, { encoding: "utf8", env: TEST_ENV });
     const first = readFileSync(join(dir, "AGENTS.md"), "utf8");
 
@@ -805,7 +811,7 @@ test("(i-err-1) a failing step does not abort init: remaining steps run, ✖ rep
 
     const r = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
 
@@ -831,7 +837,7 @@ test("(i-err-2) clean init still exits 0 with no ✖ lines", () => {
   try {
     const r = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -926,29 +932,45 @@ test("(i-h4) without --hosts, init follows the persisted selection (activate/tui
   }
 });
 
-test("(i-h5) without --hosts or selection, detection wires devin only (isolated HOME)", () => {
+test("(i-h5) init without --hosts and no persisted selection fails, requiring an explicit host", () => {
+  // Vendor-neutral policy: leina NEVER picks an AI host on its own. With no --hosts and no
+  // prior explicit selection, init must hard-fail instead of silently defaulting to a vendor.
+  // Invoke the CLI directly (NOT runInitHome) so no --hosts is injected.
   const dir = tmpProject();
   const home = freshHome();
   try {
-    const out = runInitHome(home, dir);
-    assert.match(out, /hosts: devin/);
-    assert.ok(existsSync(join(dir, ".devin", "hooks.v1.json")), "devin wired by default detection");
-    assert.ok(!existsSync(join(dir, ".claude", "settings.json")), "no ~/.claude on this HOME → claude not wired");
+    const r = spawnSync(
+      process.execPath,
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir],
+      { encoding: "utf8", env: { ...process.env, LEINA_HOME: home, HOME: home, USERPROFILE: home, LEINA_DISABLE_AUTOBUILD: "1" } },
+    );
+    assert.equal(r.status, 1, "init without --hosts must fail — leina won't choose a host");
+    assert.match(r.stderr, /--hosts is required/, "error explains --hosts is required");
+    assert.ok(!existsSync(join(dir, ".devin", "hooks.v1.json")), "nothing wired on the hard-fail");
+    assert.ok(!existsSync(join(dir, "AGENTS.md")), "no artifacts written on the hard-fail");
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
 });
 
-test("(i-h6) detection lights up claude when ~/.claude exists on the machine", () => {
+test("(i-h6) init without --hosts still fails even when ~/.claude is detected; the error suggests claude", () => {
+  // Detection no longer WIRES a host — it only informs the suggestion in the error. With
+  // ~/.claude present but no --hosts and no persisted selection, init still hard-fails, and
+  // the failure names claude as a detected host you could pass. Invoked directly (no --hosts).
   const dir = tmpProject();
   const home = freshHome();
   try {
     mkdirSync(join(home, ".claude"), { recursive: true });
-    const out = runInitHome(home, dir);
-    assert.match(out, /hosts: devin, claude/);
-    assert.ok(existsSync(join(dir, ".devin", "hooks.v1.json")), "devin wired");
-    assert.ok(existsSync(join(dir, ".claude", "settings.json")), "claude auto-detected and wired");
+    const r = spawnSync(
+      process.execPath,
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir],
+      { encoding: "utf8", env: { ...process.env, LEINA_HOME: home, HOME: home, USERPROFILE: home, LEINA_DISABLE_AUTOBUILD: "1" } },
+    );
+    assert.equal(r.status, 1, "init without --hosts must fail even with a detectable host");
+    assert.match(r.stderr, /--hosts is required/, "error explains --hosts is required");
+    assert.match(r.stderr, /claude/, "the suggestion mentions the detected claude host");
+    assert.ok(!existsSync(join(dir, ".claude", "settings.json")), "detection alone never wires claude");
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });

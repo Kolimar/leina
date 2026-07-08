@@ -98,6 +98,17 @@ export function detectHosts(): HostId[] {
   return out.length > 0 ? out : [...DEFAULT_HOSTS];
 }
 
+/**
+ * Pure host detection: only the hosts whose global config dir actually exists on this
+ * machine — NO Devin special-case and NO default fallback (unlike detectHosts). The CLI
+ * uses this solely to SUGGEST hosts in a required-`--hosts` error and to pre-select them
+ * in the interactive TUI; it must never be turned into an automatic choice on the user's
+ * behalf (that would be the vendor lock this avoids).
+ */
+export function detectInstalledHosts(): HostId[] {
+  return HOSTS.filter((spec) => existsSync(dirname(spec.skillsRoot()))).map((spec) => spec.id);
+}
+
 export interface HostLink {
   host: HostId;
   kind: "skill" | "agent";

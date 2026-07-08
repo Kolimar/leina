@@ -28,9 +28,12 @@ function makeSandbox(): { env: NodeJS.ProcessEnv; home: string; cleanup: () => v
 }
 
 function runActivate(env: NodeJS.ProcessEnv, ...extra: string[]) {
+  // `activate` now requires an explicit host selection; reproduce the historical
+  // devin wiring so these asset-selection assertions hold unchanged.
+  const args = extra.includes("--hosts") ? extra : [...extra, "--hosts", "devin"];
   const r = spawnSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, "activate", ...extra],
+    ["--no-warnings", "--experimental-strip-types", CLI, "activate", ...args],
     { encoding: "utf8", env },
   );
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };

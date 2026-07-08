@@ -68,10 +68,15 @@ test("(mcpi-1) init --mcp registers; plain init does not; deinit unregisters pre
   const dir = mkdtempSync(join(tmpdir(), "leina-mcp-proj-"));
   const env = sandboxEnv(home);
   try {
-    const run = (...args: string[]) =>
-      spawnSync(process.execPath, ["--no-warnings", "--experimental-strip-types", CLI, ...args], {
+    const run = (...args: string[]) => {
+      // Host-selecting commands now require an explicit --hosts; default to "devin".
+      if (["setup", "activate", "init", "install-global"].includes(args[0]!) && !args.includes("--hosts")) {
+        args = [...args, "--hosts", "devin"];
+      }
+      return spawnSync(process.execPath, ["--no-warnings", "--experimental-strip-types", CLI, ...args], {
         encoding: "utf8", env,
       });
+    };
 
     // Plain init: no .mcp.json.
     assert.equal(run("init", "--project", dir).status, 0);

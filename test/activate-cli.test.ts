@@ -35,9 +35,13 @@ function runActivate(
   env: NodeJS.ProcessEnv,
   ...extraArgs: string[]
 ): { status: number; stdout: string; stderr: string } {
+  // The CLI is now vendor-neutral: `activate` requires an explicit --hosts (it never picks
+  // a host on its own). These legacy tests assert the historical devin wiring, so default
+  // them to `--hosts devin`; callers passing their own --hosts are left untouched.
+  const args = extraArgs.includes("--hosts") ? extraArgs : [...extraArgs, "--hosts", "devin"];
   const result = spawnSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, "activate", ...extraArgs],
+    ["--no-warnings", "--experimental-strip-types", CLI, "activate", ...args],
     { encoding: "utf8", env },
   );
   return {

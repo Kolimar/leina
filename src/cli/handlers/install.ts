@@ -46,7 +46,7 @@ import {
   writeProjectConfig,
 } from "../../application/project/detect-key.ts";
 import {
-  detectHosts,
+  detectInstalledHosts,
   entryAssetsRoot,
   isGlobalActivated,
   isBlanketActive,
@@ -95,6 +95,55 @@ function maybeShellInteropAdvisory(): void {
 // catalog. Returns undefined when no flag was given — installGlobal then keeps the
 // persisted selection (or everything). Validation problems are hard failures: a typo'd
 // skill name must not silently install the wrong set.
+function knownHostIds(): string {
+  return HOSTS.map((x) => x.id).join(", ");
+}
+
+// Parse & validate a --hosts CSV; hard-fail on empty or unknown host ids.
+function parseHostsFlag(hostsFlag: string): HostId[] {
+  const hosts = hostsFlag.split(",").map((h) => h.trim()).filter((h) => h.length > 0);
+  if (hosts.length === 0) fail(`--hosts must name at least one host (known: ${knownHostIds()})`);
+  for (const h of hosts) {
+    if (!hostSpec(h)) fail(`unknown host "${h}" (known: ${knownHostIds()})`);
+  }
+  return hosts as HostId[];
+}
+
+// Raw persisted host selection from share/.selection.json, WITHOUT the internal
+// DEFAULT_HOSTS fallback deserializeSelection applies — so the CLI can tell whether the
+// user ever EXPLICITLY chose hosts (a prior activate/tui) versus inheriting a silent
+// default. undefined = never chosen.
+function persistedHostsRaw(): HostId[] | undefined {
+  const raw = readIfExists(shareSelectionFile());
+  if (raw === null) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { hosts?: unknown };
+    if (!Array.isArray(parsed.hosts)) return undefined;
+    const hosts = parsed.hosts.filter((h): h is HostId => typeof h === "string" && hostSpec(h) !== undefined);
+    return hosts.length > 0 ? hosts : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Vendor-neutral host resolution for the CLI: leina NEVER picks an AI host on its own.
+// --hosts flag > a prior EXPLICIT persisted choice > hard error that SUGGESTS (but never
+// chooses) what's installed. This is what stops setup/activate/init from silently wiring a
+// default vendor (historically Devin) the user never asked for. Returns the resolved hosts
+// so callers can also use them as a gate (ignore the value) or a value.
+function requireHosts(label: string, hostsFlag: string | undefined): HostId[] {
+  if (hostsFlag !== undefined) return parseHostsFlag(hostsFlag);
+  const persisted = persistedHostsRaw();
+  if (persisted !== undefined) return persisted;
+  const detected = detectInstalledHosts();
+  const hint = detected.length > 0 ? `detected on this machine: ${detected.join(", ")}` : "none detected on this machine";
+  return fail(
+    `${label}: --hosts is required — leina will not choose an AI host for you.\n` +
+      `  Known hosts: ${knownHostIds()} (${hint}).\n` +
+      `  Re-run with e.g.: leina ${label} --hosts ${detected[0] ?? HOSTS[0]!.id}`,
+  );
+}
+
 function selectionFromArgs(label: string, args: string[], assetsRoot: string): Selection | undefined {
   const preset = optFlag(args, "--preset", undefined);
   const skillsFlag = optFlag(args, "--skills", undefined);
@@ -150,17 +199,11 @@ function activateFromArgs(label: string, args: string[]): boolean {
   maybeShellInteropAdvisory();
   const assetsRoot = entryAssetsRoot();
   const version = readPackageVersion();
-  let selection = selectionFromArgs(label, args, assetsRoot);
-  // First run, no flags, nothing persisted: detect which hosts exist on this machine
-  // instead of silently defaulting to Devin-only (a Claude Code user's first `setup`
-  // must light up ~/.claude without knowing about --hosts).
-  if (selection === undefined && readIfExists(shareSelectionFile()) === null) {
-    const hosts = detectHosts();
-    if (hosts.length > 1) {
-      selection = { skills: null, agents: null, hosts };
-      console.log(`  hosts auto-detected: ${hosts.join(", ")} (override with --hosts)`);
-    }
-  }
+  // Vendor-neutral gate: leina never picks an AI host on its own. Fail BEFORE any writes
+  // unless the user passed --hosts or already made an explicit choice we can inherit (the
+  // actual host values then flow through selectionFromArgs / the persisted selection).
+  requireHosts(label, optFlag(args, "--hosts", undefined));
+  const selection = selectionFromArgs(label, args, assetsRoot);
   const cliBase = deriveCliCommand({
     cliEntry: resolvePath(process.argv[1] ?? "."),
     execPath: process.execPath,
@@ -441,24 +484,12 @@ function resolveInitProfile(
   return fail(`unknown --profile "${rawProfile}" (expected: devin | windsurf)`);
 }
 
-// Which hosts init should wire, mirroring activateFromArgs' resolution order:
-// --hosts flag (validated) > persisted selection (activate/tui) > auto-detection
-// (devin always; every other host whose global config dir exists on this machine).
-// A host the user never selected must not get its project files written — the same
-// host-neutral rule doctor applies when reading them (activeHosts).
+// Which hosts init should wire — same vendor-neutral resolution as activate/setup:
+// --hosts flag (validated) > a prior EXPLICIT persisted choice (activate/tui) > hard error.
+// leina never auto-detects a host into a write; a host the user never selected must not get
+// its project files written (the same host-neutral rule doctor applies when reading them).
 function resolveInitHosts(hostsFlag: string | undefined): HostId[] {
-  if (hostsFlag !== undefined) {
-    const hosts = hostsFlag.split(",").map((h) => h.trim()).filter((h) => h.length > 0);
-    if (hosts.length === 0) fail(`--hosts must name at least one host (known: ${HOSTS.map((x) => x.id).join(", ")})`);
-    for (const h of hosts) {
-      if (!hostSpec(h)) fail(`unknown host "${h}" (known: ${HOSTS.map((x) => x.id).join(", ")})`);
-    }
-    return hosts as HostId[];
-  }
-  const persisted = deserializeSelection(readIfExists(shareSelectionFile()))?.hosts?.filter(
-    (h): h is HostId => hostSpec(h) !== undefined,
-  );
-  return persisted !== undefined && persisted.length > 0 ? persisted : detectHosts();
+  return requireHosts("init", hostsFlag);
 }
 
 // Project-level hook wiring evidence, for ANY host: Devin's managed hooks file, or a
