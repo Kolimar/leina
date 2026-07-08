@@ -42,6 +42,9 @@ function runCli(env: NodeJS.ProcessEnv, ...args: string[]) {
   if (["setup", "activate", "init", "install-global"].includes(args[0]!) && !args.includes("--hosts")) {
     args = [...args, "--hosts", "devin"];
   }
+  if (args[0] === "init" && !args.includes("--profile") && !args.includes("--agent")) {
+    args = [...args, "--profile", "devin"];
+  }
   return spawnSync(
     process.execPath,
     ["--no-warnings", "--experimental-strip-types", CLI, ...args],

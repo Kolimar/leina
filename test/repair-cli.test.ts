@@ -37,10 +37,14 @@ function runCli(
   // Host-requiring subcommands now need an explicit --hosts; default to the
   // historical devin wiring when a caller doesn't specify one.
   const hostCmds = new Set(["setup", "activate", "init", "install-global"]);
-  const finalArgs =
+  let finalArgs =
     hostCmds.has(args[0] ?? "") && !args.includes("--hosts")
       ? [...args, "--hosts", "devin"]
       : args;
+  // A full `init` also requires an explicit --profile now; default legacy callers to devin.
+  if (args[0] === "init" && !args.includes("--profile") && !args.includes("--agent")) {
+    finalArgs = [...finalArgs, "--profile", "devin"];
+  }
   const r = spawnSync(
     process.execPath,
     ["--no-warnings", "--experimental-strip-types", CLI, ...finalArgs],

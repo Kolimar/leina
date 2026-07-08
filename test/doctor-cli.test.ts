@@ -50,7 +50,7 @@ test("(doc-cli-b) doctor [dir] runs after init+activate and reports the project'
   assert.equal(activateRes.status, 0, `activate succeeded: ${activateRes.stderr}`);
   const initRes = spawnSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", proj, "--hosts", "devin"],
+    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", proj, "--hosts", "devin", "--profile", "devin"],
     { encoding: "utf8", env: TEST_ENV },
   );
   assert.equal(initRes.status, 0, `init succeeded: ${initRes.stderr}`);

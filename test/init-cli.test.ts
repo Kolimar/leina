@@ -37,9 +37,12 @@ function runInit(project: string, ...args: string[]): string {
   // Vendor-neutral init requires an explicit --hosts (or a persisted selection). These legacy
   // tests were written against the old devin default; re-wire devin here so their assertions hold.
   const hostArgs = args.includes("--hosts") ? args : [...args, "--hosts", "devin"];
+  // A full init also requires an explicit --profile now (no silent devin default); inject
+  // one unless the caller already chose (--profile or the --agent devin alias).
+  const finalArgs = hostArgs.includes("--profile") || hostArgs.includes("--agent") ? hostArgs : [...hostArgs, "--profile", "devin"];
   return execFileSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...hostArgs],
+    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...finalArgs],
     { encoding: "utf8", env: TEST_ENV },
   );
 }
@@ -422,9 +425,11 @@ function spawnInit(
   // Vendor-neutral init requires an explicit --hosts; these legacy callers relied on the old
   // devin default, so re-wire devin unless the caller already named hosts.
   const hostArgs = args.includes("--hosts") ? args : [...args, "--hosts", "devin"];
+  // Full init also requires an explicit --profile now; inject devin unless already chosen.
+  const finalArgs = hostArgs.includes("--profile") || hostArgs.includes("--agent") ? hostArgs : [...hostArgs, "--profile", "devin"];
   const result = spawnSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...hostArgs],
+    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...finalArgs],
     { encoding: "utf8", env },
   );
   return {
@@ -563,7 +568,7 @@ test("(I1-1) init LIGHT (blanket activo): solo consent + gitignore; AGENTS.md y 
     };
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin", "--profile", "devin"],
       { encoding: "utf8", env },
     );
     assert.equal(result.status, 0, `exit 0 (stderr: ${result.stderr})`);
@@ -609,7 +614,7 @@ test("(I1-2) init FULL (sin blanket): todos los artefactos del repo; user-global
     };
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin", "--profile", "devin"],
       { encoding: "utf8", env },
     );
     assert.equal(result.status, 0, `exit 0 (stderr: ${result.stderr})`);
@@ -662,7 +667,7 @@ test("(I1-3) init LIGHT idempotente — re-init no duplica bloques en .gitignore
       HOME: isolatedHome,
       USERPROFILE: isolatedHome,
     };
-    const args = ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin"];
+    const args = ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin", "--profile", "devin"];
     spawnSync(process.execPath, args, { encoding: "utf8", env });
     const gitignoreFirst = readFileSync(join(dir, ".gitignore"), "utf8");
 
@@ -687,7 +692,7 @@ test("(I2-2) init --build construye el grafo síncronamente en foreground (graph
   try {
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--build", "--hosts", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--build", "--hosts", "devin", "--profile", "devin"],
       { encoding: "utf8", env: TEST_ENV, timeout: 90_000 },
     );
     assert.equal(result.status, 0, `exit 0 (stderr: ${result.stderr})`);
@@ -811,7 +816,7 @@ test("(i-err-1) a failing step does not abort init: remaining steps run, ✖ rep
 
     const r = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin", "--profile", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
 
@@ -837,7 +842,7 @@ test("(i-err-2) clean init still exits 0 with no ✖ lines", () => {
   try {
     const r = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin", "--profile", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -859,9 +864,13 @@ function freshHome(): string {
 }
 
 function runInitHome(home: string, project: string, ...args: string[]): string {
+  // These tests exercise host resolution (explicit --hosts or a persisted selection), so
+  // --hosts is left to the caller. But a full init still needs an explicit --profile now —
+  // inject devin unless the caller chose (--profile / --agent).
+  const finalArgs = args.includes("--profile") || args.includes("--agent") ? args : [...args, "--profile", "devin"];
   return execFileSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...args],
+    ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...finalArgs],
     {
       encoding: "utf8",
       env: { ...process.env, LEINA_HOME: home, HOME: home, USERPROFILE: home, LEINA_DISABLE_AUTOBUILD: "1" },

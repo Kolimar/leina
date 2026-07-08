@@ -466,7 +466,7 @@ function printInitReport(
 function resolveInitProfile(
   agentFlag: string | undefined,
   profileFlag: string | undefined,
-): AgentProfile {
+): AgentProfile | undefined {
   // --agent windsurf is removed; fail with a migration message.
   if (agentFlag === "windsurf") {
     fail(`--agent windsurf is no longer supported. Use --profile windsurf instead.`);
@@ -477,8 +477,11 @@ function resolveInitProfile(
     fail(`unknown --agent "${agentFlag}" (only "devin" is supported as a back-compat alias; use --profile instead)`);
   }
 
-  // Resolve profile: --profile wins over --agent alias; default is devin.
-  const rawProfile = profileFlag ?? "devin";
+  // --profile wins over the --agent devin back-compat alias. NO silent default: a full init
+  // must name its AGENTS.md profile explicitly (required in writeInitArtifacts). undefined
+  // here means "not specified" — leina will not assume a vendor profile.
+  const rawProfile = profileFlag ?? (agentFlag === "devin" ? "devin" : undefined);
+  if (rawProfile === undefined) return undefined;
   if (rawProfile === "devin") return DEVIN_PROFILE;
   if (rawProfile === "windsurf") return WINDSURF_PROFILE;
   return fail(`unknown --profile "${rawProfile}" (expected: devin | windsurf)`);
@@ -506,7 +509,7 @@ export function hasHookWiring(project: string): boolean {
 // error contract above the writers).
 function writeInitArtifacts(
   project: string,
-  profile: AgentProfile,
+  profile: AgentProfile | undefined,
   cliBase: CliBase,
   hosts: HostId[],
   written: string[],
@@ -515,10 +518,20 @@ function writeInitArtifacts(
   if (isBlanketActive()) {
     // ── LIGHT: blanket is active ─────────────────────────────────────────────
     // The machine-wide share (skills/agents/grant/hooks) is already in place from `setup`.
-    // init only records per-repo consent and ensures the gitignore block.
+    // init only records per-repo consent and ensures the gitignore block. No AGENTS.md, so
+    // no profile is needed here.
     writeConsentStep(project, written, failures);
     writeGitignoreStep(project, written, failures);
     return "light";
+  }
+  // A full init writes AGENTS.md, which needs a profile. Vendor-neutral: require it
+  // explicitly (--profile devin|windsurf, or the --agent devin alias) rather than assume a
+  // default. This fail() also narrows `profile` to AgentProfile for writeAgentsMd below.
+  if (profile === undefined) {
+    fail(
+      `init: --profile is required for a full init (it writes AGENTS.md) — expected: devin | windsurf.\n` +
+        `  (A LIGHT init under 'leina setup' blanket mode doesn't need one.)`,
+    );
   }
   // ── FULL: standalone (no blanket) ────────────────────────────────────────
   // Host-neutral artifacts always; host-specific wiring only for the selected hosts.

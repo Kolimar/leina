@@ -76,7 +76,7 @@ test("(ch-4) e2e: init --claude-hooks wires the repo; a Claude-shaped Bash paylo
       encoding: "utf8", env, cwd: dir, input,
     });
   try {
-    const r = run(["init", "--project", dir, "--claude-hooks", "--hosts", "claude"]);
+    const r = run(["init", "--project", dir, "--claude-hooks", "--hosts", "claude", "--profile", "devin"]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /\.claude\/settings\.json \(agent-hook entries/);
     const cfg = JSON.parse(readFileSync(join(dir, ".claude", "settings.json"), "utf8"));

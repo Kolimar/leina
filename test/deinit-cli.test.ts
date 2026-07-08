@@ -66,7 +66,11 @@ function runCli(
   const needsHost =
     ["setup", "activate", "init", "install-global"].includes(args[0] ?? "") &&
     !args.includes("--hosts");
-  const finalArgs = needsHost ? [...args, "--hosts", "devin"] : args;
+  let finalArgs = needsHost ? [...args, "--hosts", "devin"] : args;
+  // A full `init` now also requires an explicit --profile; default legacy callers to devin.
+  if (args[0] === "init" && !args.includes("--profile") && !args.includes("--agent")) {
+    finalArgs = [...finalArgs, "--profile", "devin"];
+  }
   const r = spawnSync(
     process.execPath,
     ["--no-warnings", "--experimental-strip-types", CLI, ...finalArgs],
