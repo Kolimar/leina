@@ -17,15 +17,22 @@ import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
 
-// Sandboxed env: HOME redirected; PATH reduced to the node binary's dir so `claude` is
-// never found (forces the claude host onto its "skipped" path).
+// Sandboxed env: HOME redirected; PATH pointed at a dedicated EMPTY dir so neither
+// `claude` nor `leina` ever resolve — deterministically, on every machine. (The subprocess
+// is launched by absolute node path, so node itself doesn't need to be on PATH.) Using the
+// node binary's own dir used to leak: a system-wide install puts `leina` right next to
+// `node` in /usr/bin, so findOnPath("leina") found it and mcpg-7 (which asserts the server
+// command is NOT on PATH) failed on such boxes. An empty dir keeps the claude host on its
+// "skipped" branch and the mcp "server command" check on its not-on-PATH branch everywhere.
 function sandboxEnv(home: string): NodeJS.ProcessEnv {
+  const emptyBin = join(home, ".sandbox-bin");
+  mkdirSync(emptyBin, { recursive: true });
   return {
     ...process.env,
     HOME: home,
     USERPROFILE: home,
     LEINA_HOME: join(home, ".leina"),
-    PATH: join(process.execPath, ".."),
+    PATH: emptyBin,
   };
 }
 
