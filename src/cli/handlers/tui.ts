@@ -14,6 +14,9 @@ import { join, resolve as resolvePath } from "node:path";
 import { readPackageVersion } from "../../version.ts";
 import { runDoctor } from "../doctor.ts";
 import { fail, readIfExists } from "../io.ts";
+import { isStale, readManifest } from "../../application/graph/manifest.ts";
+import { loadFreshnessConfig } from "../../infrastructure/config/freshness.ts";
+import { loadServeConfig } from "../../infrastructure/config/serve.ts";
 import {
   entryAssetsRoot,
   isBlanketActive,
@@ -217,6 +220,50 @@ function toggleProjectMcp(project: string, mcpPath: string, registered: boolean)
 }
 
 // ---------------------------------------------------------------------------
+// Graph serve — launch the read-only graph explorer for the current project
+// ---------------------------------------------------------------------------
+
+async function serveFlow(project: string): Promise<void> {
+  // Guard BEFORE launching: handleServe opens through the freshness gate, which calls
+  // fail() (process.exit) on a never-built or stale+refuse graph — that would kill the
+  // whole TUI. Catch those cases here and stay in the menu with an actionable message.
+  if (readManifest(project) === null) {
+    p.log.error(`no graph built for ${project} — run build first (main menu is install/maintenance; use \`leina build\`).`);
+    return;
+  }
+  const stale = isStale(project);
+  if (stale.stale && loadFreshnessConfig(project) === "refuse") {
+    p.log.error(`graph is stale (${stale.reason}) and freshness posture is "refuse" — run \`leina refresh\` first.`);
+    return;
+  }
+
+  const config = loadServeConfig(project);
+  const portRaw = await p.text({
+    message: "Port for the graph explorer",
+    initialValue: String(config.port),
+    // Validate here so an out-of-range port surfaces as a re-prompt, never as handleServe's
+    // fail() (which would exit the process and take the TUI with it).
+    validate: (v) => {
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 0 && n <= 65535 ? undefined : "port must be an integer in [0, 65535]";
+    },
+  });
+  if (bail(portRaw)) return;
+
+  p.note(
+    `Read-only graph explorer for\n${project}\n\n` +
+      `Runs in the foreground — press Ctrl+C to stop it and return to this menu.`,
+    "graph serve",
+  );
+  console.log("");
+  // Lazy import: node:http + the cli/serve/* transport must not tax TUI startup, same as
+  // the top-level `graph serve` dispatch in main.ts. handleServe returns cleanly on SIGINT.
+  const { handleServe } = await import("./serve.ts");
+  await handleServe([project, "--port", portRaw as string]);
+  console.log("");
+}
+
+// ---------------------------------------------------------------------------
 // Env store
 // ---------------------------------------------------------------------------
 
@@ -318,6 +365,7 @@ export async function handleTui(rest: string[]): Promise<void> {
         { value: "status", label: "status — doctor health summary" },
         { value: "install", label: activated ? "update install — change asset selection" : "install — choose assets and activate" },
         { value: "project", label: "this project — init / deinit" },
+        { value: "serve", label: "graph serve — live read-only graph explorer", hint: "foreground; Ctrl+C returns here" },
         { value: "repair", label: "repair — re-run idempotent writers for broken state" },
         { value: "env", label: "env vars — credentials for skills (masked)" },
         { value: "uninstall", label: "uninstall — deactivate / disable" },
@@ -332,6 +380,7 @@ export async function handleTui(rest: string[]): Promise<void> {
     if (action === "status") showStatus(project);
     else if (action === "install") await installFlow(catalog);
     else if (action === "project") await projectFlow(project);
+    else if (action === "serve") await serveFlow(project);
     else if (action === "repair") {
       console.log("");
       handleRepair([project]);
