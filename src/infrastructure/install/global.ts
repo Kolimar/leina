@@ -85,25 +85,12 @@ export function normalizeHosts(hosts: string[] | undefined): HostId[] {
 }
 
 /**
- * First-run host detection: Devin (the historical default) plus every host whose global
- * config dir already exists on this machine (e.g. ~/.claude → Claude Code). Used when
- * neither --hosts nor a persisted selection says where to link — a Claude Code user's
- * first `leina setup` should light up their host without needing to know the flag.
- */
-export function detectHosts(): HostId[] {
-  const out: HostId[] = [];
-  for (const spec of HOSTS) {
-    if (spec.id === "devin" || existsSync(dirname(spec.skillsRoot()))) out.push(spec.id);
-  }
-  return out.length > 0 ? out : [...DEFAULT_HOSTS];
-}
-
-/**
  * Pure host detection: only the hosts whose global config dir actually exists on this
- * machine — NO Devin special-case and NO default fallback (unlike detectHosts). The CLI
- * uses this solely to SUGGEST hosts in a required-`--hosts` error and to pre-select them
- * in the interactive TUI; it must never be turned into an automatic choice on the user's
- * behalf (that would be the vendor lock this avoids).
+ * machine — NO vendor special-case and NO default fallback. The CLI uses this solely to
+ * SUGGEST hosts in a required-`--hosts` error and to pre-select them in the interactive
+ * TUI; it must never be turned into an automatic choice on the user's behalf (that would
+ * be the vendor lock this avoids). (Replaced the old `detectHosts`, which always forced
+ * Devin in and silently fell back to a DEFAULT_HOSTS vendor.)
  */
 export function detectInstalledHosts(): HostId[] {
   return HOSTS.filter((spec) => existsSync(dirname(spec.skillsRoot()))).map((spec) => spec.id);

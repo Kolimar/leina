@@ -92,7 +92,7 @@ test("(SC-5) --help alias prints the same banner", () => {
 test("(SC-6) unknown command falls back to root help", () => {
   const r = runCli(["definitely-not-a-command"]);
   assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
-  assert.match(r.stdout, /^  activate --hosts/m);
+  assert.match(r.stdout, /^ {2}activate --hosts/m);
 });
 
 test("(SC-6b) root help lists every dispatched command family", () => {
