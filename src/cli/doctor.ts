@@ -43,7 +43,12 @@ import { deriveProjectKey, AmbiguousProjectError } from "../application/project/
 import { buildRepoIdentity } from "../application/project/identity.ts";
 import type { RepoIdentity } from "../domain/project/identity.ts";
 
-export type CheckStatus = "ok" | "warn" | "fail";
+// ok   = healthy and present
+// info = optional / opt-in feature not enabled, or a purely-informational / not-applicable
+//        state — neutral, never affects the exit code (rendered in a trailing section)
+// warn = degraded-but-usable, or a managed/selected thing that drifted or needs an action
+// fail = broken; leina won't work as expected (forces exit 1)
+export type CheckStatus = "ok" | "info" | "warn" | "fail";
 
 export interface CheckResult {
   group: string;
@@ -130,7 +135,7 @@ function checkEnvironment(out: CheckResult[], version: string): void {
 function checkEnvStore(out: CheckResult[], g: string): void {
   const p = envFilePath();
   if (!existsSync(p)) {
-    out.push({ group: g, label: "env store", status: "ok", detail: "none (leina env set <KEY> to create)" });
+    out.push({ group: g, label: "env store", status: "info", detail: "none (leina env set <KEY> to create)" });
     return;
   }
   const tooOpen = envFilePermsTooOpen();
@@ -302,7 +307,7 @@ function checkShare(out: CheckResult[], version: string): void {
     sel === null || (sel.skills === null && sel.agents === null)
       ? "full (all bundled assets)"
       : `custom — skills: ${sel.skills === null ? "all" : sel.skills.length}, agents: ${sel.agents === null ? "all" : sel.agents.length}`;
-  out.push({ group: g, label: "selection", status: "ok", detail: selDetail });
+  out.push({ group: g, label: "selection", status: "info", detail: selDetail });
 }
 
 /** The user's currently-selected hosts (persisted by `leina activate`/`init`), same read
@@ -596,8 +601,9 @@ function checkDevinHooks(out: CheckResult[], g: string, path: string): void {
 // extractors — availability of the third-party/on-demand compiler-grade
 // extractors: SCIP indexers (scip-go/rust-analyzer/scip-python today) and the existing C#/Java sidecars
 // (Roslyn/JavaParser — no doctor check existed for these before this change).
-// Absence of any of these is a WARN, never a fail: tree-sitter always covers
-// the same files, just with syntactic (not compiler-proven) precision.
+// Absence of any of these is INFO, never a fail: they are optional opt-ins and
+// tree-sitter always covers the same files, just with syntactic (not compiler-proven)
+// precision.
 // Pure detection (spawnSync `--version` / fs stat via isSidecarBuilt) — no DB,
 // no writes, no invocation of a real build/index.
 // ---------------------------------------------------------------------------
@@ -614,7 +620,9 @@ function checkScipIndexers(out: CheckResult[]): void {
     out.push({
       group: g,
       label: `scip-${lang}`,
-      status: argv ? "ok" : "warn",
+      // Absent is `info`, not a warning: these indexers are optional opt-ins and
+      // tree-sitter always covers the same files (syntactic precision).
+      status: argv ? "ok" : "info",
       detail: argv
         ? `available (${argv.join(" ")}) — compiler-grade precision for ${exts} files`
         : `not installed — optional; falls back to tree-sitter. Run: leina scip install ${lang}`,
@@ -632,7 +640,9 @@ function checkSidecars(out: CheckResult[]): void {
     out.push({
       group: g,
       label: `sidecar-${lang}`,
-      status: configured ? "ok" : "warn",
+      // Same rationale as the SCIP indexers: an unbuilt sidecar is an optional opt-in,
+      // not a warning — tree-sitter covers C#/Java syntactically in the meantime.
+      status: configured ? "ok" : "info",
       detail: configured
         ? `configured${built ? " (built)" : " (env override)"} — compiler-grade precision for ${lang} files`
         : missing.length > 0
@@ -644,7 +654,7 @@ function checkSidecars(out: CheckResult[]): void {
 
 // ---------------------------------------------------------------------------
 // mcp — user-global + project MCP registration state. 100% read-only.
-// Absence is `ok` (informative): MCP is one transport, not the default — an
+// Absence is `info` (neutral): MCP is one optional transport, not the default — an
 // unregistered machine is healthy. The only real failure is a registration that
 // points at a `leina` command the host cannot resolve on PATH.
 // ---------------------------------------------------------------------------
@@ -659,7 +669,9 @@ function checkMcp(out: CheckResult[], root: string): void {
       s.state === "registered" ? `registered (user scope) — ${s.detail}`
       : s.state === "not-installed" ? `not installed (${s.detail})`
       : `not registered (optional — leina mcp register)`;
-    out.push({ group: g, label: s.label, status: "ok", detail });
+    // A registered host is a genuine health pass; not-installed / not-registered are
+    // neutral (MCP is one optional transport, not the default) → info, not a green ✔.
+    out.push({ group: g, label: s.label, status: s.state === "registered" ? "ok" : "info", detail });
   }
 
   const projectMcp = join(root, ".mcp.json");
@@ -670,7 +682,7 @@ function checkMcp(out: CheckResult[], root: string): void {
       out.push({
         group: g,
         label: ".mcp.json",
-        status: "ok",
+        status: registered ? "ok" : "info",
         detail: registered ? "leina server registered (project scope)" : "present, no leina entry (leina init --mcp adds one)",
       });
     } catch {
@@ -680,7 +692,7 @@ function checkMcp(out: CheckResult[], root: string): void {
     out.push({
       group: g,
       label: ".mcp.json",
-      status: "ok",
+      status: "info",
       detail: "no project registration (user-global covers it, or leina init --mcp)",
     });
   }
@@ -724,22 +736,67 @@ export function runDoctor(version: string = readPackageVersion(), root = "."): D
   return report;
 }
 
-const ICON: Record<CheckStatus, string> = { ok: "✔", warn: "!", fail: "✘" };
+const ICON: Record<CheckStatus, string> = { ok: "✔", info: "·", warn: "!", fail: "✘" };
+// SGR colour code per status. Applied only when the caller says the sink is a TTY (see
+// handleDoctor); captured output, pipes and --json stay plain so golden tests are stable.
+const SGR: Record<CheckStatus, string> = { ok: "32", info: "90", warn: "33", fail: "31" };
+const BOLD = "1";
+const DIM = "90";
 
-/** Render a DoctorReport as grouped, human-readable text. */
-export function formatDoctor(report: DoctorReport): string {
-  const lines: string[] = ["leina doctor\n"];
+function sgr(code: string, s: string, on: boolean): string {
+  return on ? `\x1b[${code}m${s}\x1b[0m` : s;
+}
+
+/**
+ * Render a DoctorReport as grouped, human-readable text. Each subsystem keeps its own
+ * header (environment/share/project/…) with every line coloured by status, so at a glance
+ * red = broken, yellow = needs attention, green = healthy. Purely-informational checks
+ * (optional features not installed, not-applicable states) are pulled out of their groups
+ * into a trailing `info:` section so the actionable groups stay uncluttered. The summary
+ * breaks the counts out by severity.
+ *
+ * `opts.color` enables ANSI colour — the CLI passes `process.stdout.isTTY` (honouring
+ * NO_COLOR); when false the output is plain text, which is what the tests assert on.
+ */
+export function formatDoctor(report: DoctorReport, opts: { color?: boolean } = {}): string {
+  const color = opts.color ?? false;
+  const actionable = report.results.filter((r) => r.status !== "info");
+  const infos = report.results.filter((r) => r.status === "info");
+
+  const lines: string[] = [sgr(BOLD, "leina doctor", color)];
+
   let lastGroup = "";
-  for (const r of report.results) {
+  for (const r of actionable) {
     if (r.group !== lastGroup) {
-      lines.push(`\n${r.group}:`);
+      lines.push(`\n${sgr(BOLD, `${r.group}:`, color)}`);
       lastGroup = r.group;
     }
     const detailSuffix = r.detail ? `: ${r.detail}` : "";
-    lines.push(`  ${ICON[r.status]} ${r.label}${detailSuffix}`);
+    lines.push(`  ${sgr(SGR[r.status], ICON[r.status], color)} ${r.label}${detailSuffix}`);
   }
-  const fails = report.results.filter((r) => r.status === "fail").length;
-  const warns = report.results.filter((r) => r.status === "warn").length;
-  lines.push(`\n${fails} fail, ${warns} warn, ${report.results.length} checks total.`);
+
+  if (infos.length > 0) {
+    lines.push(`\n${sgr(BOLD, "info:", color)} ${sgr(DIM, "(optional / not applicable)", color)}`);
+    for (const r of infos) {
+      const detailSuffix = r.detail ? `: ${r.detail}` : "";
+      // Prefix the group so a pulled-out line still says which subsystem it came from.
+      lines.push(`  ${sgr(SGR.info, ICON.info, color)} ${sgr(DIM, `${r.group}/${r.label}${detailSuffix}`, color)}`);
+    }
+  }
+
+  const count = (s: CheckStatus): number => report.results.filter((r) => r.status === s).length;
+  const fails = count("fail");
+  const warns = count("warn");
+  const infoN = count("info");
+  const oks = count("ok");
+  // Keep the "fail, N warn, … checks total" shape the CLI tests match on; colour each
+  // count only when it's non-trivial so a clean report isn't a wall of green.
+  const summary =
+    `${sgr(SGR.fail, `${fails} fail`, color && fails > 0)}, ` +
+    `${sgr(SGR.warn, `${warns} warn`, color && warns > 0)}, ` +
+    `${sgr(SGR.info, `${infoN} info`, color)}, ` +
+    `${sgr(SGR.ok, `${oks} ok`, color)}, ` +
+    `${report.results.length} checks total.`;
+  lines.push(`\n${summary}`);
   return lines.join("\n");
 }

@@ -69,17 +69,26 @@ function bail(value: unknown): boolean {
   return false;
 }
 
+/** Clear the screen and re-print the intro banner — the anchor that keeps the main menu
+ * pinned near the top instead of scrolling ever further down as options are chosen. Only
+ * reached from handleTui, which already guaranteed an interactive TTY. */
+function banner(version: string): void {
+  console.clear();
+  p.intro(`leina v${version} — interactive console`);
+}
+
 // ---------------------------------------------------------------------------
 // Status
 // ---------------------------------------------------------------------------
 
 function showStatus(project: string): void {
   const report = runDoctor(readPackageVersion(), project);
-  const counts = { ok: 0, warn: 0, fail: 0 };
+  const counts = { ok: 0, info: 0, warn: 0, fail: 0 };
   for (const r of report.results) counts[r.status]++;
-  const problems = report.results.filter((r) => r.status !== "ok");
+  // Only warn/fail are actionable — info (optional / not-applicable) is not a problem.
+  const problems = report.results.filter((r) => r.status === "warn" || r.status === "fail");
   const lines = [
-    `checks: ${counts.ok} ok · ${counts.warn} warn · ${counts.fail} fail`,
+    `checks: ${counts.ok} ok · ${counts.warn} warn · ${counts.fail} fail · ${counts.info} info`,
     ...problems.map((r) => `${r.status === "fail" ? "✖" : "⚠"} ${r.group}/${r.label}: ${r.detail ?? ""}`),
   ];
   p.note(lines.join("\n"), `doctor — ${project}`);
@@ -351,8 +360,10 @@ export async function handleTui(rest: string[]): Promise<void> {
   const positional = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
   const project = resolvePath(positional ?? ".");
   const catalog = loadCatalog();
+  const version = readPackageVersion();
 
-  p.intro(`leina v${readPackageVersion()} — interactive console`);
+  // Anchor the console: start from a clean screen with the banner at the top.
+  banner(version);
 
   for (;;) {
     const activated = isGlobalActivated();
@@ -377,6 +388,12 @@ export async function handleTui(rest: string[]): Promise<void> {
       p.outro("bye");
       return;
     }
+
+    // Wipe the screen NOW — after the choice, before the action runs. The menu therefore
+    // always renders on a fresh screen (never scrolling further down each pick), while the
+    // selected action's output stays visible above the next menu until the next choice.
+    banner(version);
+
     if (action === "status") showStatus(project);
     else if (action === "install") await installFlow(catalog);
     else if (action === "project") await projectFlow(project);

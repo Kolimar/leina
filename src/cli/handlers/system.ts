@@ -18,9 +18,16 @@ export function handleDoctor(rest: string[]): never {
   if (wantJson) {
     process.stdout.write(JSON.stringify(report));
   } else {
-    console.log(formatDoctor(report));
+    console.log(formatDoctor(report, { color: useColor() }));
   }
   process.exit(report.exitCode);
+}
+
+/** Colour only when stdout is a real terminal and the user hasn't opted out (NO_COLOR,
+ * https://no-color.org). Piped/redirected output and CI capture stay plain, which keeps
+ * the golden CLI tests stable and avoids escape-code noise in logs. */
+function useColor(): boolean {
+  return process.stdout.isTTY === true && !process.env.NO_COLOR && process.env.TERM !== "dumb";
 }
 
 export function handleAgentHook(rest: string[]): never {
@@ -271,7 +278,7 @@ export function handleVerify(rest: string[]): never {
   if (wantJson) {
     console.log(JSON.stringify(report));
   } else {
-    console.log(formatDoctor(report));
+    console.log(formatDoctor(report, { color: useColor() }));
   }
   process.exit(report.exitCode);
 }

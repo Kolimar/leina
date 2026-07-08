@@ -199,10 +199,12 @@ test("(mcpg-7) doctor reports the mcp group; registered-but-not-on-PATH is the o
   const dir = mkdtempSync(join(tmpdir(), "leina-mcpg7-proj-"));
   const env = sandboxEnv(home);
   try {
-    // No registrations anywhere: group present, all informative ok, no PATH check emitted.
+    // No registrations anywhere: mcp state reported as informational (optional transport,
+    // so it lands in the trailing `info:` section, not the actionable groups), no PATH
+    // check emitted.
     const r1 = runCli(env, "doctor", dir);
-    assert.match(r1.stdout, /\nmcp:/, "mcp group present");
-    assert.match(r1.stdout, /\.mcp\.json: no project registration/);
+    assert.match(r1.stdout, /\ninfo:/, "info section present");
+    assert.match(r1.stdout, /mcp\/\.mcp\.json: no project registration/);
     assert.ok(!r1.stdout.includes("server command"), "no PATH check without a registration");
 
     // Register in cursor (sandbox PATH has no `leina`): doctor must fail on the launch command.

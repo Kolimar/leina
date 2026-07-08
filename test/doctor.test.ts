@@ -279,7 +279,8 @@ test("(doc-m) extractors group: scip-go + scip-rust + scip-python + sidecar-csha
     for (const label of ["scip-go", "scip-rust", "scip-python", "sidecar-csharp", "sidecar-java"]) {
       const entry = find(report.results, "extractors", label);
       assert.ok(entry !== undefined, `${label} check must be present`);
-      assert.ok(entry.status === "ok" || entry.status === "warn", `${label}: never fail`);
+      // Optional extractors are ok (installed) or info (not installed) — never a problem.
+      assert.ok(entry.status === "ok" || entry.status === "info", `${label}: never warn/fail`);
     }
   });
 });
@@ -288,7 +289,7 @@ test("(doc-n) extractors group: scip-go warn detail instructs 'leina scip instal
   withTmpHome((home) => {
     const report = runDoctor("0.8.0-test", join(home, "proj"));
     const scipGo = find(report.results, "extractors", "scip-go")!;
-    if (scipGo.status === "warn") {
+    if (scipGo.status === "info") {
       assert.match(scipGo.detail ?? "", /leina scip install go/);
     }
   });
@@ -298,7 +299,7 @@ test("(doc-o) extractors group: scip-rust warn detail instructs 'leina scip inst
   withTmpHome((home) => {
     const report = runDoctor("0.8.0-test", join(home, "proj"));
     const scipRust = find(report.results, "extractors", "scip-rust")!;
-    if (scipRust.status === "warn") {
+    if (scipRust.status === "info") {
       assert.match(scipRust.detail ?? "", /leina scip install rust/);
     } else {
       // status "ok" (rust-analyzer happens to be on PATH in this sandbox):
@@ -314,7 +315,7 @@ test("(doc-p) extractors group: scip-python warn detail instructs 'leina scip in
   withTmpHome((home) => {
     const report = runDoctor("0.8.0-test", join(home, "proj"));
     const scipPython = find(report.results, "extractors", "scip-python")!;
-    if (scipPython.status === "warn") {
+    if (scipPython.status === "info") {
       assert.match(scipPython.detail ?? "", /leina scip install python/);
     } else {
       // status "ok" (scip-python happens to be on PATH in this sandbox): the
