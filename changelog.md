@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] — 2026-07-07
+
+### Documentation
+- Updated the benchmark's retrieval-recall section (EN + ES) to match the type-annotation
+  reference edges already shipped in the extractor. The docs still framed type-only recall as a
+  4.5% blind spot against 95.1% value recall; the current snapshots show **100% value recall**
+  and **98.2% type-only recall**. Rewrote the bars, table, and narrative accordingly — the
+  residual ~2% is dynamic-import destructuring, tracked in the backlog.
+
 ## [1.1.2] — 2026-07-07
 
 ### Fixed

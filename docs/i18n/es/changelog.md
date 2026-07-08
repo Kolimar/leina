@@ -5,6 +5,16 @@ Todos los cambios notables de este proyecto se documentarán en este archivo.
 El formato se basa en [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 y este proyecto sigue [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] — 2026-07-07
+
+### Documentación
+- Se actualizó la sección de recall de recuperación del benchmark (EN + ES) para reflejar las
+  aristas de referencia de anotaciones de tipo ya incorporadas al extractor. Los docs aún
+  enmarcaban el recall solo-tipo como un punto ciego del 4.5% frente a 95.1% en valor; los
+  snapshots actuales muestran **100% de recall en valor** y **98.2% en solo-tipo**. Se
+  reescribieron las barras, la tabla y la narrativa — el ~2% residual es destructuring de
+  import dinámico, registrado en el backlog.
+
 ## [1.1.2] — 2026-07-07
 
 ### Arreglado
