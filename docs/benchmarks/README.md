@@ -155,34 +155,35 @@ non-circular — every file with a direct `import` of X from within the repo (a 
 **transitive** dependents leina surfaces *beyond* that import floor — the indirect ones a
 grep-for-imports flow never reaches.
 
-The result splits sharply, and honestly, by symbol kind:
+leina recovers the verifiable dependents for both symbol kinds:
 
 <!-- bars from bench/results/precision-{value,type}.json; scale = 100% recall -->
 <div style="font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:.5rem 0">
-<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">value symbols (fn / class)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:95%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#10b981,#34d399)"></span></span><span style="flex:0 0 7rem;opacity:.85">95.1% recall</span></div>
-<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">type-only symbols (interface)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:4.5%;min-width:6px;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#f59e0b,#ef4444)"></span></span><span style="flex:0 0 7rem;opacity:.7">4.5% recall</span></div>
+<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">value symbols (fn / class)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:100%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#10b981,#34d399)"></span></span><span style="flex:0 0 7rem;opacity:.85">100% recall</span></div>
+<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">type-only symbols (interface)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:98%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#10b981,#34d399)"></span></span><span style="flex:0 0 7rem;opacity:.85">98.2% recall</span></div>
 </div>
 
 | symbol kind | verifiable import-dependents | recovered | recall |
 |---|---:|---:|---:|
-| value (functions, classes) — calls/refs/implements | 41 | 39 | **95.1%** |
-| type-only (interfaces, type aliases) | 111 | 5 | **4.5%** |
+| value (functions, classes) — calls/refs/implements | 41 | 41 | **100%** |
+| type-only (interfaces, type aliases) | 114 | 112 | **98.2%** |
 
 Raw: [`precision-value.json`](../../bench/results/precision-value.json), [`precision-type.json`](../../bench/results/precision-type.json).
 
-**What this actually says — the limitation is the headline, not a footnote:**
+**What this actually says:**
 
-- **On value dependencies leina is near-complete (95%)** and adds real transitive reach:
-  it recovers virtually every file that calls, references, or implements a symbol, *plus*
-  indirect dependents a textual import search misses.
-- **On type-only dependencies leina is currently blind (~5%).** `affected GraphNode`
-  reports "nothing depends on it" while 50 files import that type. leina models *value*
-  edges (call/reference/implements), not *type-annotation* edges — so changing an
-  interface's shape is not yet surfaced by `affected`. This is a real, documented gap, not
-  a rounding error, and the benchmark exists precisely to keep us honest about it.
-- The harness also caught a specific anomaly — a heavily-called function reporting zero
-  dependents — now tracked as an extraction bug. A benchmark that never finds anything
-  wrong isn't measuring anything.
+- **On value dependencies leina is complete (100%)** and adds real transitive reach: it
+  recovers every file that calls, references, or implements a symbol, *plus* indirect
+  dependents a textual import search misses.
+- **On type-only dependencies leina is now near-complete (98.2%).** `affected GraphNode`
+  used to report "nothing depends on it" while 50 files imported that type; the extractor
+  now emits reference edges for type annotations (`import type`, parameter/return/field
+  types, generic type-args) and value references (a symbol used as a value), so changing an
+  interface's shape surfaces its real blast radius. This was a documented blind spot the
+  benchmark exposed — recall jumped 4.5% → 98.2% once the gap was closed.
+- The residual ~2% is dynamic-import destructuring (`const { x } = await import(...)`),
+  which needs a structurally different resolution path and is tracked in the backlog. A
+  benchmark that surfaces the last gap — not just the wins — is doing its job.
 
 Method limits, stated plainly: the oracle counts single-line and multi-line internal
 `import`s (it misses re-exports and dynamic imports), and it is a *lower bound* — so recall

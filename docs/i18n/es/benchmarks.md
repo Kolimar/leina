@@ -161,34 +161,37 @@ dentro del repo (una *cota inferior* estricta de los dependientes reales). Arné
 `bench/precision/run.ts`. También cuenta los dependientes **transitivos** que leina revela
 *más allá* de ese piso de imports — los indirectos que un flujo grep-de-imports nunca alcanza.
 
-El resultado se parte nítido, y honestamente, por tipo de símbolo:
+leina recupera los dependientes verificables para ambos tipos de símbolo:
 
 <!-- barras desde bench/results/precision-{value,type}.json; escala = 100% recall -->
 <div style="font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:.5rem 0">
-<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">símbolos-valor (fn / clase)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:95%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#10b981,#34d399)"></span></span><span style="flex:0 0 7rem;opacity:.85">95.1% recall</span></div>
-<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">símbolos solo-tipo (interfaz)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:4.5%;min-width:6px;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#f59e0b,#ef4444)"></span></span><span style="flex:0 0 7rem;opacity:.7">4.5% recall</span></div>
+<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">símbolos-valor (fn / clase)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:100%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#10b981,#34d399)"></span></span><span style="flex:0 0 7rem;opacity:.85">100% recall</span></div>
+<div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 15rem;text-align:right;opacity:.85">símbolos solo-tipo (interfaz)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:98%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#10b981,#34d399)"></span></span><span style="flex:0 0 7rem;opacity:.85">98.2% recall</span></div>
 </div>
 
 | tipo de símbolo | dependientes-import verificables | recuperados | recall |
 |---|---:|---:|---:|
-| valor (funciones, clases) — calls/refs/implements | 41 | 39 | **95.1%** |
-| solo-tipo (interfaces, type aliases) | 111 | 5 | **4.5%** |
+| valor (funciones, clases) — calls/refs/implements | 41 | 41 | **100%** |
+| solo-tipo (interfaces, type aliases) | 114 | 112 | **98.2%** |
 
 Crudo: [`precision-value.json`](../../../bench/results/precision-value.json), [`precision-type.json`](../../../bench/results/precision-type.json).
 
-**Qué dice esto de verdad — la limitación es el titular, no una nota al pie:**
+**Qué dice esto de verdad:**
 
-- **En dependencias de valor leina es casi completo (95%)** y suma alcance transitivo real:
-  recupera casi todo archivo que llama, referencia o implementa un símbolo, *más* los
+- **En dependencias de valor leina es completo (100%)** y suma alcance transitivo real:
+  recupera todo archivo que llama, referencia o implementa un símbolo, *más* los
   dependientes indirectos que una búsqueda textual de imports se pierde.
-- **En dependencias solo-tipo leina está hoy ciego (~5%).** `affected GraphNode` reporta
-  "nada depende de él" mientras 50 archivos importan ese tipo. leina modela aristas de
-  *valor* (call/reference/implements), no de *anotación de tipo* — así que cambiar la forma
-  de una interfaz aún no lo avisa `affected`. Es un gap real y documentado, no un error de
-  redondeo, y el benchmark existe justo para mantenernos honestos sobre eso.
-- El arnés también atrapó una anomalía específica — una función muy llamada reportando cero
-  dependientes — ahora registrada como bug de extracción. Un benchmark que nunca encuentra
-  nada mal no está midiendo nada.
+- **En dependencias solo-tipo leina es hoy casi completo (98.2%).** `affected GraphNode`
+  antes reportaba "nada depende de él" mientras 50 archivos importaban ese tipo; ahora el
+  extractor emite aristas de referencia para anotaciones de tipo (`import type`, tipos de
+  parámetro/retorno/campo, type-args genéricos) y referencias de valor (un símbolo usado
+  como valor), así que cambiar la forma de una interfaz sí revela su blast radius real. Era
+  un punto ciego documentado que el benchmark expuso — el recall saltó 4.5% → 98.2% al
+  cerrar el gap.
+- El ~2% residual es destructuring de import dinámico (`const { x } = await import(...)`),
+  que necesita una ruta de resolución estructuralmente distinta y está registrado en el
+  backlog. Un benchmark que revela el último gap — no solo los aciertos — está haciendo su
+  trabajo.
 
 Límites del método, dichos claro: el oráculo cuenta `import`s internos de una y varias
 líneas (se pierde re-exports e imports dinámicos), y es una *cota inferior* — así que el
