@@ -287,16 +287,16 @@ export function handleVerify(rest: string[]): never {
 export function printRootHelp(): void {
   console.log(
     `leina — code knowledge graph + project memory (CLI-only)\n\n` +
-      `  setup [--no-user-hooks] [--preset ...] [--skills ...] [--agents ...] [--hosts devin,claude]\n` +
-      `        [--mcp]\n` +
+      `  setup --hosts devin,claude [--no-user-hooks] [--preset ...] [--skills ...] [--agents ...]\n` +
+      `        [--mcp --mcp-hosts claude,cursor,windsurf]\n` +
       `                          machine-wide: activate (share + symlinks + user-global grant/hooks)\n` +
       `                          + turn blanket ON; subsequent 'init' takes LIGHT path. Idempotent.\n` +
-      `                          First run auto-detects hosts (~/.claude present → claude too).\n` +
-      `                          --mcp also registers the MCP server user-globally\n` +
+      `                          --hosts is REQUIRED — leina never picks an AI host for you.\n` +
+      `                          --mcp registers the MCP server user-globally on --mcp-hosts\n` +
       `  disable                 machine-wide: remove managed symlinks + revoke user-global grant/hooks\n` +
       `                          + turn blanket OFF. Idempotent when already disabled.\n` +
-      `  activate [--no-user-hooks] [--preset minimal|sdd|full] [--skills a,b|all|none]\n` +
-      `           [--agents a,b|all|none] [--hosts devin,claude] [--mcp]\n` +
+      `  activate --hosts devin,claude [--no-user-hooks] [--preset minimal|sdd|full]\n` +
+      `           [--skills a,b|all|none] [--agents a,b|all|none] [--mcp --mcp-hosts claude,cursor]\n` +
       `                          populate ~/.leina/share + symlink skills/agents into\n` +
       `                          Devin's global dirs; merge user-global Devin hooks (default ON).\n` +
       `                          Selection flags choose WHICH bundled assets install (see\n` +
@@ -304,13 +304,14 @@ export function printRootHelp(): void {
       `  deactivate              global teardown: remove managed symlinks + revoke user-global\n` +
       `                          grant + hooks. Does NOT touch blanket sentinel. Idempotent.\n` +
       `  install-global          [deprecated — use 'activate'] alias for activate\n` +
-      `  init [dir] [--hosts h1,h2] [--profile devin|windsurf] [--freshness auto|refuse]\n` +
+      `  init [dir] --hosts h1,h2 --profile devin|windsurf [--freshness auto|refuse]\n` +
       `       [--build] [--name <n>] [--mcp]\n` +
       `                          per-repo opt-in: consent=enabled + .gitignore; standalone (no\n` +
       `                          blanket) also AGENTS.md protocol + per-host wiring (devin →\n` +
-      `                          .devin/*, claude → .claude/settings.json hooks). --hosts overrides\n` +
-      `                          the persisted/detected host selection; --build builds the graph\n` +
-      `                          now; --name locks the project key; --mcp registers the server in\n` +
+      `                          .devin/*, claude → .claude/settings.json hooks). --hosts is\n` +
+      `                          REQUIRED (or a prior persisted choice); a full init also requires\n` +
+      `                          --profile. --build builds the graph now; --name locks the project\n` +
+      `                          key; --mcp registers the server in\n` +
       `                          the project .mcp.json (committable, for teams)\n` +
       `  deinit [--project <path>]\n` +
       `                          per-repo teardown (inverse of init): strip managed blocks +\n` +

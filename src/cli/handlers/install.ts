@@ -51,7 +51,7 @@ import {
   isGlobalActivated,
   isBlanketActive,
 } from "../../infrastructure/install/global.ts";
-import { blanketFile, HOSTS, hostSpec, shareSelectionFile, userHome, type HostId } from "../../infrastructure/install/share-paths.ts";
+import { blanketFile, HOSTS, hostSpec, MCP_HOSTS, shareSelectionFile, userHome, type HostId, type McpHostId } from "../../infrastructure/install/share-paths.ts";
 import { mergeShellWrapper, shellInteropAdvisory } from "../../infrastructure/install/shell.ts";
 import { readPackageVersion } from "../../version.ts";
 import { fail, readIfExists } from "../io.ts";
@@ -188,11 +188,27 @@ function selectionFromArgs(label: string, args: string[], assetsRoot: string): S
 }
 
 // --mcp on activate/setup: user-global MCP registration (one server entry per host covers
-// every project — tools resolve `root` at call time).
+// every project — tools resolve `root` at call time). Vendor-neutral: --mcp never registers
+// to a host on its own. MCP hosts (claude/cursor/windsurf) are a DIFFERENT set from the
+// install --hosts (devin/claude), so --mcp requires its own explicit --mcp-hosts list.
 function maybeRegisterMcpGlobal(label: string, args: string[]): void {
   if (!hasFlag(args, "--mcp")) return;
+  const raw = optFlag(args, "--mcp-hosts", undefined);
+  const knownMcp = MCP_HOSTS.map((h) => h.id).join(", ");
+  if (raw === undefined) {
+    fail(
+      `${label} --mcp requires --mcp-hosts — name which MCP hosts to register the server on.\n` +
+        `  Known MCP hosts: ${knownMcp} (a separate set from the install --hosts).\n` +
+        `  Example: leina ${label} ... --mcp --mcp-hosts claude,cursor`,
+    );
+  }
+  const ids = raw.split(",").map((x) => x.trim()).filter((x) => x.length > 0);
+  if (ids.length === 0) fail(`--mcp-hosts must name at least one MCP host (known: ${knownMcp})`);
+  for (const id of ids) {
+    if (!MCP_HOSTS.some((h) => h.id === id)) fail(`unknown MCP host "${id}" (known: ${knownMcp})`);
+  }
   console.log(`\n${label} --mcp — user-global MCP registration:`);
-  printMcpResults(registerMcpGlobal());
+  printMcpResults(registerMcpGlobal(ids as McpHostId[]));
 }
 
 function activateFromArgs(label: string, args: string[]): boolean {

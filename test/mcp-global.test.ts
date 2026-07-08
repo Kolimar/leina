@@ -159,7 +159,8 @@ test("(mcpg-5) activate --mcp registers; deactivate removes the registration", (
   try {
     mkdirSync(join(home, ".cursor"), { recursive: true });
 
-    const r = runCli(env, "activate", "--mcp", "--hosts", "claude");
+    // --mcp now needs its own explicit --mcp-hosts (MCP hosts differ from install --hosts).
+    const r = runCli(env, "activate", "--mcp", "--mcp-hosts", "cursor", "--hosts", "claude");
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /user-global MCP registration/);
     const cfg = JSON.parse(readFileSync(join(home, ".cursor", "mcp.json"), "utf8"));
