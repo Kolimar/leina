@@ -145,26 +145,49 @@ export function migrateV3toV4(db: DatabaseSync): void {
   db.exec(`PRAGMA user_version = ${GRAPH_SCHEMA_VERSION}`);
 }
 
+// Reject a graph.db written by a newer binary BEFORE any schema work runs (its rows may
+// reference columns this binary doesn't know). Closes the handle before throwing so a
+// rejected open never leaks it. Returns the on-disk schema version so the caller can
+// decide whether migrations are still owed.
+function assertGraphReadable(db: DatabaseSync): number {
+  const v = (db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version;
+  if (v > GRAPH_SCHEMA_VERSION) {
+    db.close();
+    throw new Error(
+      `graph.db was written by a newer version of leina (db version ${v}, binary supports up to ${GRAPH_SCHEMA_VERSION}). Upgrade leina.`,
+    );
+  }
+  return v;
+}
+
 export class GraphStore implements GraphRepository {
   private readonly db: DatabaseSync;
 
-  constructor(path: string) {
+  constructor(path: string, opts?: { readOnly?: boolean }) {
     this.db = new DatabaseSync(path);
     // Another process (background build, MCP server, a second CLI) may hold the write
     // lock; without a busy_timeout every statement below fails immediately with
     // SQLITE_BUSY instead of waiting its turn.
     this.db.exec("PRAGMA busy_timeout = 5000;");
+
+    // Read-only hardening for `graph serve` (defense in depth). The physical file is
+    // still opened R/W so a WAL database reads without needing write access to its -shm
+    // sidecar, but the connection is flipped to `query_only` — so ANY write (a logic bug
+    // in a GET handler) fails in-band with SQLITE_READONLY instead of silently mutating
+    // the graph. No WAL switch and no DDL/migrations: both are writes, and a served DB is
+    // always post-freshness-gate (current schema, already built). The newer-binary guard
+    // still applies.
+    if (opts?.readOnly) {
+      assertGraphReadable(this.db);
+      this.db.exec("PRAGMA query_only = ON;");
+      return;
+    }
+
     this.db.exec("PRAGMA journal_mode = WAL;");
 
     // Schema versioning — reject DBs written by a newer binary BEFORE running
     // SCHEMA (which may reference columns absent in an unknown future schema).
-    const v = (this.db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version;
-    if (v > GRAPH_SCHEMA_VERSION) {
-      this.db.close();
-      throw new Error(
-        `graph.db was written by a newer version of leina (db version ${v}, binary supports up to ${GRAPH_SCHEMA_VERSION}). Upgrade leina.`,
-      );
-    }
+    const v = assertGraphReadable(this.db);
 
     // Fast path: the version stamp is written only AFTER SCHEMA + migrations complete,
     // so a db already at the current version is guaranteed to have the full current

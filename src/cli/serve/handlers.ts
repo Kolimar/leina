@@ -81,7 +81,7 @@ export function listProjects(): ApiResult {
 
 /** Open `project.root`'s graph, run `use`, always close — even on a thrown error. */
 function withGraphStore(project: ProjectEntry, use: (store: ReturnType<typeof openGraphRepo>) => unknown): ApiResult {
-  const store = openGraphRepo(project.root);
+  const store = openGraphRepo(project.root, { readOnly: true });
   try {
     return ok(use(store));
   } finally {
@@ -121,7 +121,7 @@ export function getSearch(key: string, query: string): ApiResult {
 export function getNodeDetail(key: string, nodeId: string): ApiResult {
   const project = requireProject(key);
   if (isApiResult(project)) return project;
-  const store = openGraphRepo(project.root);
+  const store = openGraphRepo(project.root, { readOnly: true });
   try {
     const payload = buildNodeDetailPayload(store, nodeId);
     if (!payload) return apiError(404, "NODE_NOT_FOUND", `no node "${nodeId}" in project "${key}"`);
@@ -140,7 +140,7 @@ export function getNodeDetail(key: string, nodeId: string): ApiResult {
 export function getNodeMemories(key: string, nodeId: string, limit: number): ApiResult {
   const project = requireProject(key);
   if (isApiResult(project)) return project;
-  const mem = openMemoryRepo(project.root);
+  const mem = openMemoryRepo(project.root, { readOnly: true });
   try {
     return ok(buildNodeMemoriesPayload(mem.store, nodeId, mem.verifyNode, limit));
   } finally {

@@ -33,10 +33,10 @@ export function graphDbPath(root: string): string {
   return join(resolvePath(root), ".leina", "graph.db");
 }
 
-export function openGraphRepo(root: string): GraphRepository {
+export function openGraphRepo(root: string, opts?: { readOnly?: boolean }): GraphRepository {
   const p = graphDbPath(root);
   mkdirSync(dirname(p), { recursive: true });
-  return new GraphStore(p);
+  return new GraphStore(p, opts);
 }
 
 // Open the memory store for a project, wired with graph-backed anchor resolution + drift
@@ -47,7 +47,7 @@ export function openGraphRepo(root: string): GraphRepository {
 //
 // Throws AmbiguousProjectError when the project key cannot be determined — the caller is
 // responsible for catching it and reporting a user-friendly message.
-export function openMemoryRepo(root: string): {
+export function openMemoryRepo(root: string, opts?: { readOnly?: boolean }): {
   store: MemoryRepository;
   verifyNode: NodeVerifier;
   resolveAnchor: AnchorResolver;
@@ -59,14 +59,16 @@ export function openMemoryRepo(root: string): {
     // No graph yet → throw so makeResolveAnchor/makeVerifyNode treat anchors as unresolved
     // rather than us creating an empty graph.db as a side effect.
     if (!existsSync(p)) throw new Error(`no graph at ${p}`);
-    graph ??= new GraphStore(p);
+    // The anchor-resolution/verification graph is read-only too when the caller is
+    // read-only (graph serve) — it only ever reads to check drift.
+    graph ??= new GraphStore(p, opts);
     return graph;
   };
   const resolveAnchor = makeResolveAnchor({ getStore: getGraph, root });
   const verifyNode = makeVerifyNode({ getStore: getGraph, root });
   // Derive the project key from git remote / root / dir name. May throw AmbiguousProjectError.
   const projectKey = deriveProjectKey(resolvePath(root)).key;
-  const store = new SQLiteMemoryRepository(globalMemoryPath(), projectKey, resolveAnchor);
+  const store = new SQLiteMemoryRepository(globalMemoryPath(), projectKey, resolveAnchor, opts);
   return {
     store,
     verifyNode,

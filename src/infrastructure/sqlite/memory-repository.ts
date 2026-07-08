@@ -261,17 +261,26 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   // (labels stay unresolved) when no graph is wired in — e.g. the CLI.
   private readonly resolveAnchor: AnchorResolver = () => [];
 
-  constructor(memPath: string, projectKey: string, resolveAnchor?: AnchorResolver) {
+  constructor(memPath: string, projectKey: string, resolveAnchor?: AnchorResolver, opts?: { readOnly?: boolean }) {
     mkdirSync(dirname(memPath), { recursive: true });
     this.db = new DatabaseSync(memPath);
     // Same rationale as GraphStore: wait for a concurrent writer instead of failing
     // immediately with SQLITE_BUSY (the global memory.db is shared across processes).
     this.db.exec("PRAGMA busy_timeout = 5000;");
     this.db.exec("PRAGMA journal_mode = WAL;");
+    // ensureMemorySchema is kept even in read-only mode: memory.db is the GLOBAL store,
+    // so a project the caller has never written memory for still needs its tables to
+    // exist or every read throws "no such table". Schema DDL is idempotent (a no-op on an
+    // already-initialised db).
     const { fts5 } = ensureMemorySchema(this.db);
     this.fts5 = fts5;
     this.projectKey = projectKey;
     if (resolveAnchor) this.resolveAnchor = resolveAnchor;
+    // Read-only hardening for `graph serve` (defense in depth): after the schema is
+    // guaranteed, flip the connection to query_only so any write attempted by a read
+    // endpoint fails in-band with SQLITE_READONLY. Construction (schema) may write; the
+    // request handlers may not. See GraphStore's readOnly branch for the same contract.
+    if (opts?.readOnly) this.db.exec("PRAGMA query_only = ON;");
   }
 
   /** True when running in LIKE-search degraded mode (FTS5 unavailable). */
