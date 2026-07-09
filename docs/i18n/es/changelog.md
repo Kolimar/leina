@@ -5,6 +5,24 @@ Todos los cambios notables de este proyecto se documentarán en este archivo.
 El formato se basa en [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 y este proyecto sigue [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] — 2026-07-08
+
+### Cambiado
+- **Selección de host explícita (breaking).** `setup`, `activate` e `init` ahora requieren `--hosts` explícito — leina no elige un host de IA por vos. Si falta, el comando muestra qué hosts detectó y se detiene.
+- **Perfil de init explícito (breaking).** Un `leina init` completo ahora requiere `--profile devin|windsurf`.
+- **Hosts MCP explícitos (breaking).** `--mcp` en `setup`/`activate` ahora requiere `--mcp-hosts`, y `leina mcp register` requiere `--hosts`.
+
+### Agregado
+- `graph gc` — elimina del registro global los proyectos que ya no existen.
+- Lanzá el explorador de grafo de solo lectura directamente desde `leina tui`.
+- `doctor` ahora reporta una severidad `info` para checks opcionales o no aplicables, con salida en color y los ítems info agrupados al final.
+
+### Eliminado
+- El comando `install-global` (usá `activate`), el flag `--agent` de init (usá `--profile`) y el comando `memory migrate`.
+
+### Documentación
+- Se actualizaron los docs en inglés y español para reflejar el CLI actual.
+
 ## [1.1.3] — 2026-07-07
 
 ### Documentación

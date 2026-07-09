@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] — 2026-07-08
+
+### Changed
+- **Explicit host selection (breaking).** `setup`, `activate` and `init` now require an explicit `--hosts` — leina never selects an AI host for you. When it's missing, the command shows which hosts it detected and stops.
+- **Explicit init profile (breaking).** A full `leina init` now requires `--profile devin|windsurf`.
+- **Explicit MCP hosts (breaking).** `--mcp` on `setup`/`activate` now requires `--mcp-hosts`, and `leina mcp register` requires `--hosts`.
+
+### Added
+- `graph gc` — prune projects that no longer exist from the global registry.
+- Launch the read-only graph explorer directly from `leina tui`.
+- `doctor` now reports an `info` severity for optional and not-applicable checks, with colour output and the info items grouped at the end.
+
+### Removed
+- The `install-global` command (use `activate`), the `--agent` init flag (use `--profile`), and the `memory migrate` command.
+
+### Documentation
+- Refreshed the English and Spanish docs to match the current CLI.
+
 ## [1.1.3] — 2026-07-07
 
 ### Documentation
