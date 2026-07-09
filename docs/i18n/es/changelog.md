@@ -5,6 +5,11 @@ Todos los cambios notables de este proyecto se documentarán en este archivo.
 El formato se basa en [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 y este proyecto sigue [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] — 2026-07-09
+
+### Corregido
+- `repair` ya no aborta en un repo que trae evidencia de init commiteada (AGENTS.md / .gitignore) cuando la máquina no tiene una selección de host persistida. Ahora saltea el re-cableado del proyecto con una nota informativa y sigue corriendo sus fases restantes (shell-wrapper, doctor) — coherente con el contrato fail-open de repair, que nunca elige un host. `init` sigue exigiendo un `--hosts` explícito.
+
 ## [2.0.0] — 2026-07-08
 
 ### Cambiado
