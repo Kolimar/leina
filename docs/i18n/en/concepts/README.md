@@ -52,7 +52,7 @@ Read them in this order if you're starting from scratch:
 
 | # | Document | What it covers | Employee |
 |---|-----------|--------------|----------|
-| 1 | [General architecture](./01-arquitectura.md) | The layers (domain / application / infrastructure / cli), why it's CLI-only, pure writers | (the whole company) |
+| 1 | [General architecture](./01-arquitectura.md) | The layers (domain / application / infrastructure / cli), why it's CLI-first, pure writers | (the whole company) |
 | 2 | [The code graph](./02-grafo.md) | How code is extracted into a graph, what a `node` and an `edge` are, resolution and dedup | the cartographer |
 | 3 | [Search and queries](./03-busqueda-y-consultas.md) | `query`, `affected`, `path`, and the *freshness gate* (auto-rebuild vs refuse) | the cartographer |
 | 4 | [Project memory](./04-memoria.md) | `observations`, `sessions`, the *project key*, FTS5/BM25 search | the librarian |
@@ -71,7 +71,7 @@ flowchart TB
     end
 
     subgraph cli["leina (CLI)"]
-        cmds["Commands:<br/>build · query · affected · path<br/>memory save/search/verified<br/>devin-hook"]
+        cmds["Commands:<br/>build · query · affected · path<br/>memory save/search/verified<br/>agent-hook"]
     end
 
     subgraph stores["Storage (SQLite)"]
@@ -88,8 +88,11 @@ flowchart TB
 
 Three ideas worth remembering right away:
 
-1. **There is no server.** leina is **CLI-only**: every capability is a short command that
-   runs, responds, and exits. There's no daemon, no open port.
+1. **CLI-first.** The everyday surface is short commands that run, respond, and exit —
+   nothing runs in the background by default. When you want a server, you ask for one
+   explicitly: `leina mcp` is the MCP server (over stdio) your AI host launches to call
+   leina's tools, and `leina graph serve` is an optional read-only HTTP explorer bound to
+   loopback that you run on demand and stop with Ctrl+C.
 2. **Two separate SQLite databases.** The graph lives in `<project>/.leina/graph.db`
    (one per repo, git-ignored). The memory lives in `~/.leina/memory.db` (a single,
    global one, segmented by *project key*). They are **decoupled on disk** and only meet in

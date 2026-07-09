@@ -2,7 +2,7 @@
 
 > **In one sentence:** leina is a CLI with a **hexagonal** architecture (ports and
 > adapters) in four layers, where the business logic knows nothing about SQLite or the
-> file system — and where *there is no server*.
+> file system — and where every command runs and exits, *with no always-on daemon*.
 
 ---
 
@@ -124,15 +124,17 @@ handler. All the logic lives further in.
 
 ## Two design decisions worth understanding
 
-### CLI-only (there is no server)
+### CLI-first (no always-on daemon)
 
-Every capability is a `leina <subcommand>` that starts up, responds, and dies. Why?
+The everyday capability is a `leina <subcommand>` that starts up, responds, and exits. The
+two servers that exist are opt-in and run on demand: `leina mcp` (the stdio MCP server your
+AI host launches to call leina's tools) and `leina graph serve` (an optional read-only HTTP
+explorer bound to loopback). Why this model?
 
-- **Fast startup (~0.15s) on the read path.** The heavy extraction stack (tree-sitter +
-  ts-morph) is loaded with a *dynamic* `import()`, only in `build`/`refresh`. A `query` or
-  a `memory search` never pays that cost.
-- **No state between invocations.** There's no daemon that can drift out of sync; every
-  command reads fresh state from disk.
+- **Fast startup (~0.15s) on the read path.** The heavy code-extraction stack is loaded only
+  in `build`/`refresh`. A `query` or a `memory search` never pays that cost.
+- **No state between invocations.** There's no always-on daemon that can drift out of sync;
+  every command reads fresh state from disk.
 
 ### Pure writers
 

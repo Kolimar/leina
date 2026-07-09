@@ -2,7 +2,7 @@
 
 > **En una frase:** leina es una CLI con arquitectura **hexagonal** (puertos y
 > adaptadores), donde la lógica de negocio no depende de SQLite ni del sistema de
-> archivos — y donde *no hay servidor*.
+> archivos — y donde cada comando corre y termina, *sin un daemon siempre encendido*.
 
 ---
 
@@ -101,15 +101,18 @@ La CLI enruta cada comando al caso de uso correcto; toda la lógica vive más ad
 
 ## Dos decisiones de diseño que conviene entender
 
-### CLI-only (no hay servidor)
+### CLI-first (sin daemon siempre encendido)
 
-Toda capacidad es un `leina <subcomando>` que arranca, responde y muere. ¿Por qué?
+La capacidad de todos los días es un `leina <subcomando>` que arranca, responde y termina.
+Los dos servidores que existen son opt-in y los corés a demanda: `leina mcp` (el servidor MCP
+por stdio que tu host de IA lanza para llamar a las herramientas) y `leina graph serve` (un
+explorador HTTP de solo lectura en foreground, ligado a loopback). ¿Por qué este modelo?
 
 - **Arranque rápido (~0.15s) en el camino de lectura.** El stack pesado de extracción de código
   se carga solo al construir o refrescar el grafo. Una `query` o un `memory search` nunca pagan
   ese costo.
-- **Sin estado entre invocaciones.** No hay daemon que se desincronice; cada comando lee el
-  estado fresco del disco.
+- **Sin estado entre invocaciones.** No hay un daemon siempre encendido que se desincronice;
+  cada comando lee el estado fresco del disco.
 
 ### Writers puros
 

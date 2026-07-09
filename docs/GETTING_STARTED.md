@@ -6,7 +6,7 @@ questions.
 > 🌐 **Prefer a Q&A-style walkthrough in Spanish** ("what can I ask the AI"), plus a full SDD
 > tour? See [`docs/guides/usage-guide.md`](guides/usage-guide.md).
 
-**leina is a CLI.** There's no server to run. You install it once, point it at a codebase to
+**leina is a CLI.** There's no background service to stand up or maintain. You install it once, point it at a codebase to
 build a **knowledge graph** (what depends on what, what breaks if you touch something), and get a
 **project memory** (decisions, bug root-causes, discoveries) that survives across sessions. Your AI
 host — Devin, Claude Code, Cursor, Windsurf — then reasons over that structure instead of re-reading

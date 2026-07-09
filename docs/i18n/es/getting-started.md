@@ -6,7 +6,7 @@ preguntas.
 > 🌐 **¿Preferís un recorrido estilo preguntas y respuestas** ("qué le puedo pedir a la IA"), más
 > un tour completo de SDD? Mirá [`docs/guides/usage-guide.md`](guides/usage-guide.md).
 
-**leina es una CLI.** No hay ningún servidor que correr. La instalás una vez, la apuntás a un
+**leina es una CLI.** No hay ningún servicio en segundo plano que levantar ni mantener. La instalás una vez, la apuntás a un
 código para construir un **grafo de conocimiento** (qué depende de qué, qué se rompe si tocás algo)
 y obtenés una **memoria de proyecto** (decisiones, causas raíz de bugs, descubrimientos) que
 sobrevive entre sesiones. Tu host de IA — Devin, Claude Code, Cursor, Windsurf — razona sobre esa

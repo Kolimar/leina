@@ -51,7 +51,7 @@ Leelos en este orden si venís de cero:
 
 | # | Documento | De qué trata | Empleado |
 |---|-----------|--------------|----------|
-| 1 | [Arquitectura general](./01-arquitectura.md) | Las capas (domain / application / infrastructure / cli), por qué es CLI-only, writers puros | (la empresa entera) |
+| 1 | [Arquitectura general](./01-arquitectura.md) | Las capas (domain / application / infrastructure / cli), por qué es CLI-first, writers puros | (la empresa entera) |
 | 2 | [El grafo de código](./02-grafo.md) | Cómo se extrae el código a un grafo, qué es un `node` y un `edge`, resolución y dedup | el cartógrafo |
 | 3 | [Búsqueda y consultas](./03-busqueda-y-consultas.md) | `query`, `affected`, `path` y el *freshness gate* (auto-rebuild vs refuse) | el cartógrafo |
 | 4 | [La memoria de proyecto](./04-memoria.md) | `observations`, `sessions`, el *project key*, búsqueda FTS5/BM25 | el bibliotecario |
@@ -87,8 +87,11 @@ flowchart TB
 
 Tres ideas que conviene grabarse desde ya:
 
-1. **No hay servidor.** leina es **CLI-only**: cada capacidad es un comando corto que
-   corre, responde y termina. No hay daemon, no hay puerto abierto.
+1. **CLI-first.** La superficie de todos los días son comandos cortos que corren, responden
+   y terminan — nada corre en segundo plano por default. Cuando querés un servidor, lo pedís
+   explícitamente: `leina mcp` es el servidor MCP (por stdio) que tu host de IA lanza para
+   llamar a las herramientas de leina, y `leina graph serve` es un explorador HTTP de solo
+   lectura en foreground, ligado a loopback, que corés cuando lo necesitás y frenás con Ctrl+C.
 2. **Dos bases SQLite separadas.** El grafo vive en `<proyecto>/.leina/graph.db`
    (uno por repo, git-ignored). La memoria vive en `~/.leina/memory.db` (una sola,
    global, segmentada por *project key*). Están **desacopladas en disco** y solo se unen en la
