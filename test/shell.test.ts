@@ -5,6 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { detectGitBashOnWindows, gitBashAdvisory, mergeShellWrapper } from "../src/infrastructure/install/shell.ts";
 
 test("(sh-a) non-Windows is never flagged, even with MSYSTEM set", () => {
@@ -69,10 +72,17 @@ test("(wrap-1) mergeShellWrapper creates, replaces in place, and is idempotent",
 test("(wrap-2) repair --write-shell-wrapper on non-win32 skips with a note", () => {
   if (process.platform === "win32") return;
   const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
+  // Hermetic: isolate HOME + LEINA_HOME so the global is "never activated", and point repair
+  // at a fresh, un-init'd project dir. Otherwise the outcome depends on the machine's global
+  // state and the target repo's committed init evidence — e.g. running against the leina repo
+  // on a clean checkout, repair tries to re-init, hits the required --hosts, and exits before
+  // reaching the shell-wrapper step (green locally, red on CI).
+  const leinaHome = mkdtempSync(join(tmpdir(), "leina-wrap2-home-"));
+  const proj = mkdtempSync(join(tmpdir(), "leina-wrap2-proj-"));
   const r = spawnSync(
     process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, "repair", "--write-shell-wrapper"],
-    { encoding: "utf8" },
+    ["--no-warnings", "--experimental-strip-types", CLI, "repair", proj, "--write-shell-wrapper"],
+    { encoding: "utf8", env: { ...process.env, HOME: leinaHome, LEINA_HOME: leinaHome } },
   );
   assert.match(r.stdout ?? "", /only relevant on Windows Git Bash — skipped/);
 });
