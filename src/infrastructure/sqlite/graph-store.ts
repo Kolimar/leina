@@ -107,44 +107,6 @@ function rowToEdge(r: EdgeRow): GraphEdge {
 
 const GRAPH_SCHEMA_VERSION = 4;
 
-// v1 -> v2: add `signature TEXT` column to `nodes` for structured function
-// signatures. Idempotent: skips if the column already exists (handles
-// double-instantiation and the case where SCHEMA's CREATE TABLE IF NOT EXISTS
-// already produced the v2 shape on a fresh DB stamped as v1 by mistake).
-function migrateV1toV2(db: DatabaseSync): void {
-  const cols = db
-    .prepare("PRAGMA table_info(nodes)")
-    .all() as unknown as { name: string }[];
-  if (cols.some((c) => c.name === "signature")) return;
-  db.exec("ALTER TABLE nodes ADD COLUMN signature TEXT");
-}
-
-// v2 -> v3: add `repo TEXT` (nullable) to `nodes` and `edges` for workspace
-// multi-repo support. Single-repo rows keep repo=NULL — transparent migration.
-// Idempotent: guarded by PRAGMA table_info check, same pattern as migrateV1toV2.
-export function migrateV2toV3(db: DatabaseSync): void {
-  const nodeCols = db
-    .prepare("PRAGMA table_info(nodes)")
-    .all() as unknown as { name: string }[];
-  if (!nodeCols.some((c) => c.name === "repo")) {
-    db.exec("ALTER TABLE nodes ADD COLUMN repo TEXT");
-  }
-  const edgeCols = db
-    .prepare("PRAGMA table_info(edges)")
-    .all() as unknown as { name: string }[];
-  if (!edgeCols.some((c) => c.name === "repo")) {
-    db.exec("ALTER TABLE edges ADD COLUMN repo TEXT");
-  }
-}
-
-// v3 -> v4: add index on nodes(kind) for faster infra-node queries.
-// Pure DDL addition — no column changes (kind column already TEXT since v1).
-// Idempotent: CREATE INDEX IF NOT EXISTS is a no-op on an existing index.
-export function migrateV3toV4(db: DatabaseSync): void {
-  db.exec("CREATE INDEX IF NOT EXISTS idx_nodes_kind ON nodes(kind)");
-  db.exec(`PRAGMA user_version = ${GRAPH_SCHEMA_VERSION}`);
-}
-
 // Reject a graph.db written by a newer binary BEFORE any schema work runs (its rows may
 // reference columns this binary doesn't know). Closes the handle before throwing so a
 // rejected open never leaks it. Returns the on-disk schema version so the caller can
@@ -185,29 +147,20 @@ export class GraphStore implements GraphRepository {
 
     this.db.exec("PRAGMA journal_mode = WAL;");
 
-    // Schema versioning — reject DBs written by a newer binary BEFORE running
-    // SCHEMA (which may reference columns absent in an unknown future schema).
+    // Schema versioning — reject DBs written by a newer binary BEFORE running SCHEMA
+    // (which may reference columns absent in an unknown future schema).
     const v = assertGraphReadable(this.db);
 
-    // Fast path: the version stamp is written only AFTER SCHEMA + migrations complete,
-    // so a db already at the current version is guaranteed to have the full current
-    // shape. Skipping the DDL re-execution keeps concurrent opens (build in one
-    // process, queries in others) free of write locks on the hot path.
+    // Fast path: a db already at the current version has the full current shape. Skipping
+    // the DDL re-execution keeps concurrent opens (build in one process, queries in others)
+    // free of write locks on the hot path.
     if (v === GRAPH_SCHEMA_VERSION) return;
 
+    // Otherwise create the current shape and stamp it. graph.db is a derived artifact: a
+    // fresh db (user_version=0, no tables) gets the full v4 shape from SCHEMA. Pre-1.0
+    // partial-schema dbs are NOT migrated in place (that churn was pre-publish residue) —
+    // if an old db predates the current schema, rebuild it with `leina build`.
     this.db.exec(SCHEMA);
-    // Run the additive migrations for EVERY below-current version, including 0. They
-    // are idempotent (guarded by PRAGMA table_info / IF NOT EXISTS), so on a fresh DB
-    // they are no-ops (SCHEMA already produced the latest shape). Crucially this also
-    // repairs a *legacy pre-versioning* DB, which reports user_version=0 while its
-    // tables still have the old shape: since CREATE TABLE IF NOT EXISTS never upgrades
-    // an existing table, a plain "v===0 → stamp latest" path would leave the
-    // `signature`/`repo` columns missing and the next INSERT would fail with a SQL
-    // logic error. (Only the fast path above — an exact current-version stamp — may
-    // skip this, and that stamp is written strictly after these migrations ran.)
-    migrateV1toV2(this.db);
-    migrateV2toV3(this.db);
-    migrateV3toV4(this.db);
     this.db.exec(`PRAGMA user_version = ${GRAPH_SCHEMA_VERSION}`);
   }
 
