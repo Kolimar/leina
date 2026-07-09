@@ -39,7 +39,7 @@ function runInit(project: string, ...args: string[]): string {
   const hostArgs = args.includes("--hosts") ? args : [...args, "--hosts", "devin"];
   // A full init also requires an explicit --profile now (no silent devin default); inject
   // one unless the caller already chose (--profile or the --agent devin alias).
-  const finalArgs = hostArgs.includes("--profile") || hostArgs.includes("--agent") ? hostArgs : [...hostArgs, "--profile", "devin"];
+  const finalArgs = hostArgs.includes("--profile") ? hostArgs : [...hostArgs, "--profile", "devin"];
   return execFileSync(
     process.execPath,
     ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...finalArgs],
@@ -56,7 +56,7 @@ function tmpProject(): string {
 test("(i-a) init writes AGENTS.md (CLI-only — no MCP server block)", () => {
   const dir = tmpProject();
   try {
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
 
     assert.ok(existsSync(join(dir, "AGENTS.md")), "AGENTS.md written");
     // CLI-only build: init never writes a leina MCP server into .devin/config.json.
@@ -86,7 +86,7 @@ test("(i-a2) init FULL agrega CLI grant en .devin/config.json preservando conten
       }),
     );
 
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
 
     const devin = JSON.parse(readFileSync(join(dir, ".devin", "config.json"), "utf8"));
     // CLI grant added
@@ -105,7 +105,7 @@ test("(i-a2) init FULL agrega CLI grant en .devin/config.json preservando conten
 test("(i-perm) init pre-authorizes Exec(leina) in .devin/config.json, idempotently", () => {
   const dir = tmpProject();
   try {
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const cfgPath = join(dir, ".devin", "config.json");
     assert.ok(existsSync(cfgPath), ".devin/config.json written with the CLI grant");
     const once = readFileSync(cfgPath, "utf8");
@@ -115,7 +115,7 @@ test("(i-perm) init pre-authorizes Exec(leina) in .devin/config.json, idempotent
       "permissions.allow contains Exec(leina)",
     );
 
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const twice = readFileSync(cfgPath, "utf8");
     assert.equal(once, twice, ".devin/config.json stable across re-runs (idempotent grant)");
     assert.equal(
@@ -137,7 +137,7 @@ test("(i-perm2) init adds the CLI grant while preserving pre-existing .devin/con
       JSON.stringify({ permissions: { allow: ["Exec(git)"] }, extra: true }),
     );
 
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
 
     const cfg = JSON.parse(readFileSync(join(dir, ".devin", "config.json"), "utf8"));
     assert.deepEqual(
@@ -156,11 +156,11 @@ test("(i-b) init is idempotent and preserves pre-existing AGENTS.md content", ()
   try {
     writeFileSync(join(dir, "AGENTS.md"), "# My Project\n\nKeep this line.\n");
 
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const firstAgents = readFileSync(join(dir, "AGENTS.md"), "utf8");
     const firstHooks = readFileSync(join(dir, ".devin", "hooks.v1.json"), "utf8");
 
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const secondAgents = readFileSync(join(dir, "AGENTS.md"), "utf8");
     const secondHooks = readFileSync(join(dir, ".devin", "hooks.v1.json"), "utf8");
 
@@ -182,13 +182,13 @@ test("(i-gi) init writes a .gitignore that excludes the .leina/ runtime dir, ide
   try {
     writeFileSync(join(dir, ".gitignore"), "node_modules/\n");
 
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const once = readFileSync(join(dir, ".gitignore"), "utf8");
     assert.ok(once.split("\n").includes(".leina/*"), ".leina/* ignored on its own line");
     assert.ok(once.split("\n").includes("!.leina/config.json"), "config.json re-included");
     assert.ok(once.includes("node_modules/"), "pre-existing rule preserved");
 
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const twice = readFileSync(join(dir, ".gitignore"), "utf8");
     assert.equal(once, twice, ".gitignore stable across re-runs");
     assert.equal(
@@ -205,7 +205,7 @@ test("(i-c) init fails cleanly on a malformed AGENTS.md managed section", () => 
   const dir = tmpProject();
   try {
     writeFileSync(join(dir, "AGENTS.md"), "# P\n\n<!-- leina:protocol:start -->\nhalf\n");
-    assert.throws(() => runInit(dir, "--agent", "devin"), "must refuse, not append forever");
+    assert.throws(() => runInit(dir, "--profile", "devin"), "must refuse, not append forever");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -218,25 +218,12 @@ test("(i-d) init --project with no value fails instead of installing into cwd", 
     assert.throws(() =>
       execFileSync(
         process.execPath,
-        ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", "--agent", "devin"],
+        ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", "--profile", "devin"],
         { encoding: "utf8", cwd: dir, env: TEST_ENV },
       ),
     );
     assert.ok(!existsSync(join(dir, "--agent")), "must not create a directory named --agent");
     assert.ok(!existsSync(join(dir, "AGENTS.md")), "must not install into cwd on a bad flag");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("(i-e) init rejects unknown --agent values (typos shouldn't silently install nothing)", () => {
-  const dir = tmpProject();
-  try {
-    // --agent windsurf: removed; fails with a migration message that names --profile windsurf
-    assert.throws(() => runInit(dir, "--agent", "windsurf"), /--profile windsurf/);
-    // Other unsupported --agent values: generic unknown-agent message
-    assert.throws(() => runInit(dir, "--agent", "all"), /unknown --agent/);
-    assert.throws(() => runInit(dir, "--agent", "claude"), /unknown --agent/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -248,7 +235,7 @@ test("(reg-a) CLI-only: init does NOT create a project registry and leaves the r
 
   const dir = tmpProject();
   try {
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     // The legacy global project registry is gone — the CLI is per-<dir>. init must not write one.
     const overrideRegistry = join(TEMP_HOME, "projects.json");
     assert.equal(existsSync(overrideRegistry), false, "no projects.json registry is written (CLI-only)");
@@ -267,7 +254,7 @@ test("(reg-a) CLI-only: init does NOT create a project registry and leaves the r
 test("(devin-init-1) init --agent devin writes .devin/hooks.v1.json with all 4 managed event keys", () => {
   const dir = tmpProject();
   try {
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const path = join(dir, ".devin", "hooks.v1.json");
     assert.ok(existsSync(path), ".devin/hooks.v1.json written");
     const hooks = JSON.parse(readFileSync(path, "utf8"));
@@ -291,9 +278,9 @@ test("(devin-init-1) init --agent devin writes .devin/hooks.v1.json with all 4 m
 test("(devin-init-3) .devin/hooks.v1.json is byte-identical across re-runs (idempotent)", () => {
   const dir = tmpProject();
   try {
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const once = readFileSync(join(dir, ".devin", "hooks.v1.json"), "utf8");
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const twice = readFileSync(join(dir, ".devin", "hooks.v1.json"), "utf8");
     assert.equal(once, twice);
   } finally {
@@ -309,7 +296,7 @@ test("(I3-no-user-global) init FULL nunca escribe ~/.config/devin/config.json (I
   try {
     execFileSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin", "--hosts", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--profile", "devin", "--hosts", "devin"],
       { encoding: "utf8", env: { ...process.env, LEINA_HOME: isolatedHome, HOME: isolatedHome, USERPROFILE: isolatedHome } },
     );
     const userGlobal = join(isolatedHome, ".config", "devin", "config.json");
@@ -338,7 +325,7 @@ test("(I3-no-user-global) init FULL nunca escribe ~/.config/devin/config.json (I
 test("(i-name-a) init --name <project-name> writes .leina/config.json with project_name", () => {
   const dir = tmpProject();
   try {
-    runInit(dir, "--agent", "devin", "--name", "my-service");
+    runInit(dir, "--profile", "devin", "--name", "my-service");
     const cfgPath = join(dir, ".leina", "config.json");
     assert.ok(existsSync(cfgPath), ".leina/config.json written");
     const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
@@ -351,11 +338,11 @@ test("(i-name-a) init --name <project-name> writes .leina/config.json with proje
 test("(i-name-b) init --name is idempotent (re-run with same name preserves file)", () => {
   const dir = tmpProject();
   try {
-    runInit(dir, "--agent", "devin", "--name", "locked-service");
+    runInit(dir, "--profile", "devin", "--name", "locked-service");
     const cfgPath = join(dir, ".leina", "config.json");
     const once = readFileSync(cfgPath, "utf8");
 
-    runInit(dir, "--agent", "devin", "--name", "locked-service");
+    runInit(dir, "--profile", "devin", "--name", "locked-service");
     const twice = readFileSync(cfgPath, "utf8");
 
     assert.equal(once, twice, "config.json stable across re-runs with same --name");
@@ -369,7 +356,7 @@ test("(i-name-c) init without --name auto-pins the derived key in .leina/config.
   // silently re-home the project and orphan its memories. init now freezes the key.
   const dir = tmpProject();
   try {
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const cfgPath = join(dir, ".leina", "config.json");
     assert.ok(existsSync(cfgPath), ".leina/config.json auto-written (key pinned at init)");
     const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
@@ -387,7 +374,7 @@ test("(i-name-d) init without --name respects an already-locked project_name", (
       join(dir, ".leina", "config.json"),
       `${JSON.stringify({ project_name: "pinned-before", project_key_format: "org/repo" }, null, 2)}\n`,
     );
-    runInit(dir, "--agent", "devin");
+    runInit(dir, "--profile", "devin");
     const cfg = JSON.parse(readFileSync(join(dir, ".leina", "config.json"), "utf8"));
     assert.equal(cfg.project_name, "pinned-before", "existing lock untouched");
     assert.equal(cfg.project_key_format, "org/repo", "sibling config keys preserved");
@@ -404,7 +391,7 @@ test("(i-name-e) init --name preserves sibling keys in an existing config.json",
       join(dir, ".leina", "config.json"),
       `${JSON.stringify({ project_key_format: "org/repo" }, null, 2)}\n`,
     );
-    runInit(dir, "--agent", "devin", "--name", "explicit-name");
+    runInit(dir, "--profile", "devin", "--name", "explicit-name");
     const cfg = JSON.parse(readFileSync(join(dir, ".leina", "config.json"), "utf8"));
     assert.equal(cfg.project_name, "explicit-name");
     assert.equal(cfg.project_key_format, "org/repo", "merge-safe write keeps project_key_format");
@@ -426,7 +413,7 @@ function spawnInit(
   // devin default, so re-wire devin unless the caller already named hosts.
   const hostArgs = args.includes("--hosts") ? args : [...args, "--hosts", "devin"];
   // Full init also requires an explicit --profile now; inject devin unless already chosen.
-  const finalArgs = hostArgs.includes("--profile") || hostArgs.includes("--agent") ? hostArgs : [...hostArgs, "--profile", "devin"];
+  const finalArgs = hostArgs.includes("--profile") ? hostArgs : [...hostArgs, "--profile", "devin"];
   const result = spawnSync(
     process.execPath,
     ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...finalArgs],
@@ -444,7 +431,7 @@ test("(i-no-share) init does NOT populate the global share (no .version sentinel
   const isolatedHome = mkdtempSync(join(tmpdir(), "leina-init-no-share-"));
   try {
     const env = { ...process.env, LEINA_HOME: join(isolatedHome, ".leina"), HOME: isolatedHome, USERPROFILE: isolatedHome };
-    const { status } = spawnInit(dir, env, "--agent", "devin");
+    const { status } = spawnInit(dir, env, "--profile", "devin");
     assert.equal(status, 0, "init exits 0");
     // Share NOT populated by init
     assert.ok(
@@ -465,7 +452,7 @@ test("(i-nudge) init emits global-activation nudge to stderr when share is absen
   const isolatedHome = mkdtempSync(join(tmpdir(), "leina-init-nudge-"));
   try {
     const env = { ...process.env, LEINA_HOME: join(isolatedHome, ".leina"), HOME: isolatedHome, USERPROFILE: isolatedHome };
-    const { status, stderr } = spawnInit(dir, env, "--agent", "devin");
+    const { status, stderr } = spawnInit(dir, env, "--profile", "devin");
     assert.equal(status, 0, "init exits 0");
     assert.match(stderr, /global activation not detected/, "nudge emitted on stderr");
     assert.match(stderr, /leina activate/, "nudge names the activate command");
@@ -491,7 +478,7 @@ test("(i-no-nudge) init emits NO nudge when global activation is present", () =>
       "share populated (pre-condition)",
     );
     // Now init — should NOT emit nudge since activation is present
-    const { status, stderr } = spawnInit(dir, env, "--agent", "devin");
+    const { status, stderr } = spawnInit(dir, env, "--profile", "devin");
     assert.equal(status, 0, "init exits 0");
     assert.doesNotMatch(stderr, /global activation not detected/, "no nudge when activation is present");
   } finally {
@@ -512,7 +499,7 @@ test("(i-autobuild-1) init sin --build nunca crea graph.db ni dice 'Building gra
   try {
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin", "--hosts", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--profile", "devin", "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     assert.equal(result.status, 0, `exit 0 (stdout: ${result.stdout}, stderr: ${result.stderr})`);
@@ -535,7 +522,7 @@ test("(i-autobuild-2) init con graph.db pre-existente no dice 'Building graph in
 
     const result = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin", "--hosts", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--profile", "devin", "--hosts", "devin"],
       { encoding: "utf8", env: TEST_ENV },
     );
     assert.equal(result.status, 0, `exit 0 (stdout: ${result.stdout}, stderr: ${result.stderr})`);
@@ -706,62 +693,6 @@ test("(I2-2) init --build construye el grafo síncronamente en foreground (graph
 // R-5 — --profile / --agent flag handling
 // ---------------------------------------------------------------------------
 
-test("(i-R5-agent-devin-alias) --agent devin is a back-compat alias: exit 0 and writes AGENTS.md", () => {
-  const dir = tmpProject();
-  try {
-    const result = spawnSync(
-      process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "devin", "--hosts", "devin"],
-      { encoding: "utf8", env: TEST_ENV },
-    );
-    assert.equal(result.status, 0, `exit 0 (stderr: ${result.stderr})`);
-    assert.ok(existsSync(join(dir, "AGENTS.md")), "AGENTS.md written via --agent devin alias");
-    // Devin profile: no capabilities section
-    const content = readFileSync(join(dir, "AGENTS.md"), "utf8");
-    assert.ok(!content.includes("## Capabilities (leina)"), "no capabilities section for Devin");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("(i-R5-agent-devin-alias-identical) --agent devin produces AGENTS.md identical to --profile devin", () => {
-  const dirAgent   = tmpProject();
-  const dirProfile = tmpProject();
-  try {
-    spawnSync(
-      process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dirAgent, "--agent", "devin", "--hosts", "devin"],
-      { encoding: "utf8", env: TEST_ENV },
-    );
-    spawnSync(
-      process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dirProfile, "--profile", "devin", "--hosts", "devin"],
-      { encoding: "utf8", env: TEST_ENV },
-    );
-    const agentContent   = readFileSync(join(dirAgent, "AGENTS.md"), "utf8");
-    const profileContent = readFileSync(join(dirProfile, "AGENTS.md"), "utf8");
-    assert.equal(agentContent, profileContent, "--agent devin and --profile devin produce identical AGENTS.md");
-  } finally {
-    rmSync(dirAgent,   { recursive: true, force: true });
-    rmSync(dirProfile, { recursive: true, force: true });
-  }
-});
-
-test("(i-R5-agent-windsurf-fails) --agent windsurf fails with exit ≠ 0 and stderr mentioning --profile windsurf", () => {
-  const dir = tmpProject();
-  try {
-    const result = spawnSync(
-      process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--agent", "windsurf", "--hosts", "devin"],
-      { encoding: "utf8", env: TEST_ENV },
-    );
-    assert.notEqual(result.status, 0, "exit code must be non-zero");
-    assert.match(result.stderr, /--profile windsurf/, "stderr mentions --profile windsurf");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test("(i-R5-profile-windsurf-caps) --profile windsurf writes ## Capabilities section", () => {
   const dir = tmpProject();
   try {
@@ -867,7 +798,7 @@ function runInitHome(home: string, project: string, ...args: string[]): string {
   // These tests exercise host resolution (explicit --hosts or a persisted selection), so
   // --hosts is left to the caller. But a full init still needs an explicit --profile now —
   // inject devin unless the caller chose (--profile / --agent).
-  const finalArgs = args.includes("--profile") || args.includes("--agent") ? args : [...args, "--profile", "devin"];
+  const finalArgs = args.includes("--profile") ? args : [...args, "--profile", "devin"];
   return execFileSync(
     process.execPath,
     ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", project, ...finalArgs],

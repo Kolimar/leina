@@ -362,9 +362,9 @@ function checkProject(out: CheckResult[], root: string): void {
   // the user actually selected the devin host (same host-neutral pattern as checkSymlinks
   // via inspectHostLinks). A Claude-Code-only project must not see `.devin/*` warnings.
   if (activeHosts().includes("devin")) {
-    // .devin/config.json — CLI-only: warn if a legacy leina MCP server entry is still
-    // present (a re-`init` strips it).
-    checkLegacyMcp(out, g, join(root, ".devin", "config.json"));
+    // .devin/config.json presence/validity (Devin integration is hooks-based; this file
+    // carries the Exec(leina) grant).
+    checkDevinConfig(out, g, join(root, ".devin", "config.json"));
 
     // .devin/hooks.v1.json managed events.
     checkDevinHooks(out, g, join(root, ".devin", "hooks.v1.json"));
@@ -525,26 +525,16 @@ function checkProjectKey(out: CheckResult[], g: string, root: string): void {
   }
 }
 
-function checkLegacyMcp(out: CheckResult[], g: string, path: string): void {
-  // The real MCP server lives behind `leina mcp` and registers in the project-level
-  // `.mcp.json` (Claude Code/Cursor convention). A `leina` entry under
-  // `.devin/config.json` mcpServers is the OLD, pre-CLI wiring — Devin integration is
-  // hooks-based — so it is flagged as stale. Absent (or no file at all) is healthy.
+function checkDevinConfig(out: CheckResult[], g: string, path: string): void {
+  // .devin/config.json carries the committable Exec(leina) grant; Devin integration is
+  // hooks-based. Absent is healthy; present must be valid JSON.
   if (!existsSync(path)) {
-    out.push({ group: g, label: ".devin/config.json", status: "ok", detail: "no MCP config (Devin uses hooks)" });
+    out.push({ group: g, label: ".devin/config.json", status: "ok", detail: "not present (Devin uses hooks)" });
     return;
   }
   try {
-    const cfg = JSON.parse(readFileSync(path, "utf8")) as { mcpServers?: Record<string, unknown> };
-    const stale = !!cfg.mcpServers && "leina" in cfg.mcpServers;
-    out.push({
-      group: g,
-      label: ".devin/config.json",
-      status: stale ? "warn" : "ok",
-      detail: stale
-        ? "stale leina MCP entry in the Devin config — Devin uses hooks; MCP registration belongs in .mcp.json"
-        : "no leina MCP server entry (Devin uses hooks)",
-    });
+    JSON.parse(readFileSync(path, "utf8"));
+    out.push({ group: g, label: ".devin/config.json", status: "ok", detail: "present (Devin uses hooks)" });
   } catch {
     out.push({ group: g, label: ".devin/config.json", status: "fail", detail: "malformed JSON" });
   }

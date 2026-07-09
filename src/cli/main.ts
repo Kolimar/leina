@@ -31,7 +31,7 @@ import {
 import { handleMemory } from "./handlers/memory.ts";
 import { handleEventsTail } from "./handlers/events.ts";
 import { handleEnv } from "./handlers/env.ts";
-import { handleActivate, handleDeactivate, handleDeinit, handleDisable, handleInit, handleInstallGlobal, handleRepair, handleSetup } from "./handlers/install.ts";
+import { handleActivate, handleDeactivate, handleDeinit, handleDisable, handleInit, handleRepair, handleSetup } from "./handlers/install.ts";
 import { handleDoctor, handleAgentHook, handleSidecar, handleScip, handleCapabilities, handleVerify, printRootHelp } from "./handlers/system.ts";
 import { handleVisualize, handleWorkspaceVisualize } from "./handlers/visualize.ts";
 import {
@@ -162,9 +162,6 @@ switch (cmd) {
     handleDeinit(rest);
     break;
 
-  case "install-global":
-    handleInstallGlobal(rest);
-    break;
 
   case "doctor":
     handleDoctor(rest);

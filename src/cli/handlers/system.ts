@@ -303,7 +303,6 @@ export function printRootHelp(): void {
       `                          assets/catalog.json); omit them to keep the previous choice\n` +
       `  deactivate              global teardown: remove managed symlinks + revoke user-global\n` +
       `                          grant + hooks. Does NOT touch blanket sentinel. Idempotent.\n` +
-      `  install-global          [deprecated — use 'activate'] alias for activate\n` +
       `  init [dir] --hosts h1,h2 --profile devin|windsurf [--freshness auto|refuse]\n` +
       `       [--build] [--name <n>] [--mcp]\n` +
       `                          per-repo opt-in: consent=enabled + .gitignore; standalone (no\n` +

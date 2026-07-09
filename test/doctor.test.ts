@@ -132,17 +132,6 @@ test("(doc-d) init'd project (no MCP): AGENTS/.gitignore/.devin checks pass; unb
   });
 });
 
-test("(doc-e) legacy leina MCP entry present → .devin/config.json warn", () => {
-  withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
-    const root = makeInitProject(home, { seedMcp: true });
-    const report = runDoctor("0.8.0-test", root);
-    const cfg = find(report.results, "project", ".devin/config.json")!;
-    assert.equal(cfg.status, "warn");
-    assert.match(cfg.detail ?? "", /legacy|MCP/i);
-  });
-});
-
 test("(doc-f) malformed .devin/config.json → fail", () => {
   withTmpHome((home) => {
     installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });

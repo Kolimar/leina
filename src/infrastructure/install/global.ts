@@ -13,7 +13,7 @@
 //        (~/.config/devin/{skills,agents}/<name>/). linkOrCopy handles existing files (refuse
 //        to clobber: backs up, then replaces) and the Windows symlink fallback.
 //
-// Together: `leina install-global` (and `init` as a silent caller) wires up the entire
+// Together: `leina activate` (and `init` as a silent caller) wires up the entire
 // skills/agents surface in O(1). The orchestrator skill (`leina-sdd`) and every SDD phase
 // skill become available globally with no per-project files.
 
@@ -470,7 +470,7 @@ export function ensureUserConfigCliGrant(): CliGrantResult {
  * "make the share current for this binary" — and so the behaviour has a single unit-test
  * surface. populateShare is version-gated, so this is a cheap no-op when the share already
  * matches `version`; on a version bump it repopulates and re-links so freshly-bundled
- * skills/agents become visible (the `install-global` / `init` paths use it).
+ * skills/agents become visible (the `activate` / `init` paths use it).
  */
 export function maybeHealShare(assetsRoot: string, version: string): InstallGlobalReport {
   return installGlobal(assetsRoot, version);

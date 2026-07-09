@@ -2,7 +2,7 @@
 //
 // Mac/Linux: symlinks. The share lives at $LEINA_HOME/share/<kind>/<name>/ and each host's
 // global dir gets one symlink per skill/agent pointing back to the share. A single source of
-// truth means `leina install-global` (and an eventual self-update) propagates to every
+// truth means `leina activate` (and an eventual self-update) propagates to every
 // registered host without touching per-project files.
 //
 // Windows: creating SYMLINKS requires elevation or Developer Mode, but directory JUNCTIONS

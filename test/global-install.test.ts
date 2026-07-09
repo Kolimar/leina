@@ -5,7 +5,6 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -20,7 +19,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   blanketFile,
   leinaHome,
@@ -565,73 +563,6 @@ test("(activation-c) leina-setup skill ships in share/skills after installGlobal
     assert.ok(existsSync(skillPath), "leina-setup/SKILL.md present in share after installGlobal");
     const content = readFileSync(skillPath, "utf8");
     assert.match(content, /name: leina-setup/, "skill has correct name");
-  });
-});
-
-// ---- install-global alias (E2E) -----------------------------------------
-
-const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
-
-function spawnCli(args: string[], env: NodeJS.ProcessEnv): { status: number; stdout: string; stderr: string } {
-  const result = spawnSync(
-    process.execPath,
-    ["--no-warnings", "--experimental-strip-types", CLI, ...args],
-    { encoding: "utf8", env },
-  );
-  return {
-    status: result.status ?? 1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
-}
-
-test("(alias-a) install-global deprecation notice goes to stderr; stdout has the activate report", () => {
-  withTmpHome((home) => {
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      LEINA_HOME: join(home, ".leina"),
-      HOME: home,
-      USERPROFILE: home,
-    };
-    env.APPDATA = join(home, ".config");
-    const { status, stdout, stderr } = spawnCli(["install-global", "--hosts", "devin"], env);
-    assert.equal(status, 0, "exit code 0");
-    assert.match(stderr, /install-global.*deprecated.*activate/, "deprecation on stderr");
-    assert.doesNotMatch(stdout, /deprecated/, "deprecation NOT on stdout");
-    assert.match(stdout, /leina activate — share at/, "stdout has activate report header");
-  });
-});
-
-test("(alias-b) install-global and activate produce the same on-disk result (symlinks + share)", () => {
-  // Run activate in one tmp home, install-global in another; both should end up with the same
-  // share structure and Devin symlinks present.
-  withTmpHome((home1) => {
-    const env1: NodeJS.ProcessEnv = {
-      ...process.env,
-      LEINA_HOME: join(home1, ".leina"),
-      HOME: home1,
-      USERPROFILE: home1,
-    };
-    env1.APPDATA = join(home1, ".config");
-    withTmpHome((home2) => {
-      const env2: NodeJS.ProcessEnv = {
-        ...process.env,
-        LEINA_HOME: join(home2, ".leina"),
-        HOME: home2,
-        USERPROFILE: home2,
-      };
-      env2.APPDATA = join(home2, ".config");
-      const r1 = spawnCli(["activate", "--no-user-hooks", "--hosts", "devin"], env1);
-      const r2 = spawnCli(["install-global", "--no-user-hooks", "--hosts", "devin"], env2);
-      assert.equal(r1.status, 0, "activate exits 0");
-      assert.equal(r2.status, 0, "install-global exits 0");
-      // Both share roots populated (version sentinel present)
-      assert.ok(existsSync(join(home1, ".leina", "share", ".version")), "activate: .version present");
-      assert.ok(existsSync(join(home2, ".leina", "share", ".version")), "install-global: .version present");
-      // Both created Devin skill symlinks
-      assert.ok(existsSync(join(home1, ".config", "devin", "skills")), "activate: devin skills dir exists");
-      assert.ok(existsSync(join(home2, ".config", "devin", "skills")), "install-global: devin skills dir exists");
-    });
   });
 });
 

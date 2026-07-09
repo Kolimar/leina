@@ -1,5 +1,5 @@
-// cli/handlers/install.ts — install/activation command handlers: activate, install-global,
-//   init, setup, disable, deactivate, deinit.
+// cli/handlers/install.ts — install/activation command handlers: activate, init, setup,
+//   disable, deactivate, deinit.
 //
 // handleInit is decomposed into one helper per artifact it writes (each kept under the
 // Cognitive-Complexity gate); the helpers accumulate human-readable lines into the shared
@@ -74,9 +74,8 @@ function maybeShellInteropAdvisory(): void {
 }
 
 /**
- * Resolve the activation inputs from argv and run `runActivate`, failing with a labelled error.
- * Shared by the `activate` and (deprecated) `install-global` commands — both derive identical
- * assets/version/cli context and only differ in the error label.
+ * Resolve the activation inputs from argv and run `runActivate`, failing with a labelled
+ * error. `label` is the invoking command name (used only in error messages).
  */
 // Parse the asset-selection flags (--preset / --skills / --agents) against the bundled
 // catalog. Returns undefined when no flag was given — installGlobal then keeps the
@@ -236,12 +235,6 @@ export function handleActivate(rest: string[]): void {
   // --mcp            also register the MCP server user-globally (claude/cursor/windsurf)
   activateFromArgs("activate", rest);
   maybeRegisterMcpGlobal("activate", rest);
-}
-
-export function handleInstallGlobal(rest: string[]): void {
-  // Deprecated alias for `activate`. Kept for back-compat with scripts/CI.
-  process.stderr.write(`[leina] 'install-global' is deprecated; use 'leina activate'.\n`);
-  activateFromArgs("install-global", rest);
 }
 
 // UNIFORM ERROR CONTRACT for init steps: every writer below is best-effort — a failing
@@ -460,26 +453,12 @@ function printInitReport(
   }
 }
 
-// Resolve the agent profile from --agent (back-compat alias) and --profile flags.
-// --profile wins over the --agent alias; default is devin. Invalid values `fail()`.
-function resolveInitProfile(
-  agentFlag: string | undefined,
-  profileFlag: string | undefined,
-): AgentProfile | undefined {
-  // --agent windsurf is removed; fail with a migration message.
-  if (agentFlag === "windsurf") {
-    fail(`--agent windsurf is no longer supported. Use --profile windsurf instead.`);
-  }
-  // --agent devin is a back-compat alias for --profile devin (no-op beyond that).
-  // Any other --agent value is rejected.
-  if (agentFlag !== undefined && agentFlag !== "devin") {
-    fail(`unknown --agent "${agentFlag}" (only "devin" is supported as a back-compat alias; use --profile instead)`);
-  }
-
-  // --profile wins over the --agent devin back-compat alias. NO silent default: a full init
-  // must name its AGENTS.md profile explicitly (required in writeInitArtifacts). undefined
-  // here means "not specified" — leina will not assume a vendor profile.
-  const rawProfile = profileFlag ?? (agentFlag === "devin" ? "devin" : undefined);
+// Resolve the AGENTS.md profile from --profile. Returns undefined when unspecified (a full
+// init then requires it — see writeInitArtifacts). Invalid values `fail()`.
+function resolveInitProfile(profileFlag: string | undefined): AgentProfile | undefined {
+  // No silent default: a full init must name its AGENTS.md profile explicitly (required in
+  // writeInitArtifacts). undefined here means "not specified" — leina won't assume a vendor.
+  const rawProfile = profileFlag;
   if (rawProfile === undefined) return undefined;
   if (rawProfile === "devin") return DEVIN_PROFILE;
   if (rawProfile === "windsurf") return WINDSURF_PROFILE;
@@ -524,8 +503,8 @@ function writeInitArtifacts(
     return "light";
   }
   // A full init writes AGENTS.md, which needs a profile. Vendor-neutral: require it
-  // explicitly (--profile devin|windsurf, or the --agent devin alias) rather than assume a
-  // default. This fail() also narrows `profile` to AgentProfile for writeAgentsMd below.
+  // explicitly (--profile devin|windsurf) rather than assume a default. This fail() also
+  // narrows `profile` to AgentProfile for writeAgentsMd below.
   if (profile === undefined) {
     fail(
       `init: --profile is required for a full init (it writes AGENTS.md) — expected: devin | windsurf.\n` +
@@ -550,11 +529,8 @@ function writeInitArtifacts(
 
 export async function handleInit(rest: string[]): Promise<void> {
   // leina init [<dir> | --project <dir>]
-  //   [--hosts devin,claude]           (which hosts to wire; default: persisted selection
-  //                                     from activate/tui, else auto-detection)
-  //   [--profile devin|windsurf]       (agent profile; default: devin)
-  //   [--agent devin]                  (back-compat alias for --profile devin; exit 0)
-  //   [--agent windsurf]               (removed — fails with migration message)
+  //   --hosts devin,claude             (which hosts to wire; required, or a persisted choice)
+  //   --profile devin|windsurf         (AGENTS.md profile; required for a full init)
   //   [--freshness auto|refuse]
   //   [--build]                        (opt-in: build graph synchronously in foreground)
   //   [--mcp]                          (opt-in: register `leina mcp` in the project .mcp.json)
@@ -573,7 +549,6 @@ export async function handleInit(rest: string[]): Promise<void> {
   const positional = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
   const project = resolvePath(optFlag(rest, "--project", undefined) ?? positional ?? ".");
 
-  const agentFlag   = optFlag(rest, "--agent", undefined);
   const profileFlag = optFlag(rest, "--profile", undefined);
   const freshness   = optFlag(rest, "--freshness", "auto");
   const nameArg     = optFlag(rest, "--name", undefined);
@@ -581,7 +556,7 @@ export async function handleInit(rest: string[]): Promise<void> {
   const doMcp       = hasFlag(rest, "--mcp");
   const doClaudeHooks = hasFlag(rest, "--claude-hooks");
 
-  const profile = resolveInitProfile(agentFlag, profileFlag);
+  const profile = resolveInitProfile(profileFlag);
   const hosts = resolveInitHosts(optFlag(rest, "--hosts", undefined));
 
   if (freshness !== "auto" && freshness !== "refuse") {
