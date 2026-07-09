@@ -1,358 +1,359 @@
-# Guía de uso — leina
+# Usage guide — leina
 
-> **¿Qué es leina?** Es una herramienta **de línea de comandos (CLI)** que le da a tus asistentes de IA (Devin, Claude Code, Cursor, VS Code, Codex, Gemini CLI, LM Studio y cualquier otro host compatible con MCP) **dos capacidades** que por defecto no tienen:
+> **What is leina?** It's a **command-line (CLI)** tool that gives your AI assistants (Devin, Claude Code, Cursor, VS Code, Codex, Gemini CLI, LM Studio, and any other MCP-capable host) **two capabilities** they don't have by default:
 >
-> - un **grafo de conocimiento** del código — saber qué depende de qué, qué se rompe si tocás algo, cómo se conectan las piezas;
-> - una **memoria persistente** del proyecto — decisiones, fixes, descubrimientos y contexto que sobreviven entre sesiones.
+> - a **knowledge graph** of the code — knowing what depends on what, what breaks if you touch something, how the pieces connect;
+> - a **persistent memory** of the project — decisions, fixes, discoveries and context that survive across sessions.
 >
-> Con leina instalado, la IA deja de re-leer el repo en cada conversación y empieza a razonar sobre la estructura y la historia real del proyecto, ejecutando comandos `leina` por su shell.
+> With leina installed, the AI stops re-reading the repo in every conversation and starts reasoning about the project's actual structure and history, running `leina` commands through its shell.
 
-> ℹ️ **leina ofrece una interfaz de línea de comandos.** Cada comando opera sobre un `<dir>` explícito. El camino de consulta arranca rápido (~0.15s) porque el stack pesado de extracción (tree-sitter + ts-morph) se carga solo en `build`/`refresh`.
+> ℹ️ **leina offers a command-line interface.** Each command operates on an explicit `<dir>`. The query path starts fast (~0.15s) because the heavy extraction stack (tree-sitter + ts-morph) only loads on `build`/`refresh`.
 
-La guía tiene **tres partes**:
+This guide has **three parts**:
 
-1. **Requisitos** — qué tiene que estar instalado en tu máquina antes de empezar.
-2. **Parte 1 — Setup** — un solo comando (`setup`) una vez por máquina; los repos se dan de alta solos cuando la IA te pregunta.
-3. **Parte 2 — Qué le podés pedir a la IA una vez instalado** — el catálogo de cosas que ahora sabe hacer, incluyendo SDD (Spec-Driven Development).
-4. **Parte 3 — Uso diario** — el flujo de una sesión típica: hooks automáticos, memoria + grafo + SDD en el día a día.
+1. **Requirements** — what needs to be installed on your machine before you start.
+2. **Part 1 — Setup** — a single command (`setup`) once per machine; repos get onboarded on their own when the AI asks you.
+3. **Part 2 — What you can ask the AI once it's installed** — the catalog of things it now knows how to do, including SDD (Spec-Driven Development).
+4. **Part 3 — Daily use** — the flow of a typical session: automatic hooks, memory + graph + SDD in day-to-day work.
 
-> 🧠 **¿Querés entender cómo funciona por dentro?** La guía conceptual en
-> [`docs/concepts/`](../concepts/README.md) explica la mecánica del grafo, la memoria, la
-> búsqueda, el *drift* y los hooks, con diagramas y analogías estilo storytelling. Esta guía es
-> el *cómo usarlo*; aquella es el *cómo funciona*.
+> 🧠 **Want to understand how it works under the hood?** The conceptual guide in
+> [`docs/concepts/`](../concepts/README.md) explains the mechanics of the graph, the memory,
+> search, *drift* and hooks, with diagrams and storytelling-style analogies. This guide is
+> the *how to use it*; that one is the *how it works*.
 
 ---
 
-## Requisitos
+## Requirements
 
-Estos los tenés que verificar **una sola vez** en tu máquina:
+You only need to verify these **once** on your machine:
 
-| Requisito | Para qué sirve | Cómo verificar |
+| Requirement | What it's for | How to check |
 |---|---|---|
-| **Node.js ≥ 22.13** | Es el motor sobre el que corre leina. Con Node 22/23 los comandos `memory` funcionan pero la búsqueda corre en modo degradado (LIKE, sin stemming ni BM25). **Se recomienda Node ≥ 24** para obtener búsqueda full-text completa (SQLite FTS5); el comando `leina doctor` indica si hay que actualizar. | `node --version` |
-| **Git** *(opcional)* | Solo si vas a correr leina desde un clon (contribuidores). Para el uso normal con `npm install -g` no hace falta. | `git --version` |
-| **Un host de IA** | La IA que consume leina. Dos formas de conectarla: **MCP** (universal — Claude Code, Cursor, Windsurf, VS Code, Codex, Gemini CLI, LM Studio, Zed, …) o los **hooks** de auto-inyección (solo Devin y Claude Code). Ver el paso 7 de [`getting-started`](../GETTING_STARTED.md#7-connect-it-to-your-ai). | según el host |
+| **Node.js ≥ 22.13** | The engine leina runs on. With Node 22/23 the `memory` commands work but search runs in degraded mode (LIKE, no stemming or BM25). **Node ≥ 24 is recommended** to get full full-text search (SQLite FTS5); the `leina doctor` command tells you if you need to upgrade. | `node --version` |
+| **Git** *(optional)* | Only if you'll run leina from a clone (contributors). Not needed for normal use with `npm install -g`. | `git --version` |
+| **An AI host** | The AI that consumes leina. Two ways to connect it: **MCP** (universal — Claude Code, Cursor, Windsurf, VS Code, Codex, Gemini CLI, LM Studio, Zed, …) or the auto-injection **hooks** (Devin and Claude Code only). See step 7 of [`getting-started`](../../GETTING_STARTED.md#7-connect-it-to-your-ai). | depends on the host |
 
-> 💡 Si usás un manejador de versiones de Node (`fnm`, `nvm`, `Volta`, `scoop`), no necesitás cambiar nada — leina corre como cualquier comando de tu PATH.
+> 💡 If you use a Node version manager (`fnm`, `nvm`, `Volta`, `scoop`), you don't need to change anything — leina runs like any other command on your PATH.
 
-Si te falta alguno, instalalo antes de seguir.
+If you're missing any of these, install it before continuing.
 
 ---
 
-## Parte 1 — Setup
+## Part 1 — Setup
 
-El setup es **un solo comando, una sola vez por máquina**. Después de eso no tenés que acordarte de nada por proyecto: cuando uses Devin o Claude Code en un repo, la propia IA te pregunta (vía el skill `leina-setup`) si querés usar leina ahí.
+Setup is **a single command, once per machine**. After that you don't have to remember anything per project: when you use Devin or Claude Code in a repo, the AI itself asks you (via the `leina-setup` skill) whether you want to use leina there.
 
-### El comando mágico (una sola vez por máquina)
+### The magic command (once per machine)
 
-**Opción recomendada — instalar el binario en tu PATH:**
+**Recommended option — install the binary on your PATH:**
 
 ```bash
 npm install -g @kolimar/leina
-leina tui                # consola interactiva: elegís "install" → assets + hosts + MCP, sin flags
+leina tui                # interactive console: pick "install" → assets + hosts + MCP, no flags
 ```
 
-`leina tui` es la forma más fácil: un menú te guía por qué assets instalar, en qué hosts de IA
-(Devin, Claude Code, Cursor, Windsurf), el modo blanket y el registro MCP. ¿Preferís un solo
-comando sin prompts? `leina setup --hosts devin,claude` hace la instalación recomendada de una
-(todos los assets + blanket; agregá `--mcp --mcp-hosts claude` para registrar el server MCP también).
+`leina tui` is the easiest path: a menu walks you through which assets to install, which AI hosts
+(Devin, Claude Code), blanket mode, and MCP registration. Prefer a single command with no prompts?
+`leina setup --hosts devin,claude` does the recommended install in one shot (all assets + blanket;
+add `--mcp --mcp-hosts claude` to register the MCP server too). `--hosts` is required — leina never
+picks a host for you.
 
-Con eso leina queda disponible en **cualquier** sesión de tu IA en la máquina. ¿Querés deshacerlo todo más adelante? Un comando:
+With that, leina becomes available in **any** AI session on the machine. Want to undo it all later? One command:
 
 ```bash
-leina disable            # revierte setup por completo (symlinks, config user-global, blanket)
+leina disable            # fully reverts setup (symlinks, user-global config, blanket)
 ```
 
-> **¿Contribuís a leina o querés correr lo último sin publicar?** Ese es el único motivo para
-> trabajar desde un clon en vez de la instalación global — el setup de desarrollo (`git clone`,
-> `npm install`, `npm run cli -- <cmd>`) vive en [`CONTRIBUTING.md`](../../CONTRIBUTING.md), no acá.
+> **Contributing to leina or running the latest unpublished code?** That's the only reason to work
+> from a clone instead of the global install — the dev setup (`git clone`, `npm install`,
+> `npm run cli -- <cmd>`) lives in [`CONTRIBUTING.md`](../../../CONTRIBUTING.md), not here.
 
-**Verificar que quedó bien:**
+**Verify it worked:**
 
 ```bash
-leina --help     # lista setup/disable, activate/deactivate, init/deinit, build, query, memory, doctor, ...
-leina doctor     # diagnostica versión de Node, share global y symlinks
+leina --help     # lists setup/disable, activate/deactivate, init/deinit, build, query, memory, doctor, ...
+leina doctor     # diagnoses Node version, global share and symlinks
 ```
 
-> **¿Querés las piezas por separado en vez del comando mágico?** `setup` compone dos cosas, y cada una tiene su inverso: `activate --hosts devin,claude` ⟷ `deactivate` (share + symlinks + config user-global, **sin** encender blanket).
+> **Want the pieces separately instead of the magic command?** `setup` composes two things, and each has its inverse: `activate` ⟷ `deactivate` (share + symlinks + user-global config, **without** turning on blanket).
 
-### Por proyecto: no hay nada que recordar
+### Per project: nothing to remember
 
-Con el modo blanket encendido, **no necesitás inicializar cada repo a mano**. La primera vez que uses Devin en un repo, el skill `leina-setup` te pregunta una vez:
+With blanket mode on, **you don't need to initialize each repo by hand**. The first time you use Devin in a repo, the `leina-setup` skill asks you once:
 
-> *"leina está disponible, ¿lo usás en este workspace?"*
+> *"leina is available — do you want to use it in this workspace?"*
 
-- Si decís **que sí**, corre `init` (deja un flag local `enabled`) y a partir de ahí leina actúa: el grafo se construye solo la primera vez que lo consultás, la memoria queda disponible y los hooks inyectan contexto.
-- Si decís **que no**, corre `deinit` (flag `disabled`) y no vuelve a molestarte en ese repo.
+- If you say **yes**, it runs `init` (leaves a local `enabled` flag) and from then on leina acts: the graph builds itself the first time you query it, memory becomes available, and hooks inject context.
+- If you say **no**, it runs `deinit` (`disabled` flag) and won't bother you again in that repo.
 
-El consentimiento es **tri-estado** y vive local (git-ignored, en `.leina/consent`): `unknown` → te pregunta una vez · `enabled` → activo · `disabled` → silencio total. leina **nunca** se pone a construir un grafo en un repo que no aceptaste.
+Consent is **tri-state** and lives locally (git-ignored, in `.leina/consent`): `unknown` → asks once · `enabled` → active · `disabled` → total silence. leina **never** starts building a graph in a repo you haven't accepted.
 
-Si lo querés hacer a mano:
+If you want to do it by hand:
 
 ```bash
-leina init <dir>          # adaptativo (ver abajo)
-leina init <dir> --build  # además construye el grafo ahora, en foreground
-leina deinit <dir>        # saca este repo (consent=disabled) y revierte el wiring
+leina init <dir>          # adaptive (see below)
+leina init <dir> --build  # also builds the graph now, in foreground
+leina deinit <dir>        # removes this repo (consent=disabled) and reverts the wiring
 ```
 
-**`init` es adaptativo** — escribe solo lo necesario según si blanket está encendido:
+**`init` is adaptive** — it writes only what's needed depending on whether blanket is on:
 
-- **Con blanket** (lo normal tras `setup`): solo el flag `enabled` + el bloque en `.gitignore`. No escribe `AGENTS.md` ni `.devin/*` porque el share/grant/hooks globales ya cubren el repo. En este modo `init` no necesita `--hosts` ni `--profile`.
-- **Standalone** (sin `setup`, querés leina solo en este repo sin tocar la máquina): requiere `--hosts devin,claude` y `--profile devin|windsurf`. Además escribe `AGENTS.md` (protocolo), `.devin/hooks.v1.json` y un grant `Exec(leina)` **local** en `.devin/config.json` — por ejemplo `leina init <dir> --hosts claude --profile devin`. El repo queda autosuficiente y **nunca** se toca el config user-global.
+- **With blanket** (the normal case after `setup`): just the `enabled` flag + the block in `.gitignore`. It doesn't write `AGENTS.md` or `.devin/*` because the global share/grant/hooks already cover the repo — no flags needed.
+- **Standalone** (without `setup`, when you want leina only in this repo without touching the machine): a FULL init, which **requires `--hosts <devin|claude>` and `--profile <devin|windsurf>`** (e.g. `leina init <dir> --hosts devin --profile devin`). It also writes `AGENTS.md` (protocol), `.devin/hooks.v1.json` and a **local** `Exec(leina)` grant in `.devin/config.json`. The repo becomes self-sufficient and the user-global config is **never** touched.
 
-**Probar:**
+**Try it:**
 
-> "Usando leina, dame el blast radius de `<una función o clase del proyecto>` y mostrame qué memoria tiene cargada."
+> "Using leina, give me the blast radius of `<a function or class in the project>` and show me what memory it has loaded."
 
-Si responde con resultados reales del proyecto → **leina está andando**.
+If it responds with real results from the project → **leina is working**.
 
-#### Otros proyectos
+#### Other projects
 
-No hay que repetir nada: con blanket, cada repo nuevo te lo ofrece la IA la primera vez. El comando mágico ya está hecho de por vida.
+You don't have to repeat anything: with blanket, the AI offers it the first time on every new repo. The magic command is done for life.
 
 ---
 
-## Parte 2 — Qué le podés pedir a la IA una vez instalado
+## Part 2 — What you can ask the AI once it's installed
 
-Con leina activo, tu IA (Devin) gana capacidades nuevas que ejecuta como comandos `leina`. Acá está el catálogo.
+With leina active, your AI (Devin) gains new capabilities that it executes as `leina` commands. Here's the catalog.
 
-> 💡 **Tip de subagentes en SDD.** Los hosts con subagentes (Devin, Claude Code) pueden delegar cada fase de SDD a un subagente dedicado con su propio contexto limpio. Para cambios serios (features, refactors, migraciones) eso mejora la calidad: el orquestador integra resultados sin "ensuciarse" con los detalles intermedios.
+> 💡 **Subagent tip for SDD.** Hosts with subagents (Devin, Claude Code) can delegate each SDD phase to a dedicated subagent with its own clean context. For serious changes (features, refactors, migrations) this improves quality: the orchestrator integrates results without "getting dirty" with intermediate details.
 
-### 2.1 — Entender el código sin grepearlo
+### 2.1 — Understanding the code without grepping it
 
-**"¿Qué se rompería si cambio esta función / clase / módulo?"** — La IA usa el grafo (`leina affected`) para calcular el _blast radius_ real: todo lo que depende de ese símbolo, directa o indirectamente. Es lo primero que querés preguntar **antes de renombrar o refactorizar**.
+**"What would break if I change this function / class / module?"** — The AI uses the graph (`leina affected`) to compute the real _blast radius_: everything that depends on that symbol, directly or indirectly. It's the first thing you want to ask **before renaming or refactoring**.
 
-**"¿Cómo se conectan estos dos módulos?"** — Camino más corto entre dos piezas del código (`leina path`), útil para flujos que cruzan muchas capas.
+**"How do these two modules connect?"** — Shortest path between two pieces of code (`leina path`), useful for flows that cross many layers.
 
-**"¿Dónde se usa este símbolo? / ¿Quién llama a esta función?"** — Respuestas basadas en el grafo, no en `grep`: no pierde llamadas dinámicas ni se confunde con falsos positivos.
+**"Where is this symbol used? / Who calls this function?"** — Answers based on the graph, not on `grep`: it doesn't miss dynamic calls or get confused by false positives.
 
-**"Explicame qué hace este módulo y con qué interactúa."** — Combina lectura del archivo con la vista estructural del grafo (`leina query`).
+**"Explain what this module does and what it interacts with."** — Combines file reading with the graph's structural view (`leina query`).
 
-### 2.2 — Memoria del proyecto entre sesiones
+### 2.2 — Project memory across sessions
 
-**"¿Qué decidimos sobre <X> la última vez?"** — La IA consulta la memoria persistente (`leina memory search`) y trae decisiones, bugfixes y descubrimientos guardados.
+**"What did we decide about <X> last time?"** — The AI queries persistent memory (`leina memory search`) and brings back saved decisions, bugfixes and discoveries.
 
-**"Guardá esta decisión / este descubrimiento para futuras sesiones."** — La IA persiste algo importante (`leina memory save`). Queda disponible para vos y para cualquiera que abra el proyecto en el futuro.
+**"Save this decision / this discovery for future sessions."** — The AI persists something important (`leina memory save`). It becomes available to you and to anyone who opens the project in the future.
 
-**"Recordame en qué estábamos trabajando."** — Al empezar una sesión, la IA recupera el contexto reciente (`leina memory context`): qué se tocó, qué se decidió, qué quedó pendiente.
+**"Remind me what we were working on."** — At the start of a session, the AI retrieves recent context (`leina memory context`): what was touched, what was decided, what's still pending.
 
-**"¿Esta nota sigue siendo válida con el código actual?"** — `leina memory verified` reclasifica cada resultado contra el grafo vivo: **USABLE**, **WARNING** (el código anclado cambió — stale) o **DO-NOT-USE** (una afirmación que el código ahora contradice).
+**"Is this note still valid against the current code?"** — `leina memory verified` reclassifies each result against the live graph: **USABLE**, **WARNING** (the anchored code changed — stale) or **DO-NOT-USE** (a claim that the code now contradicts).
 
-### 2.3 — Spec-Driven Development (SDD) con `leina-sdd`
+### 2.3 — Spec-Driven Development (SDD) with `leina-sdd`
 
-Para cambios importantes — features nuevas, refactors grandes, migraciones — podés invocar el flujo **SDD**:
+For significant changes — new features, large refactors, migrations — you can invoke the **SDD** flow:
 
-> **"Aplicá leina-sdd para <descripción del cambio>."**
+> **"Apply leina-sdd for <description of the change>."**
 
-#### ¿Qué es SDD?
+#### What is SDD?
 
-**Spec-Driven Development** es una forma estructurada de encarar un cambio no trivial. En vez de tirarse a codear directamente, el cambio pasa por **ocho fases** ordenadas:
+**Spec-Driven Development** is a structured way to approach a non-trivial change. Instead of jumping straight into coding, the change goes through **eight ordered phases**:
 
-| Fase | Qué se hace |
+| Phase | What happens |
 |---|---|
-| **1. Explore** | Investigar la zona del código, opciones técnicas, restricciones. |
-| **2. Propose** | Escribir una propuesta corta: intención, alcance, enfoque. |
-| **3. Spec** | Definir los requerimientos y escenarios formales del cambio. |
-| **4. Design** | Decidir la arquitectura y el enfoque técnico. |
-| **5. Tasks** | Romper el trabajo en una lista ordenada de tareas concretas. |
-| **6. Apply** | Implementar las tareas en código. |
-| **7. Verify** | Validar que el resultado cumple la spec y el diseño. |
-| **8. Archive** | Cerrar el cambio: fusionar specs, dejar todo persistido. |
+| **1. Explore** | Investigate the area of the code, technical options, constraints. |
+| **2. Propose** | Write a short proposal: intent, scope, approach. |
+| **3. Spec** | Define the formal requirements and scenarios for the change. |
+| **4. Design** | Decide the architecture and technical approach. |
+| **5. Tasks** | Break the work down into an ordered list of concrete tasks. |
+| **6. Apply** | Implement the tasks in code. |
+| **7. Verify** | Validate that the result meets the spec and the design. |
+| **8. Archive** | Close the change: merge specs, leave everything persisted. |
 
-#### ¿Por qué usarlo?
+#### Why use it?
 
-- **No te saltás pasos**: la IA no empieza a codear sin antes entender qué hay que hacer y por qué.
-- **Todo queda documentado** en la memoria del proyecto bajo claves estables (`sdd/<nombre-del-cambio>/<fase>`). Si alguien retoma el cambio mañana, todo el razonamiento está ahí.
-- **Decisiones de diseño antes que código**: errores de arquitectura se atrapan en Design, no después de implementar todo. En Design y Tasks, el alcance se mide contra el grafo (`leina affected`) para no adivinar dependencias.
-- **Verificación contra la spec**: al final hay un check formal de que lo implementado cumple lo pedido.
-- **Reanudable**: si te interrumpen a mitad de fase, podés volver mañana y la IA retoma desde donde dejaste.
+- **You don't skip steps**: the AI doesn't start coding before understanding what needs to be done and why.
+- **Everything stays documented** in the project's memory under stable keys (`sdd/<change-name>/<phase>`). If someone picks up the change tomorrow, all the reasoning is right there.
+- **Design decisions before code**: architecture mistakes get caught in Design, not after everything has been implemented. In Design and Tasks, scope is measured against the graph (`leina affected`) so dependencies aren't guessed at.
+- **Verification against the spec**: at the end there's a formal check that what was implemented meets what was requested.
+- **Resumable**: if you get interrupted mid-phase, you can come back tomorrow and the AI picks up where you left off.
 
-#### ¿Cuándo usarlo?
+#### When to use it?
 
-- **Sí**: features nuevas, refactors de arquitectura, migraciones, cambios que tocan varios módulos.
-- **No**: fixes triviales, cambios cosméticos, ajustes de un solo archivo. Para esos, una conversación normal con la IA alcanza.
+- **Yes**: new features, architecture refactors, migrations, changes that touch several modules.
+- **No**: trivial fixes, cosmetic changes, single-file tweaks. For those, a normal conversation with the AI is enough.
 
-### 2.4 — Trabajar con la salud del grafo
+### 2.4 — Working with graph health
 
-**"¿Está actualizado el grafo del proyecto?"** — `leina status`. Si está desactualizado, las consultas lo reconstruyen solas (modo `auto`, por defecto) o te avisan para refrescarlo explícitamente (modo `refuse`, recomendado en CI).
+**"Is the project's graph up to date?"** — `leina status`. If it's outdated, queries rebuild it on their own (`auto` mode, the default) or notify you to refresh it explicitly (`refuse` mode, recommended in CI).
 
-**"Reconstruí el grafo."** — `leina refresh` regenera el grafo desde cero tras cambios grandes.
+**"Rebuild the graph."** — `leina refresh` regenerates the graph from scratch after major changes.
 
 ---
 
-## Parte 3 — Uso diario
+## Part 3 — Daily use
 
-Una vez instalado, el uso diario es sobre todo **no hacer nada**: los hooks trabajan solos y
-vos hablás con la IA como siempre. Esta parte cubre el flujo de una sesión típica y los
-hábitos que hacen que el sistema rinda de verdad.
+Once installed, daily use is mostly about **doing nothing**: the hooks work on their own and
+you talk to the AI as usual. This part covers the flow of a typical session and the
+habits that make the system truly pay off.
 
-### El flujo de una sesión
+### The flow of a session
 
-**Al arrancar** no tenés que preparar nada **en Devin y Claude Code**: ahí el hook de
-`SessionStart` ya hizo dos cosas por vos (solo en repos con consentimiento `enabled`):
+**At startup**, **on Devin and Claude Code** you don't have to prepare anything: there the
+`SessionStart` hook has already done two things for you (only in repos with `enabled` consent):
 
-- **inyectó contexto**: la IA arranca sabiendo las decisiones y sesiones recientes del
-  proyecto (el equivalente de `leina memory context`) y el estado del grafo;
-- **auto-reparó el grafo**: si no existía o estaba desactualizado, disparó un build en
-  segundo plano — la próxima consulta ya lo encuentra fresco.
+- **injected context**: the AI starts out knowing the project's recent decisions and sessions
+  (the equivalent of `leina memory context`) and the graph's status;
+- **auto-repaired the graph**: if it didn't exist or was outdated, it triggered a build in the
+  background — the next query already finds it fresh.
 
-> **En los demás hosts (vía MCP)** no hay hooks, así que la inyección automática no ocurre —
-> pero el efecto es el mismo pidiéndolo: la IA llama las tools `memory_context` / `graph_status`
-> on-demand. En cualquier host, forzás el repaso con: _"¿qué sabemos ya de este proyecto? ¿En qué
-> quedamos la última vez?"_ — eso se traduce en `memory context` + `memory verified`.
+> **On every other host (via MCP)** there are no hooks, so auto-injection doesn't happen — but you
+> get the same effect by asking: the AI calls the `memory_context` / `graph_status` tools on demand.
+> On any host, force the recap with: _"What do we already know about this project? Where did we
+> leave off last time?"_ — that translates into `memory context` + `memory verified`.
 
-**Durante la sesión**, los dos hábitos que más pagan:
+**During the session**, the two habits that pay off the most:
 
-1. **Preguntá antes de tocar.** _"¿Qué se rompe si cambio la firma de `PaymentService`?"_
-   (→ `affected`), _"¿cómo llega el CLI a la base de datos?"_ (→ `path`), _"¿qué partes del
-   código hablan de reintentos?"_ (→ `query`). Son consultas de milisegundos contra el grafo,
-   no re-lecturas del repo — usalas sin culpa, todo el tiempo.
-2. **Guardá el porqué apenas lo descubras.** Cuando la IA (o vos) encuentra la causa raíz de
-   un bug o toma una decisión de diseño, pedile: _"guardá esto en memoria, anclado a
-   `<símbolo>`"_. El anclaje es lo que después permite que `memory verified` te avise si el
-   código cambió por debajo de esa decisión.
+1. **Ask before touching.** _"What breaks if I change the signature of `PaymentService`?"_
+   (→ `affected`), _"how does the CLI reach the database?"_ (→ `path`), _"which parts of the
+   code deal with retries?"_ (→ `query`). These are millisecond queries against the graph,
+   not re-reads of the repo — use them freely, all the time.
+2. **Save the why as soon as you discover it.** When the AI (or you) finds the root cause of
+   a bug or makes a design decision, ask it: _"save this to memory, anchored to
+   `<symbol>`"_. The anchor is what later lets `memory verified` warn you if the
+   code changed underneath that decision.
 
-**Para cambios grandes**, invocá el flujo SDD: _"encaremos esto con SDD"_. La IA orquesta
-explore → propose → spec → design → tasks → apply → verify, y en las fases de diseño y
-tareas **mide el impacto real con `leina affected`** antes de decidir. Los artefactos de
-cada fase quedan en memoria, así que podés cortar y retomar en otra sesión sin perder nada.
+**For large changes**, invoke the SDD flow: _"let's approach this with SDD"_. The AI orchestrates
+explore → propose → spec → design → tasks → apply → verify, and in the design and
+tasks phases it **measures the real impact with `leina affected`** before deciding. The artifacts of
+each phase stay in memory, so you can pause and resume in another session without losing anything.
 
-**Al cerrar**, si la sesión tuvo sustancia, pedí un resumen: _"cerrá la sesión y guardá un
-resumen de lo que hicimos"_ (→ `memory session`). Es lo que la próxima sesión va a leer al
-arrancar.
+**When wrapping up**, if the session had substance, ask for a summary: _"close the session and save a
+summary of what we did"_ (→ `memory session`). That's what the next session will read at
+startup.
 
-### Qué hacen los hooks sin que se lo pidas (Devin y Claude Code)
+### What the hooks do without being asked (Devin and Claude Code)
 
-> Los hooks son la integración de **Devin y Claude Code** — los dos hosts con un mecanismo de
-> hooks. En el resto de los hosts leina se conecta por **MCP**: las mismas capacidades como tools,
-> que la IA llama on-demand (sin auto-inyección). Ver el paso 7 de
-> [`getting-started`](../GETTING_STARTED.md#7-connect-it-to-your-ai).
+> Hooks are the **Devin and Claude Code** integration — the two hosts with a hooks mechanism. On
+> every other host leina connects over **MCP**: the same capabilities as tools, which the AI calls
+> on demand (no auto-injection). See step 7 of
+> [`getting-started`](../../GETTING_STARTED.md#7-connect-it-to-your-ai).
 
-| Momento | Qué pasa |
+| Moment | What happens |
 |---|---|
-| `SessionStart` | Inyecta memoria reciente + stats del grafo; auto-build en background si el grafo falta o está stale. |
-| Durante la sesión | Advisories no bloqueantes: nudges de frescura, sugerencias de memoria relevante. |
-| Siempre | Todo es **advisory y fail-open**: un hook jamás bloquea tu trabajo, y en repos sin opt-in (`unknown`/`disabled`) es un no-op silencioso. |
+| `SessionStart` | Injects recent memory + graph stats; auto-build in background if the graph is missing or stale. |
+| During the session | Non-blocking advisories: freshness nudges, relevant memory suggestions. |
+| Always | Everything is **advisory and fail-open**: a hook never blocks your work, and in repos without opt-in (`unknown`/`disabled`) it's a silent no-op. |
 
-Desactivables: `LEINA_DISABLE_AUTOBUILD=1` apaga el auto-build; `leina deinit` apaga
-todo para un repo; `leina disable` para toda la máquina.
+Can be disabled: `LEINA_DISABLE_AUTOBUILD=1` turns off auto-build; `leina deinit` turns
+everything off for a repo; `leina disable` for the whole machine.
 
-### Credenciales para skills que llaman servicios
+### Credentials for skills that call services
 
-Cuando una tarea necesita llamar una API autenticada (SonarQube, Jira, una API interna), la
-credencial se maneja bajo el contrato **names-not-values**: la IA solo conoce el *nombre* de
-la variable, nunca el valor. El flujo:
+When a task needs to call an authenticated API (SonarQube, Jira, an internal API), the
+credential is handled under the **names-not-values** contract: the AI only knows the *name* of
+the variable, never the value. The flow:
 
-1. **Vos, una sola vez**: `leina env set SONAR_TOKEN` (prompt oculto — no queda en la
-   historia del shell ni en la conversación). También desde `leina tui` → "env vars".
-2. **La IA, cada vez**: verifica que el nombre exista (`leina env list` muestra
-   `SONAR_TOKEN=squ****`, enmascarado) y lo consume por inyección de proceso:
+1. **You, once**: `leina env set SONAR_TOKEN` (hidden prompt — it doesn't stay in the
+   shell history or in the conversation). Also available from `leina tui` → "env vars".
+2. **The AI, every time**: verifies that the name exists (`leina env list` shows
+   `SONAR_TOKEN=squ****`, masked) and consumes it via process injection:
    `leina env exec --only SONAR_TOKEN -- sh -c 'curl -u "$SONAR_TOKEN:" https://sonar.../api/...'`
-   — las comillas simples hacen que el valor se expanda en el proceso hijo, nunca en el
-   contexto del modelo.
+   — the single quotes make the value expand in the child process, never in the
+   model's context.
 
-Si la IA alguna vez te pide que pegues un token en el chat, negate: el patrón correcto es
-que te pida correr `leina env set`. La skill incluida `authenticated-api` le enseña este
-contrato completo, incluyendo POST con token en el header y las variantes más estrictas.
+If the AI ever asks you to paste a token into the chat, refuse: the correct pattern is
+for it to ask you to run `leina env set`. The included `authenticated-api` skill teaches it this
+full contract, including POST requests with a token in the header and the stricter variants.
 
-### Herramientas visuales para vos (no para la IA)
+### Visual tools for you (not for the AI)
 
-- `leina visualize <dir>` — exporta un **archivo HTML** estático, offline y autocontenido del grafo
-  (búsqueda, filtros, comunidades). Como es un archivo, lo compartís/commiteás y lo abrís cuando
-  quieras. Ideal para onboarding: _ver_ la arquitectura real, no la del diagrama viejo de la wiki.
-- `leina graph serve <dir>` — **no es lo mismo**: levanta un **server local en vivo** (read-only,
-  `:7423`, Ctrl+C para cortar) con lo que un archivo estático no puede tener — un **selector
-  multi-proyecto** y la **memoria anclada** de cada nodo (con badge de drift). Usalo para explorar en
-  vivo o inspeccionar memoria; `visualize` para compartir un snapshot.
-- `leina audit <dir> --format html` — rutas candidatas source→sink para triage de
-  seguridad.
-- En monorepos / carpetas con varios repos: `leina workspace visualize` muestra la
-  constelación de repos y sus dependencias cruzadas.
+- `leina visualize <dir>` — exports a static, offline, self-contained **HTML file** of the graph
+  (search, filters, communities). Being a file, you can share/commit it and open it whenever. Ideal
+  for onboarding: _seeing_ the real architecture, not the old wiki diagram.
+- `leina graph serve <dir>` — **not the same thing**: it starts a **live local server** (read-only,
+  `:7423`, Ctrl+C to stop) with what a static file can't have — a **multi-project selector** and each
+  node's **anchored memory** (drift-badged). Use it to browse live or inspect memory; use `visualize`
+  to share a snapshot.
+- `leina audit <dir> --format html` — candidate source→sink paths for security
+  triage.
+- In monorepos / folders with several repos: `leina workspace visualize` shows the
+  constellation of repos and their cross-dependencies.
 
 ---
 
-## Apéndice — Referencia técnica
+## Appendix — Technical reference
 
-> Esta sección es para usuarios más técnicos o para troubleshooting. En el uso normal con la IA no la necesitás.
+> This section is for more technical users or for troubleshooting. You don't need it for normal use with the AI.
 
-### A.1 — Comandos de la CLI
+### A.1 — CLI commands
 
-| Comando | Para qué |
+| Command | What it's for |
 |---|---|
-| `leina setup --hosts devin,claude` | **Comando mágico** (una vez por máquina): activate + enciende blanket. |
-| `leina disable` | Revierte `setup` por completo (symlinks, config user-global, blanket). |
-| `leina activate --hosts devin,claude` / `deactivate` | Pieza global de `setup` (share/symlinks/config user-global) y su inverso. |
-| `leina init <dir>` | Da de alta el repo (consent `enabled`). Adaptativo: LIGHT con blanket, FULL standalone. `--build` construye el grafo ahora. |
-| `leina deinit <dir>` | Saca el repo (consent `disabled`) y revierte el wiring (strip-inverso). |
-| `leina build <dir>` | Construye / re-construye el grafo del proyecto. |
-| `leina refresh <dir>` | Fuerza un rebuild completo del grafo. |
-| `leina status <dir>` | Indica si el grafo está al día. |
-| `leina stats <dir>` | Cuenta nodos y aristas del grafo. |
-| `leina affected <dir> <símbolo>` | Blast radius de un símbolo (auto-rebuild si está stale). |
-| `leina path <dir> <de> <a>` | Camino más corto entre dos símbolos. |
-| `leina query <dir> "<pregunta>"` | Subgrafo relevante a una pregunta. |
-| `leina impact analyze <dir> <símbolo>` | Impacto que cruza código→tests→configs→servicios. |
-| `leina visualize <dir>` | Exporta un visor HTML interactivo y offline del grafo. |
-| `leina memory <dir> <sub>` | Memoria global (`save`/`update`/`search`/`verified`/`get`/`context`/`session`/`session-start`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`). |
+| `leina setup --hosts <devin\|claude>` | **Magic command** (once per machine): activate + turns on blanket. `--hosts` required. |
+| `leina disable` | Fully reverts `setup` (symlinks, user-global config, blanket). |
+| `leina activate` / `deactivate` | Global piece of `setup` (share/symlinks/user-global config, `--hosts` required) and its inverse. |
+| `leina init <dir>` | Onboards the repo (consent `enabled`). Adaptive: LIGHT with blanket, FULL standalone (`--hosts` + `--profile <devin\|windsurf>`). `--build` builds the graph now. |
+| `leina deinit <dir>` | Removes the repo (consent `disabled`) and reverts the wiring (reverse-strip). |
+| `leina build <dir>` | Builds / rebuilds the project's graph. |
+| `leina refresh <dir>` | Forces a full rebuild of the graph. |
+| `leina status <dir>` | Indicates whether the graph is up to date. |
+| `leina stats <dir>` | Counts nodes and edges of the graph. |
+| `leina affected <dir> <symbol>` | Blast radius of a symbol (auto-rebuild if stale). |
+| `leina path <dir> <from> <to>` | Shortest path between two symbols. |
+| `leina query <dir> "<question>"` | Relevant subgraph for a question. |
+| `leina impact analyze <dir> <symbol>` | Impact crossing code→tests→configs→services. |
+| `leina visualize <dir>` | Exports an interactive, offline HTML viewer of the graph. |
+| `leina memory <dir> <sub>` | Local memory (`add`/`update`/`search`/`verified`/`get`/`context`/`session`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`). |
 | `leina workspace <sub> [dir]` | Multi-repo: `build`/`status`/`detect`/`memory context\|search`/`visualize`. |
-| `leina audit [dir]` | Rutas candidatas source→sink + findings (`--format md\|json\|html`). |
-| `leina env <sub>` | Credenciales para skills (names-not-values): `set`/`list`/`get`/`unset`/`exec`. |
-| `leina sidecar <sub>` | Sidecars C#/Java de precisión compilador: `build`/`status`/`clean`/`verify`. |
-| `leina doctor [<dir>]` | Diagnóstico de salud (Node, share, symlinks, proyecto). Read-only. |
-| `leina repair [<dir>]` | Rearregla lo que `doctor` encontró roto (solo sobre instalaciones previas). |
-| `leina verify [<dir>]` | Mismos checks que `doctor` con exit code accionable (gate de CI). |
-| `leina tui` | Consola interactiva: instalar/actualizar, init/deinit, estado, repair, env. |
-| `leina events tail [dir]` | Outbox local de eventos (apagado salvo `LEINA_EVENTS_PERSIST=1`). |
-| `leina capabilities list` | Las 17 capacidades transport-agnósticas con sus schemas. |
+| `leina audit [dir]` | Candidate source→sink paths + findings (`--format md\|json\|html`). |
+| `leina env <sub>` | Credentials for skills (names-not-values): `set`/`list`/`get`/`unset`/`exec`. |
+| `leina sidecar <sub>` | Compiler-precision C#/Java sidecars: `build`/`status`/`clean`/`verify`. |
+| `leina doctor [<dir>]` | Health diagnostics (Node, share, symlinks, project). Read-only. |
+| `leina repair [<dir>]` | Fixes what `doctor` found broken (only on previous installations). |
+| `leina verify [<dir>]` | Same checks as `doctor` with an actionable exit code (CI gate). |
+| `leina tui` | Interactive console: install/update, init/deinit, status, repair, env. |
+| `leina events tail [dir]` | Local event outbox (off unless `LEINA_EVENTS_PERSIST=1`). |
+| `leina capabilities list` | The 17 transport-agnostic capabilities with their schemas. |
 
-`memory save`/`update`/`get` aceptan `--batch` (array JSON por stdin; `--atomic` en save/update).
+`memory save`/`update`/`get` accept `--batch` (JSON array via stdin; `--atomic` on add/update).
 
 ### A.2 — Troubleshooting
 
-Si algo no anda — comando no encontrado, "No graph at ...", grafo stale, tests fallando — la receta es siempre la misma:
+If something isn't working — command not found, "No graph at ...", stale graph, failing tests — the recipe is always the same:
 
-1. Posicionate en la **raíz del repositorio de leina** (donde clonaste/instalaste la herramienta).
-2. Abrí tu IA ahí mismo y **contale el problema con el mensaje de error exacto**.
+1. Position yourself at the **root of the leina repository** (where you cloned/installed the tool).
+2. Open your AI right there and **tell it the problem with the exact error message**.
 
-Con la herramienta apuntando a su propio repo, la IA tiene a mano el código, las skills y la memoria del proyecto, así que en la gran mayoría de los casos diagnostica y soluciona sola (versión de Node, binario fuera del PATH, proyecto sin `build`, posture `refuse`, etc.).
+With the tool pointed at its own repo, the AI has the code, the skills and the project's memory at hand, so in the vast majority of cases it diagnoses and fixes it on its own (Node version, binary not on PATH, project without a `build`, `refuse` posture, etc.).
 
-Atajos a mano:
+Quick fixes at hand:
 
-- `command not found: leina` → no está en el PATH; reinstalá con `npm install -g @kolimar/leina` o usá `npm run cli -- <cmd>` desde el clon.
-- `No graph at <...>` → no corriste `leina build <dir>` para ese proyecto.
-- `Graph is stale (...) posture "refuse"` → corré `leina refresh <dir>`.
+- `command not found: leina` → not on the PATH; reinstall with `npm install -g @kolimar/leina` or use `npm run cli -- <cmd>` from the clone.
+- `No graph at <...>` → you haven't run `leina build <dir>` for that project.
+- `Graph is stale (...) posture "refuse"` → run `leina refresh <dir>`.
 
 #### Windows + Git Bash — `Cannot find module '...\dist\cli\index.js'`
 
-Síntoma típico en Windows cuando se ejecuta el comando **desde Git Bash**: tras un `npm i -g` correcto, `leina` muere con un `MODULE_NOT_FOUND` apuntando a una ruta con la raíz de Git prependida, por ejemplo:
+Typical symptom on Windows when the command is run **from Git Bash**: after a correct `npm i -g`, `leina` dies with a `MODULE_NOT_FOUND` pointing to a path with the Git root prepended, for example:
 
 ```
 Error: Cannot find module 'C:\Program Files\Git\Users\<user>\AppData\Roaming\npm\node_modules\leina\dist\cli\index.js'
 ```
 
-**No es un problema del paquete** (`leina doctor` lo confirma con el check _CLI entrypoint_). Es que el shim POSIX que genera npm resuelve mal su propio `$0` bajo MSYS/Git Bash y MSYS lo expande anteponiendo `C:\Program Files\Git`. Soluciones (cualquiera sirve):
+**This is not a package problem** (`leina doctor` confirms this with the _CLI entrypoint_ check). It's that the POSIX shim npm generates resolves its own `$0` incorrectly under MSYS/Git Bash, and MSYS expands it by prepending `C:\Program Files\Git`. Solutions (any of them works):
 
-1. **Ejecutar desde cmd.exe o PowerShell** (no Git Bash). Ahí npm usa los shims `.cmd`/`.ps1`, que resuelven la ruta bien:
+1. **Run it from cmd.exe or PowerShell** (not Git Bash). There, npm uses the `.cmd`/`.ps1` shims, which resolve the path correctly:
    ```cmd
    leina --help
    ```
-2. **Llamar a node directo** sobre el archivo instalado (saltea el shim por completo):
+2. **Call node directly** on the installed file (skips the shim entirely):
    ```cmd
    node "%APPDATA%\npm\node_modules\leina\dist\cli\index.js" --help
    ```
-3. **Wrapper en `~/.bashrc`** si querés seguir en Git Bash:
+3. **Wrapper in `~/.bashrc`** if you want to keep using Git Bash:
    ```bash
    leina() { node "$APPDATA/npm/node_modules/leina/dist/cli/index.js" "$@"; }
    ```
 
-> Los comandos de ciclo de vida (`leina setup`/`activate`/`init`) detectan Git Bash en Windows y `leina doctor` agrega un check _shell interop_ (warn) que reimprime esta misma receta con la ruta exacta de tu instalación. (El paquete no usa `postinstall` a propósito: pnpm y bun omiten los scripts de dependencias por defecto.)
+> Lifecycle commands (`leina setup`/`activate`/`init`) detect Git Bash on Windows, and `leina doctor` adds a _shell interop_ check (warn) that reprints this same recipe with the exact path of your installation. (The package intentionally doesn't use `postinstall`: pnpm and bun skip dependency scripts by default.)
 
-### A.3 — Cómo fluye la información (mental model corto)
+### A.3 — How information flows (short mental model)
 
-- **El grafo** se construye **localmente** y vive en `<tu-proyecto>/.leina/graph.db`. Es un índice estructural del código (qué llama a qué, qué importa a qué, qué hereda de qué). Cuando le preguntás a la IA _"¿qué se rompe si toco esto?"_, no está releyendo el repo: corre `leina affected`, que consulta ese grafo. Se reconstruye solo cuando detecta que los fuentes cambiaron.
-- **La memoria** vive en una DB **global**, en `~/.leina/memory.db` (respeta `$LEINA_HOME`), particionada por una clave de proyecto derivada — o sea, es compartida entre todos tus repos, no por-proyecto. Ahí se guardan decisiones, bugfixes, descubrimientos y los artefactos de SDD. La IA escribe con `leina memory save` y lee con `leina memory context`/`search`/`verified`.
-- **No hay puente intermedio**: la IA corre el binario `leina` por su shell, recibe la respuesta acotada (un subgrafo o un puñado de observaciones) y deja de grepear el repo entero.
+- **The graph** is built **locally** and lives at `<your-project>/.leina/graph.db`. It's a structural index of the code (what calls what, what imports what, what inherits from what). When you ask the AI _"what breaks if I touch this?"_, it isn't re-reading the repo: it runs `leina affected`, which queries that graph. It rebuilds itself automatically when it detects the sources changed.
+- **The memory** lives in a **global** DB, at `~/.leina/memory.db` (respects `$LEINA_HOME`), partitioned by a derived project key — meaning it's shared across all your repos, not per-project. That's where decisions, bugfixes, discoveries and SDD artifacts are stored. The AI writes with `leina memory save` and reads with `leina memory context`/`search`/`verified`.
+- **There's no intermediate bridge**: the AI runs the `leina` binary through its shell, receives a bounded response (a subgraph or a handful of observations) and stops grepping the entire repo.
 
-#### ¿Y la memoria del equipo? ¿Se commitea o no?
+#### What about team memory? Is it committed or not?
 
-La carpeta `.leina/` del proyecto (que contiene `graph.db`) **no se commitea por defecto** — es runtime, pesa, y el grafo se regenera solo. La memoria **no vive ahí**: está en la DB global `~/.leina/memory.db`. Lo que **sí** se commitea es la configuración (`AGENTS.md`, `.gitignore`, `.devin/hooks.v1.json`) para que cualquiera que clone el repo arranque con leina activo. Si querés compartir el grafo con la VM de Devin cloud, podés commitear el artefacto portable: `leina build . --json` genera `.leina/graph.json` (commiteable, a diferencia del `.db`).
+The project's `.leina/` folder (which contains `graph.db`) **is not committed by default** — it's runtime, it's heavy, and the graph regenerates itself. The memory **doesn't live there**: it's in the global DB `~/.leina/memory.db`. What **is** committed is the configuration (`AGENTS.md`, `.gitignore`, `.devin/hooks.v1.json`) so that anyone who clones the repo starts out with leina active. If you want to share the graph with the Devin cloud VM, you can commit the portable artifact: `leina build . --json` generates `.leina/graph.json` (committable, unlike the `.db`).

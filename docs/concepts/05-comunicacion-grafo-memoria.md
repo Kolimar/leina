@@ -1,19 +1,19 @@
-# 5. Cómo se hablan el grafo y la memoria (drift detection)
+# 5. How the graph and memory talk to each other (drift detection)
 
-> **En una frase:** las observaciones de memoria se "clavan" a nodes del grafo con *post-its*
-> (`anchors`); cuando el código cambia, leina compara el estado guardado contra el grafo
-> vivo y clasifica cada nota como **USABLE**, **WARNING** o **DO-NOT-USE**.
+> **In one sentence:** memory observations get "pinned" to graph nodes with *sticky notes*
+> (`anchors`); when the code changes, leina compares the saved state against the
+> live graph and classifies each note as **USABLE**, **WARNING**, or **DO-NOT-USE**.
 
-Este es el capítulo donde el cartógrafo y el bibliotecario por fin se dan la mano.
+This is the chapter where the cartographer and the librarian finally shake hands.
 
 ---
 
-## Dos bases separadas, una conversación
+## Two separate databases, one conversation
 
-Recordá: el grafo (`graph.db`, por repo) y la memoria (`memory.db`, global) están
-**desacoplados en disco**. La memoria nunca accede al grafo directamente. Se unen en la
-**capa de aplicación**, que le pasa a la memoria dos funciones que *saben* hablar
-con el grafo: un **resolver** (para clavar post-its) y un **verifier** (para revisarlos).
+Remember: the graph (`graph.db`, per repo) and memory (`memory.db`, global) are
+**decoupled on disk**. Memory never touches the graph store directly. They come together in the
+**application layer**, at the composition root, which hands memory two functions that *know* how
+to talk to the graph: a **resolver** (to pin sticky notes) and a **verifier** (to check them).
 
 ```mermaid
 flowchart TB
@@ -25,144 +25,144 @@ flowchart TB
     subgraph gdb["graph.db"]
         gnode["GraphNode"]
     end
-    anchor -.->|apunta a| gnode
+    anchor -.->|points to| gnode
     resolver["resolver<br/>(save-time)"] --> anchor
     verifier["verifier<br/>(read-time)"] --> gnode
     style mem fill:#fff4e5,stroke:#e8710a
     style gdb fill:#e8f0fe,stroke:#1a73e8
 ```
 
-El grafo se abre **lazy**: solo si realmente se ejercitan anchors *y* existe un `graph.db`. Si
-no hay grafo, los anchors quedan sin resolver (estado `unverified`) y nada se rompe.
+The graph is opened **lazily**: only if anchors are actually exercised *and* a `graph.db` exists. If
+there's no graph, anchors are left unresolved (`unverified` state) and nothing breaks.
 
 ---
 
-## El post-it: cómo se clava un anchor
+## The sticky note: how an anchor gets pinned
 
-Pensá un anchor como una nota adhesiva pegada a una página de un libro que se reescribe. Cuando
-guardás una observación con `--anchors "TokenFactory"`, en **save-time** ocurre:
+Think of an anchor as an adhesive note stuck to a page of a book that keeps getting rewritten. When you
+save an observation with `--anchors "TokenFactory"`, at **save-time** the following happens:
 
-1. Se busca en el grafo el/los node(s) cuyo label coincide **exacto** (functional-exact, sin
-   substring difuso) con `"TokenFactory"`.
-2. Para cada match se lee la **huella del archivo** (SHA-256) desde el manifest del build.
-3. Se guarda en `memory_anchors`: `nodeId`, `sourceFile` y ese `anchorHash` de save-time.
+1. The graph is searched for the node(s) whose label matches **exactly** (functional-exact, no
+   fuzzy substring) `"TokenFactory"`.
+2. For each match, the **file fingerprint** (SHA-256) is read from the build manifest.
+3. `memory_anchors` stores: `nodeId`, `sourceFile`, and that save-time `anchorHash`.
 
-Ese hash es la foto del archivo *en el momento en que escribiste la nota*. Es la línea base
-contra la que después se mide el drift. Si el label no resuelve (no hay grafo, no hay match), el
-anchor se guarda igual pero sin `nodeId` → quedará `unverified`. **Fail-open:** cualquier error
-devuelve `[]`, nunca rompe el save.
+That hash is the snapshot of the file *at the moment you wrote the note*. It's the baseline
+against which drift is later measured. If the label doesn't resolve (no graph, no match), the
+anchor is still saved but without `nodeId` → it will remain `unverified`. **Fail-open:** any error
+returns `[]`, and the save is never broken.
 
 ---
 
-## La revisión: detectar drift en read-time
+## The review: detecting drift at read-time
 
-Cuando corrés `leina memory verified`, el bibliotecario revisa cada post-it
-**en el momento de leer** (nunca se persiste el resultado). Para cada anchor, el verifier
-pregunta al grafo: *¿este node todavía existe? ¿cuál es el hash actual del archivo en el disco?*
-Y a partir de eso se decide el estado:
+When you run `leina memory verified`, the librarian reviews each sticky note
+**at the moment of reading** (the result is never persisted). For each anchor, the verifier
+asks the graph: *does this node still exist? what is the file's current hash on disk?*
+And the anchor state is decided:
 
 ```mermaid
 flowchart TD
-    a["anchor"] --> resolved{¿se resolvió<br/>alguna vez?}
+    a["anchor"] --> resolved{did it ever<br/>resolve?}
     resolved -->|no| unv["unverified"]
-    resolved -->|sí| verify["verify(nodeId)"]
-    verify --> err{¿error de grafo?}
-    err -->|sí| unv
-    err -->|no| exists{¿el node<br/>existe?}
+    resolved -->|yes| verify["verify(nodeId)"]
+    verify --> err{graph<br/>error?}
+    err -->|yes| unv
+    err -->|no| exists{does the<br/>node exist?}
     exists -->|no| contra["contradicted"]
-    exists -->|sí| hash{¿hay ambos<br/>hashes?}
+    exists -->|yes| hash{are both<br/>hashes present?}
     hash -->|no| unv
-    hash -->|sí| cmp{¿hash actual<br/>= save-time?}
-    cmp -->|sí| active["active ✅"]
+    hash -->|yes| cmp{current hash<br/>= save-time?}
+    cmp -->|yes| active["active ✅"]
     cmp -->|no| stale["stale ⚠️"]
 ```
 
-Los cuatro estados (`MemoryState`):
+The four states (`MemoryState`):
 
-| Estado | Significa | El post-it... |
+| State | Meaning | The sticky note... |
 |--------|-----------|---------------|
-| `active` | el node existe y el archivo **no cambió** | sigue pegado y vigente |
-| `stale` | el node existe pero el **archivo cambió** | sigue pegado, pero la página se reescribió |
-| `contradicted` | el node **ya no existe** en el grafo | la página fue arrancada |
-| `unverified` | nunca resolvió a un node, o el grafo no está disponible | no sabemos contra qué página estaba |
+| `active` | the node exists and the file **hasn't changed** | is still stuck on, and current |
+| `stale` | the node exists but the **file changed** | is still stuck on, but the page was rewritten |
+| `contradicted` | the node **no longer exists** in the graph | the page was torn out |
+| `unverified` | it never resolved to a node, or the graph isn't available | we don't know which page it was against |
 
-Cuando una observación tiene **varios** anchors, el estado se agrega: gana el peor caso
+When an observation has **several** anchors, the aggregation takes the worst case
 (`contradicted` > `stale` > `unverified` > `active`).
 
 ---
 
-## El veredicto: descriptive vs normative
+## The verdict: descriptive vs normative
 
-Acá está la sutileza más importante. No todas las notas envejecen igual:
+Here's the most important subtlety. Not all notes age the same way:
 
-- Una nota **descriptiva** ("este módulo cachea sesiones en memoria") describe *cómo es* el
-  código. Si el código cambió, la descripción **caducó**.
-- Una nota **normativa** ("NUNCA loguear el token en claro") es una *regla*. Aunque el código
-  cambie, la regla **sigue valiendo** — de hecho, si el código drifteó, lo que querés es chequear
-  que no se haya *violado*.
+- A **descriptive** note ("this module caches sessions in memory") describes *what the*
+  code *is like*. If the code changed, the description **has expired**.
+- A **normative** note ("NEVER log the token in plaintext") is a *rule*. Even if the code
+  changes, the rule **still holds** — in fact, if the code has drifted, what you want is to check
+  that it hasn't been *violated*.
 
-El `type` de la observación define su `nature`: tipos como `architecture`/`bugfix` son
-**descriptivos**; `decision`/`preference` son **normativos**. La clasificación final
-cruza `nature` × `state` para dar un `verdict`:
+The observation's `type` defines its `nature`: types like `architecture`/`bugfix` are
+**descriptive**; `decision`/`preference` are **normative**. The final classification
+crosses `nature` × `state` to produce a `verdict`:
 
 ```mermaid
 flowchart TD
-    subgraph desc["DESCRIPTIVA (caduca con el drift)"]
+    subgraph desc["DESCRIPTIVE (expires with drift)"]
         d1["active → usable ✅"]
         d2["stale / unverified → warning ⚠️"]
         d3["contradicted → do_not_use ⛔"]
     end
-    subgraph norm["NORMATIVA (la regla sobrevive)"]
+    subgraph norm["NORMATIVE (the rule survives)"]
         n1["active → usable ✅"]
-        n2["stale / contradicted → usable<br/>+ chequeo de violación ⚠️<br/>(la regla aplica, pero el código drifteó)"]
+        n2["stale / contradicted → usable<br/>+ checkViolation ⚠️<br/>(the rule applies, but the code drifted)"]
         n3["unverified → warning ⚠️"]
     end
 ```
 
-| Veredicto | Qué le dice al agente |
+| Verdict | What it tells the agent |
 |-----------|------------------------|
-| `usable` | confiá en esta nota |
-| `warning` | usala con cuidado; puede estar desactualizada o no se pudo verificar |
-| `do_not_use` | esta descripción ya no aplica; ignorala |
+| `usable` | trust this note |
+| `warning` | use it with caution; it may be outdated or couldn't be verified |
+| `do_not_use` | this description no longer applies; ignore it |
 
-El contexto verificado arma la respuesta completa: busca las observaciones que matchean la query,
-deriva el estado de cada una contra el grafo vivo, y las reparte en `usable` / `warning` /
-`doNotUse` con su razón. Así el agente no solo recibe *qué* se anotó, sino *cuánto puede
-confiar* en cada nota hoy.
+The verified context builds the full response: it looks up the observations that match the query,
+derives each one's state against the live graph, and sorts them into `usable` / `warning` /
+`doNotUse` with their reason. That way the agent doesn't just receive *what* was noted, but *how much
+it can trust* each note today.
 
 ---
 
-## El ciclo completo, de punta a punta
+## The full cycle, end to end
 
 ```mermaid
 sequenceDiagram
-    participant Dev as Agente / vos
+    participant Dev as Agent / you
     participant Mem as memory.db
     participant Graph as graph.db
 
-    Note over Dev,Graph: SAVE-TIME (escribís la nota)
+    Note over Dev,Graph: SAVE-TIME (you write the note)
     Dev->>Mem: memory save --anchors "TokenFactory"
-    Mem->>Graph: resolver: ¿qué node es "TokenFactory"?
-    Graph-->>Mem: nodeId + hash del archivo (línea base)
-    Mem->>Mem: guarda anchor {nodeId, anchorHash}
+    Mem->>Graph: resolver: which node is "TokenFactory"?
+    Graph-->>Mem: nodeId + file hash (baseline)
+    Mem->>Mem: saves anchor {nodeId, anchorHash}
 
-    Note over Dev,Graph: ...el código cambia...
+    Note over Dev,Graph: ...the code changes...
 
-    Note over Dev,Graph: READ-TIME (verificás)
+    Note over Dev,Graph: READ-TIME (you verify)
     Dev->>Mem: memory verified "token factory"
-    Mem->>Mem: FTS5/BM25 → observaciones candidatas
-    Mem->>Graph: verifier: ¿existe el node? ¿hash actual?
-    Graph-->>Mem: exists=true, hash distinto → stale
-    Mem-->>Dev: USABLE / WARNING / DO-NOT-USE + razón
+    Mem->>Mem: FTS5/BM25 → candidate observations
+    Mem->>Graph: verifier: does the node exist? current hash?
+    Graph-->>Mem: exists=true, different hash → stale
+    Mem-->>Dev: USABLE / WARNING / DO-NOT-USE + reason
 ```
 
-> **Por qué read-time y no persistido:** el estado de drift se deriva al vuelo. Eso mantiene la
-> memoria fresca sin re-chequeos constantes, y significa que la *misma* nota puede pasar de
-> `usable` a `stale` simplemente porque el código cambió — sin tocar la base de memoria.
+> **Why read-time and not persisted:** the drift state is derived on the fly. That keeps
+> memory fresh without constant re-checks, and it means the *same* note can go from
+> `usable` to `stale` simply because the code changed — without touching the memory database.
 
 ---
 
-## Para seguir
+## Up next
 
-- Cómo toda esta inteligencia llega al agente sin que la pida → [Hooks e inyección](./06-hooks-e-inyeccion.md)
-- De dónde sale el `affected` que conviene correr antes de migrar → [Búsqueda y consultas](./03-busqueda-y-consultas.md#affected--qué-se-rompe-si-toco-esto-blast-radius)
+- How all this intelligence reaches the agent without being asked for it → [Hooks and injection](./06-hooks-e-inyeccion.md)
+- Where the `affected` you should run before migrating comes from → [Search and queries](./03-busqueda-y-consultas.md#affected--qué-se-rompe-si-toco-esto-blast-radius)

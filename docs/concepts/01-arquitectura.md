@@ -1,38 +1,39 @@
-# 1. Arquitectura general
+# 1. General architecture
 
-> **En una frase:** leina es una CLI con arquitectura **hexagonal** (puertos y
-> adaptadores), donde la lógica de negocio no depende de SQLite ni del sistema de
-> archivos — y donde cada comando corre y termina, *sin un daemon siempre encendido*.
-
----
-
-## La cocina del restaurante
-
-Pensá leina como un restaurante:
-
-- El **mozo** toma tu pedido (`leina query ...`), lo lleva a la cocina y te
-  trae el plato. No cocina; solo traduce entre vos y la cocina.
-- Las **recetas** describen *cómo* preparar cada plato paso a paso, sin
-  importar qué marca de horno o heladera tengas.
-- La **despensa y los electrodomésticos** son las cosas concretas: la
-  heladera (SQLite), el horno (los extractores de código), la balanza (git).
-- Las **definiciones de qué es cada plato** — qué lleva una "pizza", qué es un
-  "node" o un "edge" — son contratos puros: ningún electrodoméstico, ninguna marca.
-
-La regla de oro de la cocina: **las recetas y las definiciones nunca mencionan marcas**. Si
-mañana cambiás la heladera, las recetas no cambian. Eso es la **regla de dependencias** de la
-arquitectura hexagonal.
+> **In one sentence:** leina is a CLI with a **hexagonal** architecture (ports and
+> adapters) in four layers, where the business logic knows nothing about SQLite or the
+> file system — and where every command runs and exits, *with no always-on daemon*.
 
 ---
 
-## Las cuatro capas
+## The restaurant kitchen
+
+Think of leina as a restaurant:
+
+- The **waiter** (the CLI layer) takes your order (`leina query ...`), carries it to the
+  kitchen, and brings you the dish. It doesn't cook; it only translates between you and
+  the kitchen.
+- The **recipes** (the application layer) describe *how* to prepare each dish step by step, no
+  matter what brand of oven or fridge you have.
+- The **pantry and appliances** (the infrastructure layer) are the concrete things: the fridge
+  (SQLite), the oven (tree-sitter, ts-morph), the scale (git).
+- The **definitions of what each dish is** (the domain layer) — what goes into a "pizza," what a
+  "node" or an "edge" is — are pure contracts: no appliances, no brands.
+
+The golden rule of the kitchen: **the recipes and the definitions never mention brands**.
+If you swap the fridge tomorrow, the recipes don't change. That's the **dependency rule**
+of hexagonal architecture.
+
+---
+
+## The four layers
 
 ```mermaid
 flowchart TD
-    cli["Interfaz (CLI)<br/><i>el mozo</i><br/>parseo de args · I/O"]
-    app["Aplicación<br/><i>las recetas</i><br/>build · query · resolve · drift"]
-    infra["Infraestructura<br/><i>la despensa</i><br/>SQLite · extractores · git"]
-    domain["Dominio<br/><i>las definiciones</i><br/>tipos y contratos puros"]
+    cli["cli<br/><i>the waiter</i><br/>arg parsing · I/O · wiring"]
+    app["application<br/><i>the recipes</i><br/>build · query · resolve · drift"]
+    infra["infrastructure<br/><i>the pantry</i><br/>SQLite · tree-sitter · ts-morph · git"]
+    domain["domain<br/><i>the definitions</i><br/>pure types · ports (interfaces)"]
 
     cli --> app
     cli --> infra
@@ -43,98 +44,121 @@ flowchart TD
     style app fill:#e6f4ea,stroke:#137333
 ```
 
-Las flechas son **dependencias permitidas**. Fijate que todas apuntan hacia el **dominio**, y que
-la **aplicación** **nunca** apunta a la **infraestructura**: las recetas no conocen marcas.
+The arrows are **allowed dependencies**. Notice that they all point toward the domain, and
+that the application layer **never** points to infrastructure: the recipes don't know about
+brands.
 
-| Capa | Responsabilidad |
+| Layer | Responsibility |
 |------|-----------------|
-| **Dominio** | Tipos y contratos puros. Cero I/O, cero dependencias externas. Define qué es un `node`, un `edge`, una `observation`. |
-| **Aplicación** | Casos de uso y algoritmos: build, query, resolve, drift. Depende solo del dominio. |
-| **Infraestructura** | Adaptadores concretos que *implementan* los contratos: SQLite, los extractores de código, git. |
-| **Interfaz (CLI)** | Composición + I/O. El único lugar que *construye* infraestructura. |
+| **Domain** | Pure types and contracts (`GraphNode`, `GraphEdge`, the memory model, and the ports they flow through). Zero I/O, zero external dependencies. |
+| **Application** | Use cases and algorithms: build, query, resolve, drift detection, project-key detection. Depends only on the domain. |
+| **Infrastructure** | Concrete adapters that *implement* the ports: the SQLite stores, the tree-sitter and ts-morph extractors, git. |
+| **CLI** | Composition and I/O. The only place that *builds* infrastructure: it dispatches commands and wires everything together. |
 
 ---
 
-## Puertos y adaptadores en concreto
+## Ports and adapters, concretely
 
-El contrato vive en el **dominio**; la implementación, en la **infraestructura**. La capa de
-**aplicación** recibe el contrato y nunca sabe quién lo cumple.
+The contract lives in the domain; the implementation, in infrastructure. The
+application layer receives the contract and never knows who fulfills it.
 
 ```mermaid
-flowchart LR
-    port["Contrato de repositorio<br/>(dominio)<br/>addNodes · getNode · outEdges · inEdges · stats"]
-    adapter["Adaptador SQLite<br/>(infraestructura)"]
-    usecase["Caso de uso: query<br/>(aplicación)"]
-
-    adapter -->|implementa| port
-    usecase -->|depende del contrato| port
+classDiagram
+    class GraphRepository {
+        <<port — domain>>
+        +addNodes(nodes)
+        +addEdges(edges)
+        +getNode(id) GraphNode
+        +findByLabel(q) GraphNode[]
+        +outEdges(id) GraphEdge[]
+        +inEdges(id) GraphEdge[]
+        +stats()
+    }
+    class SQLiteAdapter {
+        <<adapter — infrastructure>>
+        -db: SQLite
+    }
+    class QueryUseCase {
+        <<application>>
+        receives GraphRepository
+    }
+    SQLiteAdapter ..|> GraphRepository : implements
+    QueryUseCase ..> GraphRepository : depends on the port
 ```
 
-Hay un **único lugar de composición** que construye los adaptadores concretos y se los inyecta a
-los casos de uso. Estos reciben siempre el contrato, nunca la implementación concreta. Cambiar de
-motor de almacenamiento no toca ni una línea de la lógica de negocio.
+A single **composition root** is the *only* place where concrete stores are constructed.
+Handlers receive the port, never the concrete class — so the read and write logic never
+depends on SQLite.
 
 ---
 
-## El recorrido de un comando
+## The journey of a command
 
-Cuando ejecutás `leina query <dir> "quién usa TokenFactory"`, esto es lo que pasa:
+When you run `leina query <dir> "who uses TokenFactory"`, here's what happens:
 
 ```mermaid
 sequenceDiagram
-    participant U as Vos / el agente
-    participant I as CLI (dispatcher)
-    participant A as Caso de uso: query
-    participant S as Grafo (SQLite)
+    participant U as You / the agent
+    participant I as Dispatcher
+    participant H as Graph handler
+    participant W as Composition root
+    participant A as Query use case
+    participant S as Graph store (SQLite)
 
     U->>I: leina query dir "..."
-    I->>S: abre el grafo (rebuild si está viejo)
-    I->>A: query(pregunta)
+    I->>H: routes to the graph handler
+    H->>W: open a fresh store for dir
+    W->>S: opens the graph (rebuild if stale)
+    W-->>H: GraphRepository
+    H->>A: query the graph with the question
     A->>S: findByLabel / outEdges / inEdges
     S-->>A: nodes + edges
-    A-->>U: imprime el subgrafo
+    A-->>H: subgraph
+    H-->>U: prints the result
 ```
 
-La CLI enruta cada comando al caso de uso correcto; toda la lógica vive más adentro.
+The dispatcher is a **pure router**: it reads the subcommand and routes to the correct
+handler. All the logic lives further in.
 
 ---
 
-## Dos decisiones de diseño que conviene entender
+## Two design decisions worth understanding
 
-### CLI-first (sin daemon siempre encendido)
+### CLI-first (no always-on daemon)
 
-La capacidad de todos los días es un `leina <subcomando>` que arranca, responde y termina.
-Los dos servidores que existen son opt-in y los corés a demanda: `leina mcp` (el servidor MCP
-por stdio que tu host de IA lanza para llamar a las herramientas) y `leina graph serve` (un
-explorador HTTP de solo lectura en foreground, ligado a loopback). ¿Por qué este modelo?
+The everyday capability is a `leina <subcommand>` that starts up, responds, and exits. The
+two servers that exist are opt-in and run on demand: `leina mcp` (the stdio MCP server your
+AI host launches to call leina's tools) and `leina graph serve` (an optional read-only HTTP
+explorer bound to loopback). Why this model?
 
-- **Arranque rápido (~0.15s) en el camino de lectura.** El stack pesado de extracción de código
-  se carga solo al construir o refrescar el grafo. Una `query` o un `memory search` nunca pagan
-  ese costo.
-- **Sin estado entre invocaciones.** No hay un daemon siempre encendido que se desincronice;
-  cada comando lee el estado fresco del disco.
+- **Fast startup (~0.15s) on the read path.** The heavy code-extraction stack is loaded only
+  in `build`/`refresh`. A `query` or a `memory search` never pays that cost.
+- **No state between invocations.** There's no always-on daemon that can drift out of sync;
+  every command reads fresh state from disk.
 
-### Writers puros
+### Pure writers
 
-Todo lo que *escribe archivos* en la superficie de install (skills, agents, hooks, protocolo)
-se modela como **funciones puras** que devuelven un artefacto `{ path, content }`. El writer
-**no toca el disco**; la CLI hace todo el I/O.
+Everything that *writes files* on the install surface (skills, agents, hooks, protocol)
+is modeled as **pure functions** that return an artifact `{ path, content }`. The writer
+**never touches disk**; the CLI does all the I/O.
 
-Dos consecuencias prácticas:
+Two practical consequences:
 
-1. **Idempotencia.** Re-correr un writer sobre su propia salida devuelve exactamente lo mismo.
-2. **Testeable sin filesystem.** Probás el `content` que produce sin montar directorios.
+1. **Idempotence.** Re-running a writer over its own output returns exactly the same
+   thing.
+2. **Testable without a filesystem.** You test the `content` it produces without mounting
+   directories.
 
 ```mermaid
 flowchart LR
-    writer["writer puro"] -->|devuelve| artifact["artefacto<br/>{ path, content }"]
-    artifact -->|la CLI escribe| disk[("disco")]
+    writer["pure writer"] -->|returns| artifact["artifact<br/>{ path, content }"]
+    artifact -->|the CLI writes| disk[("disk")]
     style writer fill:#e6f4ea,stroke:#137333
 ```
 
 ---
 
-## Para seguir
+## Up next
 
-- Cómo el cartógrafo levanta el mapa → [El grafo de código](./02-grafo.md)
-- Cómo se consulta ese mapa → [Búsqueda y consultas](./03-busqueda-y-consultas.md)
+- How the cartographer builds the map → [The code graph](./02-grafo.md)
+- How that map is queried → [Search and queries](./03-busqueda-y-consultas.md)

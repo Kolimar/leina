@@ -1,56 +1,54 @@
-# 4. La memoria de proyecto
+# 4. Project memory
 
-> **En una frase:** la memoria es el *diario de bitácora* del proyecto — anota decisiones, bugs
-> resueltos y convenciones para que la IA no las re-descubra en cada sesión— y vive en **una
-> sola base global** segmentada por proyecto.
+> **In one sentence:** memory is the project's *logbook* — it records decisions, resolved
+> bugs, and conventions so the AI doesn't have to rediscover them every session — and it
+> lives in **a single global database** segmented by project.
 
-El grafo sabe *qué ES* el código. La memoria sabe *por qué* llegó a ser así. Es la diferencia
-entre leer el plano de un edificio y leer las notas del arquitecto sobre por qué movió esa
-columna.
+The graph knows *what* the code IS. Memory knows *why* it ended up that way. It's the
+difference between reading a building's blueprint and reading the architect's notes on why
+they moved that column.
 
 ---
 
-## Dónde vive y cómo se segmenta
+## Where it lives and how it's segmented
 
-A diferencia del grafo (un `graph.db` por repo), **toda** la memoria vive en una única base
-global: `~/.leina/memory.db`. No se necesita inicializar el proyecto; la memoria es
+Unlike the graph (one `graph.db` per repo), **all** memory lives in a single global
+database: `~/.leina/memory.db`. There's no need to initialize the project; memory is
 always-on.
 
-¿Cómo no se mezclan los proyectos entonces? Con el **project key**: una etiqueta estable que
-segmenta cada observación. Es como un diario compartido donde cada proyecto tiene su propia
-solapa.
+So how do projects avoid getting mixed together? Through the **project key**: a stable
+label that segments each observation. It's like a shared diary where each project has its
+own tab.
 
-### Derivación del project key
+### Deriving the project key
 
-La derivación del project key baja por una **cascada fail-open**: usa la
-primera fuente que funcione.
+The project key is derived with a **fail-open cascade**: it uses the first source that works.
 
 ```mermaid
 flowchart TD
-    start["derivar project key"] --> lock{¿.leina/config.json<br/>con project_name?}
-    lock -->|sí| done["✅ usar ese nombre<br/>(committable, máxima prioridad)"]
-    lock -->|no| remote{¿git remote origin?}
-    remote -->|sí| r["repo name del remote<br/>(org/repo.git → repo)"]
-    remote -->|no| root{¿git root?}
-    root -->|sí| rr["basename del git root"]
-    root -->|no| child{¿un único hijo<br/>con .git?}
-    child -->|sí| rec["recursa en ese hijo"]
-    child -->|varios| amb["❌ AmbiguousProjectError<br/>(pedir init --name)"]
-    child -->|ninguno| base["basename(cwd)<br/>(siempre funciona)"]
+    start["derive project key (cwd)"] --> lock{".leina/config.json<br/>with project_name?"}
+    lock -->|yes| done["✅ use that name<br/>(committable, highest priority)"]
+    lock -->|no| remote{"git remote origin?"}
+    remote -->|yes| r["repo name from the remote<br/>(org/repo.git → repo)"]
+    remote -->|no| root{"git root?"}
+    root -->|yes| rr["basename of the git root"]
+    root -->|no| child{"a single child<br/>with .git?"}
+    child -->|yes| rec["recurse into that child"]
+    child -->|several| amb["❌ AmbiguousProjectError<br/>(ask for init --name)"]
+    child -->|none| base["basename(cwd)<br/>(always works)"]
 ```
 
-El resultado se normaliza: NFKC, minúsculas, separadores de path → `-`,
-colapsa no-alfanuméricos a un solo `-`. **Importante:** los project keys usan **guiones**, no
-guiones bajos (al revés que los IDs de node del grafo, que usan `_`). Eso mantiene los dos
-namespaces separados.
+The result is normalized: NFKC, lowercase, path separators → `-`, collapsing non-alphanumerics
+into a single `-`. **Important:** project keys use **hyphens**, not underscores (unlike the
+graph's node IDs, which use `_`). That keeps the two namespaces separate.
 
-Si el `cwd` no es un repo git y hay **varios** repos hijos, se lanza `AmbiguousProjectError`:
-hay que fijar el nombre con `leina init --name <name>` (escribe el `config.json`
-committable).
+If the `cwd` is not a git repo and there are **several** child repos, an
+`AmbiguousProjectError` is thrown: you need to fix the name with `leina init --name <name>`
+(which writes the committable `config.json`).
 
 ---
 
-## El modelo: observations y sessions
+## The model: observations and sessions
 
 ```mermaid
 classDiagram
@@ -84,101 +82,103 @@ classDiagram
     Observation "1" --> "many" MemoryAnchor : observationId
 ```
 
-### La `observation` (una entrada del diario)
+### The `observation` (a diary entry)
 
-Es un hecho fechado y **tipado** sobre el proyecto. El `type` clasifica la naturaleza:
+It's a dated, **typed** fact about the project. The `type` classifies its nature:
 
-| `type` | Para qué |
+| `type` | What it's for |
 |--------|----------|
-| `decision` | una decisión de diseño y su porqué |
-| `bugfix` | un bug y cómo se resolvió |
-| `architecture` | una descripción estructural |
-| `discovery` | un hallazgo no obvio |
-| `pattern` | un patrón recurrente del código |
-| `config` | algo de configuración |
-| `preference` | una preferencia del equipo/usuario |
-| `manual` | nota libre |
+| `decision` | a design decision and its reasoning |
+| `bugfix` | a bug and how it was fixed |
+| `architecture` | a structural description |
+| `discovery` | a non-obvious finding |
+| `pattern` | a recurring pattern in the code |
+| `config` | something about configuration |
+| `preference` | a team/user preference |
+| `manual` | a free-form note |
 
-Esta distinción de `type` reaparece en el [drift detection](./05-comunicacion-grafo-memoria.md):
-algunos tipos son *descriptivos* (caducan cuando el código cambia) y otros *normativos* (reglas
-que siguen valiendo aunque el código se mueva).
+This `type` distinction reappears in [drift detection](./05-comunicacion-grafo-memoria.md):
+some types are *descriptive* (they expire when the code changes) and others *normative*
+(rules that keep holding even as the code moves).
 
-### El `topicKey` y el upsert (evolucionar una entrada en su lugar)
+### The `topicKey` and upsert (evolving an entry in place)
 
-Si guardás una observación con un `topicKey` (un slug estable como `sdd/auth-rework/proposal`) y
-después guardás otra con el **mismo** `topicKey`, la vieja **no** se borra: se marca
-`supersededBy` (sigue como rastro de auditoría) y la nueva toma su lugar con `revision`
-incrementada. Es un diario donde podés *editar una página* sin perder las versiones anteriores.
+If you save an observation with a `topicKey` (a stable slug like
+`sdd/auth-rework/proposal`) and later save another one with the **same** `topicKey`, the old
+one is **not** deleted: it's marked `supersededBy` (it remains as an audit trail) and the
+new one takes its place with an incremented `revision`. It's a diary where you can *edit a
+page* without losing the earlier versions.
 
 ```mermaid
 flowchart LR
-    v1["obs v1<br/>topic: sdd/auth/proposal<br/>revision 1"] -->|save mismo topicKey| v2["obs v2<br/>revision 2<br/>(la viva)"]
+    v1["obs v1<br/>topic: sdd/auth/proposal<br/>revision 1"] -->|save same topicKey| v2["obs v2<br/>revision 2<br/>(the live one)"]
     v1 -.->|supersededBy| v2
-    v1 -.- audit["(queda como<br/>rastro de auditoría,<br/>fuera del índice de búsqueda)"]
+    v1 -.- audit["(remains as an<br/>audit trail,<br/>outside the search index)"]
 ```
 
-### La `session` (un turno de trabajo)
+### The `session` (a work shift)
 
-Agrupa observaciones de una misma sesión de trabajo (`startedAt`/`endedAt`). Al final de una
-sesión, `leina memory session <dir> --content "..."` guarda un resumen.
+Groups observations from a single work session (`startedAt`/`endedAt`). At the end of a
+session, `leina memory session <dir> --content "..."` saves a summary.
 
 ---
 
-## Cómo se guarda (el `memory.db`)
+## How it's stored (the `memory.db`)
 
-La memoria se guarda en SQLite. El schema tiene cuatro piezas:
+Memory is persisted over SQLite through the `MemoryRepository` port. The schema has four
+pieces:
 
-| Tabla | Qué guarda |
+| Table | What it stores |
 |-------|-----------|
-| `sessions` | sesiones (indexada por `project_key, started_at DESC` para recencia) |
-| `observations` | las entradas del diario; `topic_key` con índice único **parcial** (solo filas vivas, `superseded_by IS NULL`) |
-| `obs_fts` | tabla virtual **FTS5** para búsqueda full-text |
-| `memory_anchors` | los post-its que unen una observación con nodes del grafo (ver [cap. 5](./05-comunicacion-grafo-memoria.md)) |
+| `sessions` | sessions (indexed by `project_key, started_at DESC` for recency) |
+| `observations` | the diary entries; `topic_key` with a **partial** unique index (only live rows, `superseded_by IS NULL`) |
+| `obs_fts` | virtual **FTS5** table for full-text search |
+| `memory_anchors` | the sticky notes that link an observation to graph nodes (see [chapter 5](./05-comunicacion-grafo-memoria.md)) |
 
-### FTS5: la búsqueda full-text
+### FTS5: full-text search
 
-`obs_fts` es una tabla virtual FTS5 en modo *external-content* que indexa `title` y `content`.
-Dos detalles del tokenizer importan:
+`obs_fts` is a virtual FTS5 table in *external-content* mode that indexes `title` and
+`content`. Two tokenizer details matter:
 
-- **porter** (stemming en inglés): "running" matchea "run".
-- **unicode61 + remove_diacritics**: búsqueda insensible a acentos — clave para escribir el
-  diario en español ("migración" matchea "migracion").
+- **porter** (English stemming): "running" matches "run".
+- **unicode61 + remove_diacritics**: accent-insensitive search — key for writing the diary
+  in Spanish ("migración" matches "migracion").
 
-**Triggers guardados:** solo las observaciones **vivas** (`superseded_by IS NULL`) entran al
-índice. Las versiones superseded quedan en la tabla base (auditoría) pero **nunca puntúan** en
-las búsquedas. Triggers dedicados custodian INSERT/UPDATE/DELETE para mantener esa invariante.
+**Live-only index:** only **live** observations (`superseded_by IS NULL`) enter the index.
+Superseded versions remain in the base table (for audit) but **never score** in searches.
+Triggers guard INSERT/UPDATE/DELETE to maintain that invariant.
 
 ---
 
-## Cómo se busca (BM25)
+## How it's searched (BM25)
 
-La búsqueda corre una query FTS5 rankeada por **BM25**. Lo interesante es cómo se **sanitiza**
-la consulta antes de mandarla a FTS5:
+Search runs an FTS5 query ranked by **BM25**. What's interesting is how the query is
+**sanitized** before being sent to FTS5:
 
 ```mermaid
 flowchart LR
-    q["'auth rework'"] --> tok["tokeniza por espacios"]
-    tok --> quote["envuelve cada token<br/>en comillas dobles"]
-    quote --> join["une con OR"]
-    join --> phrase["si hay varios tokens,<br/>antepone la frase completa<br/>(boost de proximidad)"]
+    q["'auth rework'"] --> tok["tokenize by whitespace"]
+    tok --> quote["wrap each token<br/>in double quotes"]
+    quote --> join["join with OR"]
+    join --> phrase["if there are several tokens,<br/>prepend the full phrase<br/>(proximity boost)"]
     phrase --> out["'auth rework' OR 'auth' OR 'rework'"]
 ```
 
-La estrategia es **recall-first**: unir con `OR` hace que matchee cualquier término, y BM25
-ordena los mejores hits primero. La frase completa como término extra le da un empujón a los
-documentos donde las palabras aparecen juntas. Cada resultado trae `id`, `title`, `type`,
-`topicKey`, un `snippet` (primeros ~200 chars), el score BM25 y `updatedAt`.
+The strategy is **recall-first**: joining with `OR` makes it match any term, and BM25 sorts
+the best hits first. The full phrase as an extra term gives a boost to documents where the
+words appear together. Each `SearchHit` carries `id`, `title`, `type`, `topicKey`, a
+`snippet` (first ~200 chars), the BM25 score, and `updatedAt`.
 
-Comandos de lectura:
+Read commands:
 
-- `leina memory search <dir> "<query>"` — búsqueda cruda (lo de arriba).
-- `leina memory context <dir>` — sesiones recientes + últimas observaciones.
-- `leina memory verified <dir> "<query>"` — búsqueda **+ chequeo de drift** contra el
-  grafo. Eso es justo el tema del próximo capítulo.
+- `leina memory search <dir> "<query>"` — raw search (the above).
+- `leina memory context <dir>` — recent sessions + latest observations.
+- `leina memory verified <dir> "<query>"` — search **+ drift check** against the graph.
+  That's exactly the subject of the next chapter.
 
 ---
 
-## Para seguir
+## Up next
 
-- Cómo el bibliotecario sabe que una nota quedó vieja → [Comunicación grafo–memoria](./05-comunicacion-grafo-memoria.md)
-- Cómo se inyecta este diario al agente sin que lo pida → [Hooks e inyección](./06-hooks-e-inyeccion.md)
+- How the librarian knows a note has gone stale → [Graph–memory communication](./05-comunicacion-grafo-memoria.md)
+- How this diary gets injected into the agent without it having to ask → [Hooks and injection](./06-hooks-e-inyeccion.md)

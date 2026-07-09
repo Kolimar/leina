@@ -1,182 +1,182 @@
-# 6. Hooks de Devin e inyección de contexto
+# 6. Devin hooks and context injection
 
-> **En una frase:** los *hooks* son el conserje del repo — al empezar la sesión te dejan en el
-> escritorio las notas del bibliotecario y el estado del mapa, al terminar te recuerdan guardar,
-> y mientras tanto te dan algún consejo— pero **nunca te traban la puerta**.
+> **In one sentence:** *hooks* are the concierge of the repo — at the start of the session they
+> leave the librarian's notes and the state of the map on your desk, at the end they remind you
+> to save, and along the way they offer some advice — but **they never lock the door on you**.
 
-Sin hooks, todo leina sería opt-in: la IA tendría que acordarse de correr
-`memory context` y `query`. Los hooks hacen que el contexto **llegue solo**.
+Without hooks, all of leina would be opt-in: the AI would have to remember to run
+`memory context` and `query`. Hooks make the context **arrive on its own**.
 
 ---
 
-## Qué es un hook y cuándo dispara
+## What a hook is and when it fires
 
-El host emite eventos durante una sesión, conectados a `leina agent-hook <Event>` por hooks
-que se registran a nivel **user-global** (los instala `setup`/`activate`, disparan en todos los
-repos y resuelven el root en runtime) o, en modo standalone, en un `.devin/hooks.v1.json` que
-escribe `init` (FULL).
+Devin emits events during a session, wired to `leina agent-hook <Event>` (compatibility alias:
+`devin-hook`). Hooks are registered either at the **user-global** level (installed by
+`setup`/`activate`, they fire in every repo and resolve the root at runtime) or, in standalone
+mode, in a `.devin/hooks.v1.json` written by a full `init`. The JSON is produced by pure
+writers, and a single gate holds the decision logic.
 
-| Evento | Matcher | Qué hace el conserje |
+| Event | Matcher | What the concierge does |
 |--------|---------|----------------------|
-| `SessionStart` | (todos) | borra los markers e **inyecta** memoria + stats del grafo |
-| `PostCompaction` | (todos) | re-inyecta el contexto tras una compactación |
-| `UserPromptSubmit` | (todos) | en el primer turno, inyecta contexto si aún no se cargó |
-| `PreToolUse` | `edit\|write\|exec` | consejo advisory (p. ej. ante `git commit` o `grep`) |
-| `PostToolUse` | `edit\|write` → `refresh`; `exec` → gate | refresca el grafo; detecta carga/guardado de memoria |
-| `Stop` | (todos) | recuerda persistir la sesión si no se guardó |
+| `SessionStart` | (all) | clears the markers and **injects** memory + graph stats |
+| `PostCompaction` | (all) | re-injects the context after a compaction |
+| `UserPromptSubmit` | (all) | on the first turn, injects context if it hasn't loaded yet |
+| `PreToolUse` | `edit\|write\|exec` | advisory tip (e.g. before `git commit` or `grep`) |
+| `PostToolUse` | `edit\|write` → `refresh`; `exec` → gate | refreshes the graph; detects memory load/save |
+| `Stop` | (all) | reminds you to persist the session if it wasn't saved |
 
 ---
 
-## Las tres garantías de oro
+## The three golden guarantees
 
-Antes de los flujos, estas tres invariantes explican *todo* el comportamiento:
+Before getting into the flows, these three invariants explain *all* of the behavior:
 
 ```mermaid
 flowchart LR
-    a["1. ADVISORY<br/>nunca bloquea<br/>(jamás exit 2 / block)"]
-    b["2. FAIL-OPEN<br/>cualquier error → exit 0<br/>en silencio"]
-    c["3. SCOPE-AWARE<br/>si consent != enabled<br/>→ no-op silencioso"]
+    a["1. ADVISORY<br/>never blocks<br/>(never exit 2 / block)"]
+    b["2. FAIL-OPEN<br/>any error → exit 0<br/>silently"]
+    c["3. SCOPE-AWARE<br/>if consent != enabled<br/>→ silent no-op"]
 ```
 
-1. **Advisory only.** El gate nunca devuelve `block`. Como mucho escribe una `reason` en
-   `stderr` como empujón de una sola vez; el agente **siempre** procede.
-2. **Fail-open.** stdin vacío/inválido, campos faltantes, errores de fs, grafo no disponible →
-   `exit 0` en silencio. El sistema nunca crashea al agente.
-3. **Scope-aware no-op.** Un hook user-global dispara en *todos* los repos de la máquina. El gate
-   solo actúa cuando el flag de consentimiento del repo es `enabled` (archivo `.leina/consent`).
-   Si está `unknown` o `disabled`, el gate retorna en silencio. Así el hook global no molesta en
-   repos ajenos, y el skill `leina-setup` pregunta una sola vez en los repos `unknown`.
+1. **Advisory only.** The gate never returns `block`. At most it writes a `reason` to `stderr` as
+   a one-time nudge; the agent **always** proceeds.
+2. **Fail-open.** Empty/invalid stdin, missing fields, fs errors, graph unavailable →
+   `exit 0` silently. The system never crashes the agent.
+3. **Scope-aware no-op.** A user-global hook fires in *every* repo on the machine. The gate only
+   acts when the repo's consent flag is `enabled` (stored in `.leina/consent`). If it's
+   `unknown` or `disabled`, the gate returns silently. This way the global hook doesn't bother
+   other repos, and the `leina-setup` skill asks only once in `unknown` repos.
 
 ---
 
-## ¿En qué proyecto estoy? (resolución del root)
+## Which project am I in? (root resolution)
 
-Un hook user-global no está fijado a un directorio. ¿Cómo sabe sobre qué repo opera?
-Prefiere la variable `DEVIN_PROJECT_DIR` (el contrato documentado de Devin para decirle a un
-hook su workspace) y cae al directorio actual si está ausente. Todo lo de
-abajo —el scope guard, los markers, la inyección— se ancla a ese root.
+A user-global hook isn't pinned to a directory. How does it know which repo it's operating on?
+It prefers the `DEVIN_PROJECT_DIR` variable (Devin's documented contract for telling a hook its
+workspace) and falls back to `process.cwd()` if it's absent. Everything below —the scope guard,
+the markers, the injection— is anchored to that root.
 
 ---
 
-## Inyección activa: qué se le pone en el escritorio
+## Active injection: what gets put on the desk
 
-El corazón es la construcción del **contexto activo**. Arma un bloque de
-`additionalContext` con tres partes, bajo un **presupuesto de 2500ms** que degrada con gracia:
+The heart of it is the active-context builder. It assembles an `additionalContext` block with
+three parts, under a **2500ms budget** that degrades gracefully:
 
 ```mermaid
 flowchart TD
-    start["contexto activo"] --> key["derivar project key"]
-    key --> mem["1. Sección de memoria<br/>top-10 observaciones recientes<br/>(siempre incluida)"]
-    mem --> budget1{¿queda<br/>presupuesto?}
-    budget1 -->|sí| gstats["2. Stats del grafo<br/>'graph: N nodes, M edges'"]
-    budget1 -->|no| skip1["(se omite)"]
-    gstats --> budget2{¿queda<br/>presupuesto?}
-    budget2 -->|sí| fresh["3. Nota de frescura<br/>(fresh) / (stale) → run: refresh"]
+    start["build active context (cwd)"] --> key["derive project key (cwd)"]
+    key --> mem["1. Memory section<br/>top-10 recent observations<br/>(always included)"]
+    mem --> budget1{budget<br/>remaining?}
+    budget1 -->|yes| gstats["2. Graph stats<br/>'graph: N nodes, M edges'"]
+    budget1 -->|no| skip1["(skipped)"]
+    gstats --> budget2{budget<br/>remaining?}
+    budget2 -->|yes| fresh["3. Freshness note<br/>(fresh) / (stale) → run: refresh"]
     budget2 -->|no| skip2["freshness: skipped"]
-    fresh --> out["additionalContext +<br/>recordatorio de guardar al final"]
+    fresh --> out["additionalContext +<br/>reminder to save at the end"]
 ```
 
-- **Memoria:** las 10 observaciones más recientes del proyecto, con
-  título, `type` y un snippet de ~200 chars, hasta un tope de 4000 chars. Si no hay
-  observaciones aún, inyecta `## Project memory\n(no observations yet)`.
-- **Grafo:** el conteo `N nodes, M edges` leído del `graph.db`.
-- **Frescura:** corre el chequeo de frescura y agrega `(fresh)` o `(stale)` con la
-  sugerencia de `refresh` (o `build` si no hay grafo todavía).
+- **Memory**: the project's 10 most recent observations, with title, `type`, and a ~200-char
+  snippet, up to a 4000-char cap. If there are no observations yet, it injects
+  `## Project memory\n(no observations yet)`.
+- **Graph**: the `N nodes, M edges` count read from `graph.db`.
+- **Freshness**: runs the staleness check and adds `(fresh)` or `(stale)` along with the
+  `refresh` suggestion (or `build` if there's no graph yet).
 
-Si todo falla, cae a un texto estático que le recuerda al agente correr
-`memory context` y preferir `query`/`affected` sobre grep. La construcción devuelve además un
-flag `delivered` que el gate usa para decidir si re-armar el marker de carga.
+If everything fails, it falls back to a static text that reminds the agent to run
+`memory context` and to prefer `query`/`affected` over grep. The builder also returns a
+`delivered` flag that the gate uses to decide whether to re-arm the load marker.
 
 ---
 
-## Los markers: el estado por-sesión
+## The markers: per-session state
 
-El conserje lleva dos banderitas en `<cwd>/.leina/`, que se **borran al SessionStart**
-(semántica por-sesión) y se vuelven a poner cuando corresponde:
+The concierge carries two little flags in `<cwd>/.leina/`, which are **cleared on SessionStart**
+(per-session semantics) and put back up when appropriate:
 
-| Marker | Archivo | Quién lo escribe | Para qué |
+| Marker | File | Who writes it | What it's for |
 |--------|---------|------------------|----------|
-| **load** | `session.memory-loaded` | `PostToolUse` cuando un `exec` corre `memory (context\|search\|verified)`; o la inyección exitosa | corta en seco los consejos una vez que la memoria ya se cargó |
-| **save** | `session.memory-saved` | `PostToolUse` cuando un `exec` corre `memory (save\|session\|update)` | lo lee `Stop` para decidir si recordar guardar |
+| **load** | `session.memory-loaded` | `PostToolUse` when an `exec` runs `memory (context\|search\|verified)`; or a successful injection | cuts off the advice cold once memory has already been loaded |
+| **save** | `session.memory-saved` | `PostToolUse` when an `exec` runs `memory (save\|session\|update)` | read by `Stop` to decide whether to remind you to save |
 
-El marker de save excluye el propio arranque de sesión (`session-start`): abrir una sesión no
-cuenta como "ya guardaste".
+The save marker excludes `session-start` with a negative lookahead in the regex (you don't want
+opening a session to count as "already saved").
 
 ---
 
-## Un turno completo, de SessionStart a Stop
+## A full turn, from SessionStart to Stop
 
 ```mermaid
 sequenceDiagram
-    participant D as Host
-    participant G as agent-hook (gate)
-    participant C as contexto activo
+    participant D as Devin
+    participant G as agent-gate
+    participant C as active context
     participant Disk as .leina/
 
     D->>G: SessionStart
-    G->>Disk: borra markers (load + save)
-    G->>C: construye el contexto activo
-    C-->>G: memoria + stats + frescura
+    G->>Disk: clears markers (load + save)
+    G->>C: build active context (cwd)
+    C-->>G: memory + stats + freshness
     G-->>D: additionalContext (stdout)
-    G->>Disk: re-arma marker load (si delivered)
+    G->>Disk: re-arms load marker (if delivered)
 
-    Note over D: ...el agente trabaja...
+    Note over D: ...the agent works...
     D->>G: PostToolUse (exec: "...memory search...")
-    G->>Disk: escribe marker load
+    G->>Disk: writes load marker
 
     D->>G: PreToolUse (exec: "git commit ...")
-    alt marker load presente
-        G-->>D: silencio (ya se cargó memoria)
-    else ausente
-        G-->>D: consejo advisory (stderr)
+    alt load marker present
+        G-->>D: silence (memory already loaded)
+    else absent
+        G-->>D: advisory tip (stderr)
     end
 
     D->>G: Stop
-    G->>Disk: ¿existe marker save?
-    alt ausente
-        G-->>D: nudge "corré memory session" (stderr)
+    G->>Disk: does the save marker exist?
+    alt absent
+        G-->>D: nudge "run memory session" (stderr)
     end
-    Note over G: stdout SIEMPRE vacío en Stop
+    Note over G: stdout ALWAYS empty on Stop
 ```
 
-Detalles por evento:
+Details per event:
 
-- **SessionStart**: borra ambos markers e inyecta contexto; re-arma el marker load si la entrega
-  fue exitosa.
-- **PostCompaction**: re-inyecta igual que SessionStart pero **sin** resetear los markers (el
-  campo `summary` se ignora a propósito; la re-inyección es incondicional).
-- **UserPromptSubmit**: si el marker load ya existe → silencio total (la inyección ya pasó). Si
-  no, inyecta por `stdout` y escribe el marker. Sin advisory por stderr (la inyección lo
-  reemplaza).
-- **PreToolUse**: con `git commit` emite un consejo de cargar memoria; con `grep`/`rg`/`find`
-  emite un consejo de usar `leina query`/`affected`. Si el marker load existe, calla.
-- **PostToolUse**: escribe el marker load o save según el comando `exec`; en `edit`/`write`
-  dispara `leina refresh` para mantener el grafo al día (ver
-  [Búsqueda y consultas](./03-busqueda-y-consultas.md#el-freshness-gate)).
-- **Stop**: si falta el marker save, emite el nudge por `stderr`. **stdout siempre vacío.**
-  Nunca bloquea (exit 0 en todas las ramas).
-
----
-
-## doctor: ¿está listo para inyectar?
-
-`leina doctor` chequea la *injection-readiness*: que existan la memoria global y el
-`graph.db`, para detectar un estado degradado donde la inyección
-activa funcionaría a medias. Una invariante clave: **doctor nunca abre SQLite** — todos los
-chequeos son solo de filesystem (stat, leer texto/JSON). Eso evita efectos colaterales (WAL/SHM)
-y lo mantiene rápido y seguro.
+- **SessionStart**: clears both markers and injects context; re-arms the load marker if the
+  delivery succeeded.
+- **PostCompaction**: re-injects just like SessionStart but **without** resetting the markers (the
+  `summary` field is deliberately ignored; the re-injection is unconditional).
+- **UserPromptSubmit**: if the load marker already exists → total silence (the injection already
+  happened). If not, it injects via `stdout` and writes the marker. No stderr advisory (the
+  injection replaces it).
+- **PreToolUse**: with `git commit` it emits a tip to load memory; with `grep`/`rg`/`find` it
+  emits a tip to use `leina query`/`affected`. If the load marker exists, it stays quiet.
+- **PostToolUse**: writes the load or save marker depending on the `exec` command; on
+  `edit`/`write` it triggers `leina refresh` to keep the graph up to date (see
+  [Search and queries](./03-busqueda-y-consultas.md#el-freshness-gate)).
+- **Stop**: if the save marker is missing, it emits the nudge via `stderr`. **stdout is always
+  empty.** It never blocks (exit 0 on every branch).
 
 ---
 
-## Cierre del recorrido
+## doctor: is it ready to inject?
 
-Con esto cerramos el círculo de la analogía:
+`leina doctor` checks *injection-readiness*: that the global memory database and the `graph.db`
+exist, in order to detect a degraded state where active injection would only work halfway. One
+key invariant: **doctor never opens SQLite** — all checks are filesystem-only (stat, reading
+text/JSON). This avoids side effects (WAL/SHM) and keeps it fast and safe.
 
-- el **cartógrafo** levanta el mapa ([grafo](./02-grafo.md)) y lo mantiene fresco
-  ([búsqueda](./03-busqueda-y-consultas.md));
-- el **bibliotecario** lleva el diario ([memoria](./04-memoria.md)) y sabe qué notas
-  envejecieron ([drift](./05-comunicacion-grafo-memoria.md));
-- el **conserje** (este capítulo) hace que todo eso llegue al agente en el momento justo, sin
-  trabarle nunca la puerta.
+---
 
-Volvé al [índice](./README.md) para releer cualquier pieza.
+## Closing the loop
+
+With this, we close the circle of the analogy:
+
+- the **cartographer** draws up the map ([graph](./02-grafo.md)) and keeps it fresh
+  ([search](./03-busqueda-y-consultas.md));
+- the **librarian** keeps the diary ([memory](./04-memoria.md)) and knows which notes have
+  gone stale ([drift](./05-comunicacion-grafo-memoria.md));
+- the **concierge** (this chapter) makes sure all of that reaches the agent at just the right
+  moment, without ever locking the door on it.
+
+Head back to the [index](./README.md) to reread any piece.

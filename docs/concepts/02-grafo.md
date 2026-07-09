@@ -1,94 +1,95 @@
-# 2. El grafo de código
+# 2. The code graph
 
-> **En una frase:** el grafo convierte tu código (texto plano) en un *mapa de la ciudad* donde
-> cada clase, función o método es una esquina (`node`) y cada llamada, herencia o import es una
-> calle (`edge`).
-
----
-
-## De texto plano a mapa de ciudad
-
-Un repositorio es, para una máquina, una pila de strings. Buscar "quién usa `TokenFactory`"
-con `grep` es como buscar una dirección leyendo todas las calles de la ciudad una por una.
-
-El **cartógrafo** hace otra cosa: recorre el código una vez, dibuja un mapa, y desde entonces
-responde "¿quién llega a esta esquina?" mirando el mapa, no las calles. Ese mapa es el grafo, y
-vive en `<proyecto>/.leina/graph.db` (SQLite, uno por repo, git-ignored).
-
-Construirlo es el comando `leina build` (o `refresh`).
+> **In one sentence:** the graph turns your code (plain text) into a *city map* where
+> every class, function, or method is an intersection (`node`) and every call, inheritance, or
+> import is a street (`edge`).
 
 ---
 
-## El pipeline de construcción
+## From plain text to city map
+
+A repository is, to a machine, just a pile of strings. Looking for "who uses `TokenFactory`"
+with `grep` is like finding an address by reading every street in the city one by one.
+
+The **cartographer** does something different: it walks through the code once, draws a map,
+and from then on answers "who reaches this intersection?" by looking at the map, not the
+streets. That map is the graph, and it lives in `<project>/.leina/graph.db` (SQLite, one per
+repo, git-ignored).
+
+Building it is the `leina build` command (or `refresh`).
+
+---
+
+## The build pipeline
 
 ```mermaid
 flowchart LR
-    src["enumera<br/>archivos fuente"] --> detect["¿qué lenguaje?"]
-    detect --> extract["extracción<br/>(3 niveles)"]
-    extract --> resolve["resolución<br/>raw calls → edges"]
-    resolve --> dedup["dedup<br/>fusiona duplicados"]
-    dedup --> store["graph.db"]
-    store --> manifest["manifest<br/>(para staleness)"]
+    src["list source files<br/>(enumerates sources)"] --> detect["detect<br/>which language?"]
+    detect --> extract["extraction<br/>(3 levels)"]
+    extract --> resolve["resolve<br/>raw calls → edges"]
+    resolve --> dedup["dedup<br/>merges duplicates"]
+    dedup --> store["graph store<br/>(graph.db)"]
+    store --> manifest["manifest<br/>(for staleness)"]
 ```
 
-Tras volcar nodes y edges en SQLite, `build` escribe un **manifest** (huellas de los archivos
-fuente) que después sirve para detectar si el mapa quedó viejo — ver
-[Búsqueda y consultas](./03-busqueda-y-consultas.md#el-freshness-gate).
+After dumping nodes and edges into SQLite, `build` writes a **manifest** (fingerprints of the
+source files) that's later used to detect if the map has gone stale — see
+[Search and queries](./03-busqueda-y-consultas.md#el-freshness-gate).
 
 ---
 
-## Extracción en tres niveles
+## Three-level extraction
 
-No todos los lenguajes se leen igual. leina usa una estrategia escalonada que equilibra
-**precisión** (grado de compilador) con **portabilidad** (sin dependencias nativas):
+Not every language is read the same way. leina uses a tiered strategy that balances
+**precision** (compiler-grade) with **portability** (no native dependencies):
 
 ```mermaid
 flowchart TD
-    file["archivo fuente"] --> q{¿extensión?}
-    q -->|.ts .tsx| ts["ts-morph<br/><b>semántico</b><br/>(TypeScript compiler API)"]
-    q -->|.cs .java| sc{¿sidecar<br/>disponible?}
-    q -->|otros<br/>.js .go .py …| treesitter["tree-sitter<br/><b>sintáctico</b>"]
-    sc -->|sí| sidecar["sidecar semántico<br/>(Roslyn / JDT)"]
+    file["source file"] --> q{extension?}
+    q -->|.ts .tsx| ts["ts-morph<br/><b>semantic</b><br/>(TypeScript compiler API)"]
+    q -->|.cs .java| sc{sidecar<br/>available?}
+    q -->|other<br/>.js .go .py …| treesitter["tree-sitter<br/><b>syntactic</b>"]
+    sc -->|yes| sidecar["semantic sidecar<br/>(Roslyn / JDT)"]
     sc -->|no| treesitter
 ```
 
-| Nivel | Lenguajes | Herramienta | Qué garantiza |
+| Level | Languages | Tool | What it guarantees |
 |-------|-----------|-------------|---------------|
-| **Semántico (compiler-grade)** | TypeScript / TSX | **ts-morph** (TS compiler API) | Resolución exacta de símbolos: edges con confianza `EXTRACTED` |
-| **Semántico (sidecar)** | C# / Java | proceso externo (Roslyn para C#, JDT para Java) | Igual de exacto; si no hay sidecar, **cae** a tree-sitter |
-| **Sintáctico** | todo lo demás (JS, Go, Python, …) | **tree-sitter** | AST sin resolución; emite *raw calls* que se resuelven después |
+| **Semantic (compiler-grade)** | TypeScript / TSX | **ts-morph** (TS compiler API) | Exact symbol resolution: edges with `EXTRACTED` confidence |
+| **Semantic (sidecar)** | C# / Java | external process (Roslyn for C#, JDT for Java) | Just as exact; if there's no sidecar, it **falls back** to tree-sitter |
+| **Syntactic** | everything else (JS, Go, Python, …) | **tree-sitter** | AST without resolution; emits *raw calls* that get resolved later |
 
-### El sidecar de C#/Java
+### The C#/Java sidecar
 
-El cartógrafo no habla C# ni Java nativamente, así que para esos terceriza a un *sidecar*: un
-proceso externo que recibe un directorio y devuelve `{ nodes, edges }` como JSON por stdout.
-Se configura por variables de entorno:
+The cartographer doesn't speak C# or Java natively, so for those it outsources to a *sidecar*:
+an external process that receives a directory and returns `{ nodes, edges }` as JSON over
+stdout. It's configured via environment variables:
 
 ```bash
 LEINA_CSHARP_SIDECAR="dotnet /path/RoslynGraph.dll"
 LEINA_JAVA_SIDECAR="java -jar /path/jdt-graph.jar"
 ```
 
-Si no hay ninguno configurado, podés optar por que se construya on-demand
-(`LEINA_BUILD_SIDECARS=1`): se materializan plantillas incluidas,
-se compila con el toolchain local (dotnet SDK / JDK 17+) y el binario queda cacheado en
-`~/.leina/sidecars/{lang}/dist/`. Sin sidecar, C#/Java se extraen igual con tree-sitter
-(menos preciso, pero funciona).
+If none is configured, you can opt to have it built on-demand
+(`LEINA_BUILD_SIDECARS=1`): templates are compiled with the local toolchain (dotnet SDK /
+JDK 17+), and the resulting binary is cached under `~/.leina/sidecars/`. Without a sidecar,
+C#/Java are still extracted with tree-sitter (less precise, but it works).
 
-### El truco de las dos pasadas (TypeScript)
+### The two-pass trick (TypeScript)
 
-Para TypeScript, la extracción recorre el proyecto **dos veces**:
+For TypeScript, the cartographer walks the project **twice**:
 
-1. **Pasada 1:** anota *todas* las declaraciones (funciones, clases, métodos). Arma la "guía
-   telefónica".
-2. **Pasada 2:** ahora que la guía está completa, resuelve cada llamada/herencia al nodo exacto.
+1. **Pass 1** records *all* declarations (functions, classes, methods) in a lookup map. It
+   builds the "phone book."
+2. **Pass 2** now that the phone book is complete, it resolves each call/inheritance to the
+   exact node.
 
-¿Por qué dos? Porque TypeScript permite *forward references* y llamadas cruzadas entre
-archivos: no podés resolver una llamada a algo que todavía no registraste.
+Why two passes? Because TypeScript allows *forward references* and cross-file calls: you can't
+resolve a call to something you haven't registered yet.
 
 ---
 
-## El modelo: nodes y edges
+## The model: nodes and edges
 
 ```mermaid
 classDiagram
@@ -113,87 +114,87 @@ classDiagram
     GraphEdge "many" --> "1" GraphNode : target
 ```
 
-### El `node` (la esquina)
+### The `node` (the intersection)
 
-- `id` — identificador **estable y file-scoped**. Normaliza cada parte (NFKC + casefold +
-  colapsa no-alfanuméricos) y une con `:`. Ejemplo: el método `create` de `TokenFactory` en el
-  archivo `src/auth.ts` → `src_auth_ts:tokenfactory:create`.
+- `id` — a **stable, file-scoped** identifier. It normalizes each part (NFKC + casefold +
+  collapses non-alphanumerics) and joins them with `:`. Example:
+  `src/auth.ts` + `TokenFactory` + `create` → `src_auth_ts:tokenfactory:create`.
 - `kind` — `class` · `function` · `method` · `interface` · `module` · `concept`.
-- `signature` — solo para funciones/métodos: tipo de retorno, parámetros (con tipo,
-  nullabilidad, opcionalidad), modificador de acceso, flags `isAsync`/`isGenerator`.
+- `signature` — only for functions/methods: return type, parameters (with type, nullability,
+  optionality), access modifier, `isAsync`/`isGenerator` flags.
 
-### El `edge` (la calle)
+### The `edge` (the street)
 
-Cada edge tiene una **relación** (el tipo de calle) y una **confianza** (cuán seguros estamos
-de que la calle existe):
+Each edge has a **relation** (the type of street) and a **confidence** (how sure we are that
+the street exists):
 
-| Grupo | `relation` | Significa |
+| Group | `relation` | Means |
 |-------|-----------|-----------|
-| Estructural | `contains` | módulo → definición que vive en él |
-| Estructural | `method` | clase → su método |
-| Llamadas | `calls` | función → función que invoca |
-| Llamadas | `references` | función → tipo que usa |
-| Imports | `imports`, `imports_from` | dependencia de módulo |
-| Herencia | `extends`, `implements`, `inherits` | jerarquía de tipos |
-| Otros | `uses` | uso genérico |
+| Structural | `contains` | module → definition that lives in it |
+| Structural | `method` | class → its method |
+| Calls | `calls` | function → function it invokes |
+| Calls | `references` | function → type it uses |
+| Imports | `imports`, `imports_from` | module dependency |
+| Inheritance | `extends`, `implements`, `inherits` | type hierarchy |
+| Other | `uses` | generic usage |
 
-**Confianza** (`confidence`) — clave para entender la búsqueda después:
+**Confidence** (`confidence`) — key to understanding search later on:
 
 ```mermaid
 flowchart LR
-    ex["EXTRACTED<br/>probado por compilador<br/>o match único en mismo archivo"]
-    inf["INFERRED<br/>match único cross-file<br/>por nombre (heurística)"]
-    amb["AMBIGUOUS<br/>varios candidatos<br/>se elige el 1º, se marca"]
-    ex -->|más confiable| inf --> amb
+    ex["EXTRACTED<br/>proven by the compiler<br/>or unique match in the same file"]
+    inf["INFERRED<br/>unique cross-file match<br/>by name (heuristic)"]
+    amb["AMBIGUOUS<br/>several candidates<br/>1st one is chosen, flagged"]
+    ex -->|more reliable| inf --> amb
 ```
 
 ---
 
-## Resolución: de *raw calls* a *edges*
+## Resolution: from *raw calls* to *edges*
 
-tree-sitter no resuelve símbolos: cuando ve `factory.make()`, solo sabe que hay una llamada a
-algo llamado `make`. Eso es un **raw call**. Convertirlos en edges reales es trabajo de la fase
-de **resolución**, en dos pasos:
+tree-sitter doesn't resolve symbols: when it sees `factory.make()`, it only knows there's a
+call to something named `make`. That's a **raw call**. Turning these into real edges happens
+in two phases:
 
-1. **Retarget de herencia** — los edges `extends`/`implements`/`inherits` apuntan al principio
-   a IDs placeholder por etiqueta; se reapuntan al nodo real buscando el label en el índice
-   (solo tipos: clases/interfaces, ignorando homónimos de métodos como constructores Java).
-2. **Resolución de raw calls** — para cada llamada se buscan candidatos por label normalizado y
-   se aplican heurísticas **en orden**:
+1. **Inheritance retargeting** — `extends`/`implements`/`inherits` edges initially point to
+   placeholder IDs by label; they get repointed to the real node by looking up the label in the
+   index (types only: classes/interfaces, ignoring method namesakes like Java constructors).
+2. **Raw call resolution** — for each call, candidates are looked up by normalized label and
+   heuristics are applied **in order**:
 
 ```mermaid
 flowchart TD
-    rc["raw call: foo()"] --> samefile{¿match único<br/>en el mismo archivo?}
-    samefile -->|sí| extracted["EXTRACTED"]
-    samefile -->|no| imp{¿es un nombre<br/>importado?}
-    imp -->|único candidato| extracted
-    imp -->|varios, módulo coincide| extracted
-    imp -->|no| cross{¿match único<br/>cross-file?}
-    cross -->|sí| inferred["INFERRED"]
-    cross -->|≤4 candidatos| ambiguous["AMBIGUOUS<br/>(elige 1º, marca)"]
-    cross -->|>4 candidatos| dropped["descartado<br/>(nombre demasiado común:<br/>get, toString…)"]
+    rc["raw call: foo()"] --> samefile{unique match<br/>in the same file?}
+    samefile -->|yes| extracted["EXTRACTED"]
+    samefile -->|no| imp{is it an<br/>imported name?}
+    imp -->|single candidate| extracted
+    imp -->|several, module matches| extracted
+    imp -->|no| cross{unique<br/>cross-file match?}
+    cross -->|yes| inferred["INFERRED"]
+    cross -->|≤4 candidates| ambiguous["AMBIGUOUS<br/>(picks 1st, flags)"]
+    cross -->|>4 candidates| dropped["dropped<br/>(name too common:<br/>get, toString…)"]
 ```
 
-**Desambiguación por tipo de receptor:** si tree-sitter pudo rastrear que `factory` es de tipo
-`TokenFactory`, entonces `factory.make()` se resuelve directo a `TokenFactory.make()` sin
-adivinar.
+**Disambiguation by receiver type:** if tree-sitter was able to track that `factory` is of type
+`TokenFactory`, then `factory.make()` resolves directly to `TokenFactory.make()` without
+guessing.
 
 ---
 
-## Deduplicación
+## Deduplication
 
-Antes de volcar a SQLite, una fase de **deduplicación** limpia:
+Before dumping to SQLite, deduplication cleans up:
 
-- **Nodes** — por `id` (last-write-wins).
-- **Edges** — por la tupla `(source, target, relation, context)`. Si hay multi-edges, se
-  conserva el de **mayor confianza** (`EXTRACTED` 3 > `INFERRED` 2 > `AMBIGUOUS` 1) y se
-  acumula `weight`. Los self-loops (`source === target`) se descartan.
+- **Nodes** — by `id` (last-write-wins).
+- **Edges** — by the tuple `(source, target, relation, context)`. When there are multi-edges,
+  the one with **highest confidence** is kept (`EXTRACTED` 3 > `INFERRED` 2 > `AMBIGUOUS` 1) and
+  `weight` is accumulated. Self-loops (`source === target`) are dropped.
 
 ---
 
-## Cómo se guarda (el `graph.db`)
+## How it's stored (the `graph.db`)
 
-El grafo se guarda en SQLite con este schema:
+The graph store implements the `GraphRepository` port over SQLite. The schema:
 
 ```sql
 CREATE TABLE nodes (
@@ -204,7 +205,7 @@ CREATE TABLE nodes (
   source_file TEXT NOT NULL,
   source_location TEXT,
   community INTEGER,
-  signature TEXT                -- Signature serializada como JSON
+  signature TEXT                -- Signature serialized as JSON
 );
 
 CREATE TABLE edges (
@@ -219,24 +220,24 @@ CREATE TABLE edges (
   PRIMARY KEY (source, target, relation, context)
 );
 
-CREATE INDEX idx_edges_source ON edges(source);   -- vecinos salientes rápidos
-CREATE INDEX idx_edges_target ON edges(target);   -- vecinos entrantes rápidos
-CREATE INDEX idx_nodes_label  ON nodes(label);    -- lookup por nombre
+CREATE INDEX idx_edges_source ON edges(source);   -- fast outgoing neighbors
+CREATE INDEX idx_edges_target ON edges(target);   -- fast incoming neighbors
+CREATE INDEX idx_nodes_label  ON nodes(label);    -- lookup by name
 ```
 
-Decisiones a notar:
+Decisions worth noting:
 
-- **PK compuesta en `edges`** — `(source, target, relation, context)`: los multi-edges se
-  fusionan acumulando `weight` (upsert con `ON CONFLICT`).
-- **Índices en `source`/`target`** — son los que hacen baratos los recorridos del grafo
-  (`outEdges`/`inEdges`), de los que depende toda la búsqueda del próximo capítulo.
-- **`signature` como JSON** — se guarda como texto y se parsea al leer.
+- **Composite PK on `edges`** — `(source, target, relation, context)`: multi-edges are merged
+  by accumulating `weight` (upsert with `ON CONFLICT`).
+- **Indexes on `source`/`target`** — these are what make graph traversals cheap
+  (`outEdges`/`inEdges`), which all the search in the next chapter depends on.
+- **`signature` as JSON** — stored as text and parsed on read.
 
-El schema se versiona internamente con `PRAGMA user_version`.
+The schema is versioned with `PRAGMA user_version` so it can evolve safely across releases.
 
 ---
 
-## Para seguir
+## Up next
 
-- Ahora que el mapa existe, ¿cómo se consulta? → [Búsqueda y consultas](./03-busqueda-y-consultas.md)
-- ¿Cómo se conecta este mapa con las notas del bibliotecario? → [Comunicación grafo–memoria](./05-comunicacion-grafo-memoria.md)
+- Now that the map exists, how do you query it? → [Search and queries](./03-busqueda-y-consultas.md)
+- How does this map connect to the librarian's notes? → [Graph–memory communication](./05-comunicacion-grafo-memoria.md)

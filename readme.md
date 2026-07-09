@@ -361,13 +361,13 @@ leina affected src "GraphStore"
 > **Full command reference:** [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) documents every
 > command, its flags, what it prints, and the implementation entry point behind it.
 >
-> **How it works (conceptual guide):** [`docs/concepts/`](docs/concepts/README.md) explains the
-> internals — graph, memory, search, drift and hooks — with diagrams and storytelling. Written
-> in Spanish first — [English translation](docs/i18n/en/concepts/README.md) available, or read
-> both via the [bilingual site](https://kolimar.github.io/leina/) with its EN/ES toggle.
+> **How it works (conceptual guide):** [`docs/concepts/`](docs/concepts/README.md) explains
+> how leina works — graph, memory, search, drift and hooks — with diagrams and storytelling.
+> A [Spanish translation](docs/i18n/es/concepts/README.md) is available, or read both via the
+> [bilingual site](https://kolimar.github.io/leina/) with its EN/ES toggle.
 >
 > **Guided, Q&A-style walkthrough:** [`docs/guides/usage-guide.md`](docs/guides/usage-guide.md)
-> (Spanish; [English translation](docs/i18n/en/usage-guide.md)) covers the same ground as this
+> ([Spanish translation](docs/i18n/es/usage-guide.md)) covers the same ground as this
 > README and `GETTING_STARTED.md` from a "what can I ask the AI" angle, plus a full SDD
 > walkthrough — a good fit for less CLI-fluent teammates.
 >

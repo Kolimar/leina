@@ -373,14 +373,13 @@ leina affected <your-project> "GraphStore"
 > documenta cada comando, sus flags, qué imprime y el punto de entrada de la implementación
 > detrás de él.
 >
-> **Cómo funciona (guía conceptual):** [`docs/concepts/`](docs/concepts/README.md) explica el
-> funcionamiento interno — grafo, memoria, búsqueda, drift y hooks — con diagramas y
-> storytelling. Escrita primero en español — hay [traducción al inglés](docs/i18n/en/concepts/README.md)
-> disponible para compartir con compañeros que no lean español.
+> **Cómo funciona (guía conceptual):** [`docs/i18n/es/concepts/`](docs/i18n/es/concepts/README.md)
+> explica cómo funciona leina — grafo, memoria, búsqueda, drift y hooks — con diagramas y
+> storytelling. O leé ambos idiomas en el [sitio bilingüe](https://kolimar.github.io/leina/) con
+> su selector EN/ES.
 >
 > **Recorrido guiado, estilo preguntas y respuestas:**
-> [`docs/guides/usage-guide.md`](docs/guides/usage-guide.md) (español;
-> [traducción al inglés](docs/i18n/en/usage-guide.md)) cubre el mismo terreno que este
+> [`docs/i18n/es/usage-guide.md`](docs/i18n/es/usage-guide.md) cubre el mismo terreno que este
 > README y `GETTING_STARTED.md` desde un ángulo de "qué le puedo pedir a la IA", más un
 > recorrido SDD completo — una buena opción para compañeros de equipo menos fluidos con la CLI.
 >

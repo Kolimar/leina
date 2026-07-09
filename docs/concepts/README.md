@@ -1,100 +1,101 @@
-# Cómo funciona leina — guía conceptual
+# How leina works — conceptual guide
 
-> Estos documentos explican **cómo funciona leina por dentro**: la mecánica del
-> grafo, la memoria, la búsqueda y los hooks. Si lo que buscás es *cómo instalarlo y usarlo*,
-> esos how-to ya viven en [`GETTING_STARTED.md`](../GETTING_STARTED.md),
-> [`CLI_REFERENCE.md`](../CLI_REFERENCE.md) y [`usage-guide.md`](../guides/usage-guide.md).
+> These documents explain **how leina works under the hood**: the mechanics of
+> the graph, the memory, search, and the hooks. If what you're looking for is *how to install
+> and use it*, those how-tos already live in [`GETTING_STARTED.md`](../GETTING_STARTED.md),
+> [`CLI_REFERENCE.md`](../CLI_REFERENCE.md), and [`usage-guide.md`](../guides/usage-guide.md).
 
-La prosa está en español; los nombres de código, comandos y términos técnicos (`node`, `edge`,
-`drift`, `anchor`, `hook`) se mantienen en inglés porque así aparecen en el código y en la CLI.
+The prose is in English; code names, commands, and technical terms (`node`, `edge`,
+`drift`, `anchor`, `hook`) are kept as they appear in the code and the CLI.
 
-> 🌐 **¿Preferís leerlo en el navegador, con los diagramas ya renderizados?** El sitio de
-> documentación bilingüe (EN/ES) de todo el proyecto — no solo esta guía conceptual — se genera
-> con:
+> 🌐 **Prefer reading it in the browser, with diagrams already rendered?** The project's
+> bilingual (EN/ES) documentation site — not just this conceptual guide — is generated
+> with:
 >
 > ```bash
-> npm run docs:site:build      # genera site/index.html (todas las páginas, EN + ES)
-> open site/index.html          # (macOS; en Linux usá xdg-open)
+> npm run docs:site:build      # generates site/index.html (all pages, EN + ES)
+> open site/index.html          # (macOS; on Linux use xdg-open)
 > ```
 >
-> Es un único archivo HTML autocontenido con barra de navegación, selector de idioma y los
-> diagramas Mermaid dibujados. Se regenera a partir de estos mismos `.md` (más sus traducciones
-> en `docs/i18n/`), así que la fuente de verdad sigue siendo el markdown. Requiere conexión la
-> primera vez (carga `marked` y `mermaid` desde un CDN). El sitio también se publica
-> automáticamente en GitHub Pages en cada push a `main`.
+> It's a single self-contained HTML file with a navigation bar, language switcher, and
+> rendered Mermaid diagrams. It's regenerated from these same `.md` files (plus their
+> translations in `docs/i18n/`), so the source of truth remains the markdown. It requires a
+> connection the first time (it loads `marked` and `mermaid` from a CDN). The site is also
+> published automatically to GitHub Pages on every push to `main`.
 
 ---
 
-## La analogía que usamos en toda la guía
+## The analogy used throughout this guide
 
-Imaginá que cada repositorio tiene **dos empleados invisibles** trabajando para tu IA:
+Imagine that every repository has **two invisible employees** working for your AI:
 
-- **El cartógrafo** (el **grafo**) levanta un *mapa* del código: qué pieza llama a cuál,
-  qué hereda de qué, qué se rompe si tocás algo. Sabe **qué ES** el código.
-- **El bibliotecario con su diario de bitácora** (la **memoria**) anota *por qué* las cosas
-  son como son: decisiones, bugs resueltos, convenciones. Sabe **por qué** el código llegó a
-  ser así.
+- **The cartographer** (the **graph**) draws up a *map* of the code: what piece calls what,
+  what inherits from what, what breaks if you touch something. It knows **what** the code IS.
+- **The librarian with their logbook** (the **memory**) writes down *why* things are
+  the way they are: decisions, resolved bugs, conventions. It knows **why** the code came to
+  be this way.
 
-Los dos hablan entre sí: cuando el bibliotecario anota algo sobre "la clase `TokenFactory`",
-le pone un **post-it (`anchor`)** sobre esa página del mapa. Si el cartógrafo redibuja esa
-página, el bibliotecario se entera de que su nota **puede haber quedado vieja** (eso es el
-*drift*). Y un **conserje (los `hooks`)** deja notas en tu escritorio al empezar y al terminar
-cada sesión — sin trabarte nunca la puerta.
+The two talk to each other: when the librarian writes a note about "the `TokenFactory`
+class," they stick a **sticky note (`anchor`)** on that page of the map. If the cartographer
+redraws that page, the librarian learns that their note **may have gone stale** (that's
+*drift*). And a **concierge (the `hooks`)** leaves notes on your desk at the start and end of
+each session — without ever locking the door on you.
 
-Esa metáfora — cartógrafo, bibliotecario, post-its y conserje — vuelve en cada documento.
+That metaphor — cartographer, librarian, sticky notes, and concierge — comes back in every
+document.
 
 ---
 
-## Mapa de la documentación
+## Documentation map
 
-Leelos en este orden si venís de cero:
+Read them in this order if you're starting from scratch:
 
-| # | Documento | De qué trata | Empleado |
+| # | Document | What it covers | Employee |
 |---|-----------|--------------|----------|
-| 1 | [Arquitectura general](./01-arquitectura.md) | Las capas (domain / application / infrastructure / cli), por qué es CLI-first, writers puros | (la empresa entera) |
-| 2 | [El grafo de código](./02-grafo.md) | Cómo se extrae el código a un grafo, qué es un `node` y un `edge`, resolución y dedup | el cartógrafo |
-| 3 | [Búsqueda y consultas](./03-busqueda-y-consultas.md) | `query`, `affected`, `path` y el *freshness gate* (auto-rebuild vs refuse) | el cartógrafo |
-| 4 | [La memoria de proyecto](./04-memoria.md) | `observations`, `sessions`, el *project key*, búsqueda FTS5/BM25 | el bibliotecario |
-| 5 | [Cómo se hablan grafo y memoria](./05-comunicacion-grafo-memoria.md) | `anchors` y *drift detection* (USABLE / WARNING / DO-NOT-USE) | los post-its |
-| 6 | [Hooks e inyección de contexto](./06-hooks-e-inyeccion.md) | Ciclo de vida de los hooks de Devin, markers, inyección activa | el conserje |
+| 1 | [General architecture](./01-arquitectura.md) | The layers (domain / application / infrastructure / cli), why it's CLI-first, pure writers | (the whole company) |
+| 2 | [The code graph](./02-grafo.md) | How code is extracted into a graph, what a `node` and an `edge` are, resolution and dedup | the cartographer |
+| 3 | [Search and queries](./03-busqueda-y-consultas.md) | `query`, `affected`, `path`, and the *freshness gate* (auto-rebuild vs refuse) | the cartographer |
+| 4 | [Project memory](./04-memoria.md) | `observations`, `sessions`, the *project key*, FTS5/BM25 search | the librarian |
+| 5 | [How the graph and memory talk to each other](./05-comunicacion-grafo-memoria.md) | `anchors` and *drift detection* (USABLE / WARNING / DO-NOT-USE) | the sticky notes |
+| 6 | [Hooks and context injection](./06-hooks-e-inyeccion.md) | Devin hooks lifecycle, markers, active injection | the concierge |
 
 ---
 
-## Vista de pájaro
+## Bird's-eye view
 
 ```mermaid
 flowchart TB
-    subgraph host["IA host (Devin)"]
-        agent["Agente"]
-        hooks["Hooks de Devin"]
+    subgraph host["AI host (Devin)"]
+        agent["Agent"]
+        hooks["Devin hooks"]
     end
 
     subgraph cli["leina (CLI)"]
-        cmds["Comandos:<br/>build · query · affected · path<br/>memory save/search/verified<br/>agent-hook"]
+        cmds["Commands:<br/>build · query · affected · path<br/>memory save/search/verified<br/>agent-hook"]
     end
 
-    subgraph stores["Almacenamiento (SQLite)"]
-        graphdb[("graph.db<br/>(por proyecto)")]
-        memdb[("memory.db<br/>(global, por project key)")]
+    subgraph stores["Storage (SQLite)"]
+        graphdb[("graph.db<br/>(per project)")]
+        memdb[("memory.db<br/>(global, per project key)")]
     end
 
-    agent -->|ejecuta por su shell| cmds
-    hooks -->|invoca| cmds
-    cmds -->|lee/escribe| graphdb
-    cmds -->|lee/escribe| memdb
+    agent -->|runs via its shell| cmds
+    hooks -->|invokes| cmds
+    cmds -->|reads/writes| graphdb
+    cmds -->|reads/writes| memdb
     graphdb <-.->|anchors + drift| memdb
 ```
 
-Tres ideas que conviene grabarse desde ya:
+Three ideas worth remembering right away:
 
-1. **CLI-first.** La superficie de todos los días son comandos cortos que corren, responden
-   y terminan — nada corre en segundo plano por default. Cuando querés un servidor, lo pedís
-   explícitamente: `leina mcp` es el servidor MCP (por stdio) que tu host de IA lanza para
-   llamar a las herramientas de leina, y `leina graph serve` es un explorador HTTP de solo
-   lectura en foreground, ligado a loopback, que corés cuando lo necesitás y frenás con Ctrl+C.
-2. **Dos bases SQLite separadas.** El grafo vive en `<proyecto>/.leina/graph.db`
-   (uno por repo, git-ignored). La memoria vive en `~/.leina/memory.db` (una sola,
-   global, segmentada por *project key*). Están **desacopladas en disco** y solo se unen en la
-   capa de aplicación, vía `anchors`.
-3. **Todo es advisory.** Los hooks nunca bloquean al agente. En el peor caso dejan una nota en
-   `stderr`; el agente siempre sigue. *Fail-open* en cada error.
+1. **CLI-first.** The everyday surface is short commands that run, respond, and exit —
+   nothing runs in the background by default. When you want a server, you ask for one
+   explicitly: `leina mcp` is the MCP server (over stdio) your AI host launches to call
+   leina's tools, and `leina graph serve` is an optional read-only HTTP explorer bound to
+   loopback that you run on demand and stop with Ctrl+C.
+2. **Two separate SQLite databases.** The graph lives in `<project>/.leina/graph.db`
+   (one per repo, git-ignored). The memory lives in `~/.leina/memory.db` (a single,
+   global one, segmented by *project key*). They are **decoupled on disk** and only meet in
+   the application layer, via `anchors`.
+3. **Everything is advisory.** The hooks never block the agent. In the worst case they leave
+   a note on `stderr`; the agent always keeps going. *Fail-open* on every error.
