@@ -703,6 +703,18 @@ function repairProjectPhase(project: string): void {
     console.log(`project: not initialized — skipped (run 'leina init ${project}' to opt in)`);
     return;
   }
+  // Repair re-wires the hosts the user already chose — the persisted activate/tui selection.
+  // It must NOT prompt for --hosts or `fail()` the way `init` does: with init evidence but no
+  // persisted host on this machine there is nothing to faithfully re-wire, so skip fail-open
+  // (advisory) and let the rest of repair — shell-wrapper, doctor — still run.
+  const persistedHosts = persistedHostsRaw();
+  if (persistedHosts === undefined) {
+    console.log(
+      `project: initialized, but no host selection is persisted on this machine — skipped\n` +
+        `  (run 'leina init ${project} --hosts <host>' to re-wire it; known hosts: ${knownHostIds()})`,
+    );
+    return;
+  }
   const cliBase = deriveCliCommand({
     cliEntry: resolvePath(process.argv[1] ?? "."),
     execPath: process.execPath,
@@ -712,9 +724,7 @@ function repairProjectPhase(project: string): void {
   const profile = agents?.includes("leina:capabilities:start") ? WINDSURF_PROFILE : DEVIN_PROFILE;
   const written: string[] = [];
   const failures: string[] = [];
-  // Same host resolution as init (persisted selection, else detection) — repair re-wires
-  // the hosts the user currently targets, never a host they deactivated.
-  const mode = writeInitArtifacts(project, profile, cliBase, resolveInitHosts(undefined), written, failures);
+  const mode = writeInitArtifacts(project, profile, cliBase, persistedHosts, written, failures);
   console.log(`project [${mode.toUpperCase()}] re-wired:`);
   for (const w of written) console.log(`  + ${w}`);
   for (const f of failures) console.log(`  ✖ ${f}`);

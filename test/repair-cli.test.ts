@@ -151,3 +151,29 @@ test("(rep-d) repair is idempotent on a healthy install (no churn, exit 0)", () 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("(rep-e) init evidence but no persisted host: repair skips the re-wire fail-open, never aborts", () => {
+  // A repo carrying committed init evidence (as a fresh checkout of an already-onboarded
+  // project would) on a machine that never activated → no persisted host selection. `init`
+  // would hard-fail with "--hosts is required"; `repair` must instead skip the re-wire and
+  // still run its remaining phases (this is what regressed the release: repair aborted here,
+  // skipping the shell-wrapper step and the final doctor pass).
+  const { env, cleanup } = makeSandbox();
+  const dir = tmpProject();
+  try {
+    mkdirSync(join(dir, ".leina"), { recursive: true });
+    writeFileSync(join(dir, ".leina", "consent"), "enabled");
+
+    const { status, stdout } = runCli(env, "repair", dir);
+    // Graceful skip, not the `init`-style hard `--hosts is required` abort.
+    assert.match(stdout, /no host selection is persisted on this machine — skipped/);
+    // Proof it did NOT abort mid-command: repair ran through to the doctor summary.
+    assert.match(stdout, /still failing/);
+    assert.equal(status, 1, "exit driven by doctor, not by an abort");
+    // The re-wire was skipped — repair wrote no host artifacts.
+    assert.ok(!existsSync(join(dir, ".devin", "hooks.v1.json")), "hooks NOT written");
+  } finally {
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
