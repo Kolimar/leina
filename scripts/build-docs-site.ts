@@ -12,7 +12,7 @@
 // language the reader has selected.
 
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -142,6 +142,23 @@ function resolveTarget(target: string, baseDir: string): string | null {
   return null;
 }
 
+// Inline a LOCAL image as a data: URI so the single self-contained site keeps working (the
+// deployed artifact is just site/index.html — relative image paths wouldn't resolve). External
+// URLs and already-inlined data: URIs are left untouched.
+const IMG_MIME: Record<string, string> = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+};
+function embedLocalImage(target: string, baseDir: string): string | null {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) return null; // http:, data:, ...
+  const [pathPart] = target.split("#");
+  if (!pathPart) return null;
+  const abs = resolve(baseDir, pathPart);
+  const mime = IMG_MIME[extname(abs).toLowerCase()];
+  if (!mime || !existsSync(abs)) return null;
+  return `data:${mime};base64,${readFileSync(abs).toString("base64")}`;
+}
+
 function rewriteLinks(md: string, baseDir: string): string {
   // Badge-style links (`[![alt](img)](url)`) nest a `]` inside the outer link
   // text, which the general single-link pass below can't parse correctly —
@@ -156,7 +173,11 @@ function rewriteLinks(md: string, baseDir: string): string {
   );
 
   return withBadgesRewritten.replace(/(!?)\[([^\]]*)\]\(([^)\s]+)\)/g, (whole, bang: string, text: string, target: string) => {
-    if (bang) return whole; // image — leave as-is
+    if (bang) {
+      // Image: inline a local file as a data: URI (keeps the single-file site self-contained).
+      const embedded = embedLocalImage(target, baseDir);
+      return embedded ? `![${text}](${embedded})` : whole;
+    }
     const rewritten = resolveTarget(target, baseDir);
     return rewritten ? `[${text}](${rewritten})` : whole;
   });

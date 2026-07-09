@@ -130,6 +130,16 @@ leina graph serve <your-project>        # read-only HTTP explorer at http://127.
 | Share / commit | yes (it's a file) | no (loopback-only) |
 | Reach for it when | sharing a snapshot, onboarding, offline | browsing live, inspecting memory, many repos |
 
+**A look at the explorer** — `graph serve` running on leina's own codebase:
+
+![The graph explorer showing GraphStore selected: its detail drawer lists grouped connections (calls, referenced-by, implements, methods) and the latest memories anchored to the node, each with a drift badge.](assets/screenshots/graph-serve-node-detail.jpg)
+
+Select any node to open its detail drawer: its grouped connections up top, and the latest decisions and notes **anchored** to it below — each drift-badged, so you can tell at a glance whether a note still matches the current code.
+
+![A zoomed view of the graph: individual classes and types with the edges between them.](assets/screenshots/graph-serve-graph.jpg)
+
+Zoom in and the map reads clearly — nodes are colour-coded by kind (function, class, interface, module…) and the edges show who calls, implements or references whom.
+
 ## 5. Query the graph
 
 ```bash

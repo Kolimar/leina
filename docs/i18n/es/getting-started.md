@@ -133,6 +133,16 @@ leina graph serve <your-project>        # explorador HTTP read-only en http://12
 | Compartir / commitear | sí (es un archivo) | no (solo loopback) |
 | Usalo para | compartir un snapshot, onboarding, offline | explorar en vivo, ver memoria, varios repos |
 
+**Un vistazo al explorador** — `graph serve` corriendo sobre el propio código de leina:
+
+![El explorador con GraphStore seleccionado: su panel de detalle lista las conexiones agrupadas (llama a, lo referencian, implementa, métodos) y las últimas memorias ancladas al nodo, cada una con un badge de drift.](assets/screenshots/graph-serve-node-detail.jpg)
+
+Seleccioná cualquier nodo para abrir su panel de detalle: arriba sus conexiones agrupadas, y abajo las últimas decisiones y notas **ancladas** a él — cada una con badge de drift, para ver de un vistazo si la nota sigue coincidiendo con el código actual.
+
+![Una vista ampliada del grafo: clases y tipos individuales con las aristas entre ellos.](assets/screenshots/graph-serve-graph.jpg)
+
+Al hacer zoom el mapa se lee claro — los nodos están coloreados por tipo (function, class, interface, module…) y las aristas muestran quién llama, implementa o referencia a quién.
+
 ## 5. Consultá el grafo
 
 ```bash
