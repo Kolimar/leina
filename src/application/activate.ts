@@ -1,15 +1,8 @@
 // application/activate.ts — Activate/Deactivate use-cases.
-// Orchestrates the global activation pipeline: populate share directory,
-// symlink into host dirs, write user-global config. Extracted from cli/index.ts.
-//
-// PR4 changes:
-//  - writeUserGlobalConfig: unified to use devinUserConfigFile() from share-paths.ts
-//    instead of join(homedir(), ".config", "devin", "config.json"). Both resolve to the same
-//    path on Linux/macOS, but devinUserConfigFile() also honours $HOME/$USERPROFILE/$APPDATA,
-//    making it sandbox-safe in tests and more correct on Windows.
-//  - runDeactivate: inverse of runActivate — unlinkHosts + revokeCliExecPermission +
-//    removeUserGlobalHooks applied to the user-global config. Does NOT touch blanketFile()
-//    (that is handleDisable's sole responsibility). [T1, D3]
+// Orchestrates the global activation pipeline: populate share directory, symlink into host
+// dirs, write user-global config. runDeactivate is the inverse — unlinkHosts +
+// revokeCliExecPermission + removeUserGlobalHooks on the user-global config; it does NOT
+// touch the blanket sentinel (that is handleDisable's sole responsibility).
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";

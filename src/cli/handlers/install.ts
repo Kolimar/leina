@@ -5,24 +5,11 @@
 // Cognitive-Complexity gate); the helpers accumulate human-readable lines into the shared
 // `written` / `removed` arrays that the final report prints.
 //
-// PR2 changes:
-//  - handleInit is now ADAPTIVE: branches on isBlanketActive().
-//      LIGHT (blanket=on)  → writeConsentFlag("enabled") + ensure .gitignore only.
-//      FULL  (blanket=off) → AGENTS.md + .devin/hooks.v1.json + local Exec grant +
-//                            .gitignore + writeConsentFlag("enabled").
-//  - Removed: maybeActivateInline (--activate flag), writeUserGlobal (init never mutates
-//    ~/.config/devin/config.json), migrateLegacyRegistry, spawnDetachedBuild (no auto-build).
-//  - writeDevinConfig: MCP-server strip removed; only grantCliExecPermission remains.
-//  - Added: --build flag → synchronous foreground graph build (dynamic import of graph.ts).
-//  - --no-global-skills / --activate / --write-user-config: silently ignored (back-compat).
-//
-// PR4 changes:
-//  - handleDisable: refactored to delegate global teardown to runDeactivate() (avoids
-//    duplicated logic); then removes blanket sentinel. disable = runDeactivate + blanket-off.
-//  - handleDeactivate: global teardown only (runDeactivate), does NOT touch blanket.
-//  - handleDeinit: per-repo inverse of init — strips managed blocks, sets consent=disabled,
-//    removes .devin/hooks.v1.json (FULL) and local Exec grant. Idempotent; "nothing to revert"
-//    when no changes are needed (OQ-2). [T1, T3, D3]
+// init is ADAPTIVE (branches on isBlanketActive()):
+//   LIGHT (blanket=on)  → writeConsentFlag("enabled") + ensure .gitignore only.
+//   FULL  (blanket=off) → AGENTS.md + per-host hooks + local Exec grant + .gitignore + consent.
+// disable = global teardown (runDeactivate) + remove blanket sentinel; deactivate is teardown
+// only; deinit is the per-repo inverse of init (strips managed blocks, consent=disabled).
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
@@ -335,8 +322,6 @@ function writeGitignoreStep(project: string, written: string[], failures: string
 // .devin/config.json — pre-authorize `Exec(leina)` in permissions.allow so the agent
 // never gets a permission prompt for `leina query/affected/memory ...`. Lives in the
 // committable project config (not the machine-global one) so it travels with the repo.
-// NOTE: MCP-server strip removed in PR2 — init no longer performs MCP migration in the local
-// project config. If you need to strip dead MCP entries, run `leina doctor`.
 // Used only in FULL init (blanket=off).
 function writeDevinConfig(project: string, written: string[], failures: string[]): void {
   const devinCfgPath = join(project, ".devin", "config.json");
@@ -354,8 +339,6 @@ function writeDevinConfig(project: string, written: string[], failures: string[]
 }
 
 // Devin project hooks file. Merge the managed block into any existing file.
-// MCP-matcher stripping removed (M1): init no longer performs MCP migration. To clean
-// dead MCP entries from a pre-existing config, run `leina doctor`.
 // Used only in FULL init (blanket=off).
 function writeDevinHooks(
   project: string,
@@ -587,8 +570,6 @@ export async function handleInit(rest: string[]): Promise<void> {
   //
   // Neither branch touches ~/.config/devin/config.json (I3).
   // No auto-build in either branch; use --build for an on-demand foreground build (I2).
-  //
-  // Back-compat: --activate, --no-global-skills, --write-user-config are silently ignored.
   const positional = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
   const project = resolvePath(optFlag(rest, "--project", undefined) ?? positional ?? ".");
 
