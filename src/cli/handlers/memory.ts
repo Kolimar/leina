@@ -1,6 +1,7 @@
 // cli/handlers/memory.ts — `leina memory <sub>` command handler.
-// sub-commands: save | update | search | verified | get | context | session |
-//               session-start | suggest-topic | current-project | merge-projects
+// sub-commands: save | update | get | search | verified | context | session |
+//               session-start | suggest-topic | current-project | merge-projects |
+//               reanchor | export | import | sync
 //
 // handleMemory is a thin dispatcher: it resolves <dir> and routes to a per-subcommand
 // function (each kept under the Cognitive-Complexity gate) via MEM_HANDLERS.
