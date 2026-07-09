@@ -11,10 +11,9 @@ This is the chapter where the cartographer and the librarian finally shake hands
 ## Two separate databases, one conversation
 
 Remember: the graph (`graph.db`, per repo) and memory (`memory.db`, global) are
-**decoupled on disk**. Memory never imports `GraphStore` directly. They come together in the
-**application layer**, in the composition root `openMemoryRepo`
-(<ref_snippet file="src/cli/wiring.ts" lines="40-67" />), which hands memory two functions that *know* how to talk
-to the graph: a **resolver** (to pin sticky notes) and a **verifier** (to check them).
+**decoupled on disk**. Memory never touches the graph store directly. They come together in the
+**application layer**, at the composition root, which hands memory two functions that *know* how
+to talk to the graph: a **resolver** (to pin sticky notes) and a **verifier** (to check them).
 
 ```mermaid
 flowchart TB
@@ -27,8 +26,8 @@ flowchart TB
         gnode["GraphNode"]
     end
     anchor -.->|points to| gnode
-    resolver["makeResolveAnchor<br/>(save-time)"] --> anchor
-    verifier["makeVerifyNode<br/>(read-time)"] --> gnode
+    resolver["resolver<br/>(save-time)"] --> anchor
+    verifier["verifier<br/>(read-time)"] --> gnode
     style mem fill:#fff4e5,stroke:#e8710a
     style gdb fill:#e8f0fe,stroke:#1a73e8
 ```
@@ -41,8 +40,7 @@ there's no graph, anchors are left unresolved (`unverified` state) and nothing b
 ## The sticky note: how an anchor gets pinned
 
 Think of an anchor as an adhesive note stuck to a page of a book that keeps getting rewritten. When you
-save an observation with `--anchors "TokenFactory"`, at **save-time** the following happens
-(`makeResolveAnchor`, <ref_file file="src/application/memory/anchor-verify.ts" />):
+save an observation with `--anchors "TokenFactory"`, at **save-time** the following happens:
 
 1. The graph is searched for the node(s) whose label matches **exactly** (functional-exact, no
    fuzzy substring) `"TokenFactory"`.
@@ -59,9 +57,9 @@ returns `[]`, and the save is never broken.
 ## The review: detecting drift at read-time
 
 When you run `leina memory verified`, the librarian reviews each sticky note
-**at the moment of reading** (the result is never persisted). For each anchor, `makeVerifyNode`
+**at the moment of reading** (the result is never persisted). For each anchor, the verifier
 asks the graph: *does this node still exist? what is the file's current hash on disk?*
-And `deriveAnchorState` (<ref_file file="src/application/memory/query.ts" />) decides the state:
+And the anchor state is decided:
 
 ```mermaid
 flowchart TD
@@ -88,7 +86,7 @@ The four states (`MemoryState`):
 | `contradicted` | the node **no longer exists** in the graph | the page was torn out |
 | `unverified` | it never resolved to a node, or the graph isn't available | we don't know which page it was against |
 
-When an observation has **several** anchors, `deriveMemoryState` aggregates: the worst case wins
+When an observation has **several** anchors, the aggregation takes the worst case
 (`contradicted` > `stale` > `unverified` > `active`).
 
 ---
@@ -105,7 +103,7 @@ Here's the most important subtlety. Not all notes age the same way:
 
 The observation's `type` defines its `nature`: types like `architecture`/`bugfix` are
 **descriptive**; `decision`/`preference` are **normative**. The final classification
-(`classify`) crosses `nature` × `state` to produce a `verdict`:
+crosses `nature` × `state` to produce a `verdict`:
 
 ```mermaid
 flowchart TD
@@ -127,7 +125,7 @@ flowchart TD
 | `warning` | use it with caution; it may be outdated or couldn't be verified |
 | `do_not_use` | this description no longer applies; ignore it |
 
-`getVerifiedContext` builds the full response: it looks up the observations that match the query,
+The verified context builds the full response: it looks up the observations that match the query,
 derives each one's state against the live graph, and sorts them into `usable` / `warning` /
 `doNotUse` with their reason. That way the agent doesn't just receive *what* was noted, but *how much
 it can trust* each note today.

@@ -87,10 +87,9 @@ TypeScript repo, 418 files). Raw: [`zod-speed.json`](../../bench/results/zod-spe
 
 The build scales with file count (bigger repo → longer parse), but **the read path barely
 moves** — reads hit SQLite indexes, not the extractor, so `affected`/`impact`/`query` stay
-near the same ~130 ms floor whether the graph has 2k or 6k edges. zod also flips the grep
-failure mode from Fase 2: there a textual grep for `ZodType` matches **38** files but only
-**27** are real dependents — grep over-matches (comments, strings) where on leina it
-under-matched. leina returns the exact 27 either way.
+near the same ~130 ms floor whether the graph has 2k or 6k edges. zod also illustrates the
+grep failure mode: a textual grep for `ZodType` matches **38** files but only **27** are
+real dependents — grep over-matches (comments, strings). leina returns the exact 27.
 
 ## Run it on your own repo
 
@@ -175,12 +174,11 @@ Raw: [`precision-value.json`](../../bench/results/precision-value.json), [`preci
 - **On value dependencies leina is complete (100%)** and adds real transitive reach: it
   recovers every file that calls, references, or implements a symbol, *plus* indirect
   dependents a textual import search misses.
-- **On type-only dependencies leina is now near-complete (98.2%).** `affected GraphNode`
-  used to report "nothing depends on it" while 50 files imported that type; the extractor
-  now emits reference edges for type annotations (`import type`, parameter/return/field
-  types, generic type-args) and value references (a symbol used as a value), so changing an
-  interface's shape surfaces its real blast radius. This was a documented blind spot the
-  benchmark exposed — recall jumped 4.5% → 98.2% once the gap was closed.
+- **On type-only dependencies leina is near-complete (98.2%).** The extractor emits
+  reference edges for type annotations (`import type`, parameter/return/field types, generic
+  type-args) and value references (a symbol used as a value), so changing an interface's
+  shape surfaces its real blast radius — `affected GraphNode` returns the files that depend
+  on that type.
 - The residual ~2% is dynamic-import destructuring (`const { x } = await import(...)`),
   which needs a structurally different resolution path and is tracked in the backlog. A
   benchmark that surfaces the last gap — not just the wins — is doing its job.

@@ -22,12 +22,11 @@ own tab.
 
 ### Deriving the project key
 
-`deriveProjectKey` (<ref_file file="src/application/project/detect-key.ts" />) works its way down a **fail-open cascade**: it uses the
-first source that works.
+The project key is derived with a **fail-open cascade**: it uses the first source that works.
 
 ```mermaid
 flowchart TD
-    start["deriveProjectKey(cwd)"] --> lock{".leina/config.json<br/>with project_name?"}
+    start["derive project key (cwd)"] --> lock{".leina/config.json<br/>with project_name?"}
     lock -->|yes| done["✅ use that name<br/>(committable, highest priority)"]
     lock -->|no| remote{"git remote origin?"}
     remote -->|yes| r["repo name from the remote<br/>(org/repo.git → repo)"]
@@ -39,10 +38,9 @@ flowchart TD
     child -->|none| base["basename(cwd)<br/>(always works)"]
 ```
 
-The result is normalized (`normalizeProjectKey`): NFKC, lowercase, path separators → `-`,
-collapsing non-alphanumerics into a single `-`. **Important:** project keys use
-**hyphens**, not underscores (unlike the graph's node IDs, which use `_`). That keeps the
-two namespaces separate.
+The result is normalized: NFKC, lowercase, path separators → `-`, collapsing non-alphanumerics
+into a single `-`. **Important:** project keys use **hyphens**, not underscores (unlike the
+graph's node IDs, which use `_`). That keeps the two namespaces separate.
 
 If the `cwd` is not a git repo and there are **several** child repos, an
 `AmbiguousProjectError` is thrown: you need to fix the name with `leina init --name <name>`
@@ -51,8 +49,6 @@ If the `cwd` is not a git repo and there are **several** child repos, an
 ---
 
 ## The model: observations and sessions
-
-Defined in <ref_file file="src/domain/memory/model.ts" />.
 
 ```mermaid
 classDiagram
@@ -129,9 +125,8 @@ session, `leina memory session <dir> --content "..."` saves a summary.
 
 ## How it's stored (the `memory.db`)
 
-`SQLiteMemoryRepository` (<ref_file file="src/infrastructure/sqlite/memory-repository.ts" />) implements the
-`MemoryRepository` port. The schema lives in <ref_file file="src/infrastructure/sqlite/schema.ts" /> (version 4) and has
-four pieces:
+Memory is persisted over SQLite through the `MemoryRepository` port. The schema has four
+pieces:
 
 | Table | What it stores |
 |-------|-----------|
@@ -149,18 +144,16 @@ four pieces:
 - **unicode61 + remove_diacritics**: accent-insensitive search — key for writing the diary
   in Spanish ("migración" matches "migracion").
 
-**Saved triggers:** only **live** observations (`superseded_by IS NULL`) enter the index.
+**Live-only index:** only **live** observations (`superseded_by IS NULL`) enter the index.
 Superseded versions remain in the base table (for audit) but **never score** in searches.
-There are three triggers (`obs_ai`, `obs_au`, `obs_ad`) that guard INSERT/UPDATE/DELETE to
-maintain that invariant.
+Triggers guard INSERT/UPDATE/DELETE to maintain that invariant.
 
 ---
 
 ## How it's searched (BM25)
 
-`searchMemory` (<ref_file file="src/application/memory/query.ts" />) delegates to the repository, which runs an FTS5
-query ranked by **BM25**. What's interesting is how the query is **sanitized** before being
-sent to FTS5:
+Search runs an FTS5 query ranked by **BM25**. What's interesting is how the query is
+**sanitized** before being sent to FTS5:
 
 ```mermaid
 flowchart LR

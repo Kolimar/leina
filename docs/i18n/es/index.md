@@ -149,12 +149,13 @@ leina tui
 ### Inicio rápido
 
 Un comando, una vez por máquina: el setup "mágico" (share global + symlinks + grant
-`Exec` user-global + hooks, y activa el modo blanket). Eso es todo — leina queda
-disponible en cada sesión de Devin y Claude Code (y, vía MCP, cualquier otro host que
-registres — ver [MCP server](#mcp-server-dual-transport)).
+`Exec` user-global + hooks, y activa el modo blanket). `--hosts` es obligatorio — elegí
+los hosts de instalación (`devin`, `claude`). Eso es todo — leina queda disponible en
+cada sesión de los hosts elegidos (y, vía MCP, cualquier otro host que registres — ver
+[MCP server](#mcp-server-dual-transport)).
 
 ```bash
-leina setup
+leina setup --hosts devin,claude
 # Undo everything machine-wide at any time:
 leina disable
 ```
@@ -165,33 +166,37 @@ de consentimiento local, git-ignored: unknown -> pregunta una vez, enabled -> ac
 disabled -> silencioso. El grafo se construye bajo demanda la primera vez que se consulta.
 También podés cablear un repo a mano:
 
+Un `init` standalone es **FULL** y exige `--hosts` y `--profile devin|windsurf`; bajo blanket
+un `init` es **LIGHT** y no necesita ninguno.
+
 ```bash
-leina init <dir>                     # adaptive: LIGHT under blanket, FULL standalone
-leina init <dir> --build             # also build the graph synchronously now
-leina init <dir> --mcp               # register the MCP server in .mcp.json
-leina init <dir> --claude-hooks      # Claude Code hooks (same gate Devin gets)
-leina deinit <dir>                   # opt this repo out (consent=disabled) + strip wiring
+leina init <dir> --hosts devin --profile devin          # standalone FULL (under blanket, plain `leina init <dir>` is LIGHT)
+leina init <dir> --hosts devin --profile devin --build  # also build the graph synchronously now
+leina init <dir> --hosts devin --profile devin --mcp    # also add a project-level .mcp.json
+leina init <dir> --hosts claude --profile devin         # wire Claude Code hooks
+leina init <dir> --hosts devin --profile devin --claude-hooks  # force Claude Code hooks even without the claude host
+leina deinit <dir>                                       # opt this repo out (consent=disabled) + strip wiring
 ```
 
 ¿Preferís las piezas granulares? Componen lo que hace `setup` y cada una tiene un
-inverso: `activate` ⟷ `deactivate` (share/symlinks/config user-global; sin blanket), y
-`install-global` (alias en desuso de `activate`).
+inverso: `activate` ⟷ `deactivate` (share/symlinks/config user-global; sin blanket).
 
 Elegí QUÉ skills/agentes incluidos instalar (ver `assets/catalog.json` para la lista
-completa, grupos y dependencias). Omití los flags para mantener tu elección previa; el
-default es full. Las dependencias se incluyen automáticamente (por ejemplo, elegir la
-skill sdd-explore trae su agente); pasar a una selección más chica limpia los symlinks
+completa, grupos y dependencias). Omití los flags de selección para mantener tu elección
+previa; el default es full. Las dependencias se incluyen automáticamente (por ejemplo, elegir
+la skill sdd-explore trae su agente); pasar a una selección más chica limpia los symlinks
 de host que quedaron obsoletos.
 
 ```bash
-leina activate --preset minimal        # core plumbing only
-leina activate --preset sdd            # core + the SDD workflow
-leina activate --skills graph-viz,github-pr --agents none
+leina activate --hosts devin --preset minimal        # core plumbing only
+leina activate --hosts devin --preset sdd            # core + the SDD workflow
+leina activate --hosts devin --skills graph-viz,github-pr --agents none
 ```
 
-Elegí a qué hosts de IA conectarte (default: devin). Claude Code recibe las skills como
-`~/.claude/skills/<name>` y los agentes como `~/.claude/agents/<name>.md` (su formato
-nativo). `--hosts` solo cambia DÓNDE, sin tocar la selección de assets.
+Elegí a qué hosts de IA conectarte con `--hosts` (obligatorio; sin default). Claude Code
+recibe las skills como `~/.claude/skills/<name>` y los agentes como
+`~/.claude/agents/<name>.md` (su formato nativo). `--hosts` solo cambia DÓNDE, sin tocar la
+selección de assets.
 
 ```bash
 leina activate --hosts devin,claude
@@ -206,9 +211,9 @@ leina build <dir> --profile         # stage timings (unchanged files reuse the e
 leina refresh <dir>                 # force a full rebuild
 
 # diagnose health: node version, parser wasm assets, global share freshness, host symlinks,
-# and the project (graph freshness, AGENTS.md/.gitignore/.devin wiring). Exits non-zero if
-# any check fails. Read-only — never writes, never opens a DB file (it checks that DBs
-# exist, not that they are internally sound).
+# and the project (graph freshness, AGENTS.md/.gitignore/.devin wiring). Reports each check as
+# ok / info / warn / fail (optional/N-A grouped in a final info section). Informative — never
+# changes its exit code; read-only, never writes, never opens a DB file. Use `verify` for a CI gate.
 leina doctor [<dir>]
 # auto-fix what doctor found: re-runs the idempotent install writers (global + repo wiring),
 # scoped to prior installs; respects deinit; never touches DBs.
@@ -236,15 +241,14 @@ leina memory verified <dir> "a question"   # drift-classified: USABLE / WARNING 
 leina memory get <dir> <id>
 leina memory context <dir>
 leina memory session <dir> --content "..." [--title "..."]
-leina memory session-start <dir> [--title "..."]
+leina memory session-start <dir> [--title "..."]   # open a session at session start
 leina memory suggest-topic <dir> --title "..." [--type ..]
 leina memory current-project <dir>         # show derived project key + detection method
 leina memory merge-projects <dir> --from <old-key> --to <new-key> [--dry-run]
-leina memory migrate <dir>                 # fold legacy per-repo memory.db into global DB
-# Portable memory: decisions travel WITH the repo (no server). `sync` merges the committable
-# snapshot .leina/memory-export.jsonl both ways; export/import move JSONL between machines.
-leina memory sync <dir>                    # absorb + rewrite the snapshot; commit it
-leina memory export <dir> --out mem.jsonl / memory import <dir> --in mem.jsonl
+leina memory reanchor <dir> <id>           # re-resolve an observation's anchors against the live graph
+leina memory export <dir> [--out file.jsonl]       # dump observations + anchors as JSONL
+leina memory import <dir> [--in file.jsonl]        # merge an export; newer revision wins
+leina memory sync <dir>                            # two-way merge with .leina/memory-export.jsonl
 # memory scopes: --scope project (default) | personal | workspace | path | skill | process |
 #                technology | security | infra   (search defaults to project; pass --scope to widen)
 ```
@@ -263,13 +267,13 @@ construyen el grafo en el primer uso; `consent=disabled` por repo bloquea las ll
 Solo CLI por diseño: `env exec` (contrato nombres-no-valores).
 
 ```bash
-leina mcp                             # stdio server (hosts launch this)
-leina mcp register                    # USER-GLOBAL: Claude Code / Cursor / Windsurf
-leina mcp register --hosts cursor     # configurá solo el/los host(s) que usás
-leina mcp status                      # read-only per-host registration state
-leina mcp unregister                  # inverse of register
-leina activate --mcp                  # or register as part of install/setup
-leina init <dir> --mcp                # PROJECT-LEVEL .mcp.json (committable, teams)
+leina mcp                                             # stdio server (hosts launch this)
+leina mcp register --hosts claude,cursor,windsurf     # USER-GLOBAL; --hosts is required
+leina mcp register --hosts cursor                     # configurá solo el/los host(s) que usás
+leina mcp status                                      # read-only per-host registration state
+leina mcp unregister --hosts cursor                   # inverse of register
+leina activate --hosts claude --mcp --mcp-hosts claude   # or register as part of install/setup
+leina init <dir> --hosts devin --profile devin --mcp     # PROJECT-LEVEL .mcp.json (committable, teams)
 ```
 
 **Cualquier host compatible con MCP funciona** — `leina mcp register` auto-configura Claude Code,
@@ -307,7 +311,7 @@ leina env unset MY_SERVICE_TOKEN
 
 La skill incluida `authenticated-api` es el ejemplo de referencia (SonarQube GET y POST,
 y las variantes más estrictas sin argv: `curl -K -` vía stdin, o un script que consume
-`process.env`). Ver `assets/skills/authenticated-api/SKILL.md`.
+`process.env`).
 
 ### Validación y contratos
 
@@ -357,12 +361,12 @@ leina scip install go              # detect+instruct only — prints the install
 leina scip verify go               # verify against a fixture (honest skip if not installed)
 ```
 
-Ejemplo (ejecutado contra el propio `src/` de este repo):
+Ejemplo:
 
 ```bash
-leina build src
-leina affected src "GraphStore"
-#   openStore()  [references]  cli/index.ts:L48
+leina build <your-project>
+leina affected <your-project> "GraphStore"
+#   openStore()  [references]  db/connection.ts:L48
 ```
 
 > **Referencia completa de comandos:** [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md)
@@ -389,7 +393,7 @@ leina affected src "GraphStore"
 ### Entrada por lotes (stdin JSON)
 
 `memory save`, `memory update` y `memory get` aceptan `--batch`: un array JSON en stdin
-condensa N escrituras/lecturas en un solo proceso. `save`/`update` también aceptan `--atomic`
+condensa N escrituras/lecturas en un solo proceso. `add`/`update` también aceptan `--atomic`
 para una transacción de todo o nada.
 
 ```bash
@@ -416,7 +420,7 @@ fuerza una reconstrucción.
 >   `disable` deshace todo eso (strip-inverse — preserva entradas de terceros; sin depender de
 >   `.bak`).
 > - **Global, granular:** `activate` ⟷ `deactivate` (la mitad global de `setup`, sin el
->   centinela blanket). `install-global` es un alias en desuso de `activate`.
+>   centinela blanket).
 > - **Repo, granular:** `init` ⟷ `deinit`.
 >
 > **Consentimiento tri-estado (por repo, local y git-ignored — `.leina/consent`):**
@@ -425,11 +429,12 @@ fuerza una reconstrucción.
 > grafo, advisories, auto-reparación de grafo bajo demanda en `SessionStart`); `disabled` →
 > no-op silencioso permanente.
 >
-> **`init` es adaptativo** (`isBlanketActive()`): siempre escribe el flag de consentimiento
-> `enabled` + `.gitignore`. Bajo blanket, eso es todo (**LIGHT** — el share/grant/hooks a
-> nivel de máquina ya cubren el repo). Standalone (sin blanket) también escribe un bloque de
-> protocolo committable en `AGENTS.md`, `.devin/hooks.v1.json`, y un grant `Exec`
-> **repo-local** en `.devin/config.json` (**FULL**) — nunca el config user-global.
+> **`init` es adaptativo**: siempre escribe el flag de consentimiento `enabled` + `.gitignore`.
+> Bajo blanket, eso es todo (**LIGHT** — el share/grant/hooks a nivel de máquina ya cubren el
+> repo; no hacen falta flags). Standalone (sin blanket) es **FULL** — exige `--hosts` y
+> `--profile devin|windsurf`, y también escribe un bloque de protocolo committable en
+> `AGENTS.md`, `.devin/hooks.v1.json`, y un grant `Exec` **repo-local** en `.devin/config.json`
+> — nunca el config user-global.
 > `init --name <project-name>` fija la project key en un `.leina/config.json` committable;
 > `init --build` construye el grafo de forma sincrónica ahora mismo (de lo contrario, el grafo
 > se construye bajo demanda). `deinit` escribe `disabled` y el strip-inverse elimina los
@@ -483,10 +488,6 @@ re-chequea cada resultado contra el grafo vivo y lo etiqueta como **USABLE**, **
 código anclado se movió — obsoleto), o **DO-NOT-USE** (una afirmación normativa que el código
 ahora contradice). Una memory que silenciosamente se vuelve incorrecta es peor que no tener
 memory; la detección de drift es lo que mantiene confiable el contexto recuperado.
-
-**Migración desde el layout viejo por repo.** Si tenés un `<dir>/.leina/memory.db` de una
-versión anterior, corré `leina memory migrate <dir>` para incorporarlo a la DB global. El
-archivo original queda intacto. `leina doctor <dir>` advierte si hay una DB legacy presente.
 
 ## Lenguajes
 
@@ -581,15 +582,13 @@ Construir requiere el toolchain del lenguaje en el PATH; correr el binario cache
 - **C#** → el .NET SDK (`dotnet`). Los mirrors NuGet privados/enterprise funcionan vía el
   `NuGet.config` habitual.
 - **Java** → un JDK 17+ que incluya `jpackage`, más `curl` (descarga los jars de
-  JavaParser). Apuntá a un mirror de Maven con `LEINA_MAVEN_BASE`. Ver
-  `assets/sidecars/java/README.md` para los pasos subyacentes.
+  JavaParser). Apuntá a un mirror de Maven con `LEINA_MAVEN_BASE`.
 
 Ambos sidecars corren **una vez sobre todo el proyecto** (no por archivo) de modo que el
 compilador construye un modelo y resuelve llamadas entre archivos. El sidecar de Java infiere
 las raíces de código fuente a partir de las declaraciones de package, así que los layouts
-multi-módulo se resuelven correctamente. Ver `src/infrastructure/extractors/semantic/sidecar.ts`
-para el contrato JSON. GraalVM `native-image` (binario Java de archivo único), un modo Roslyn
-consciente de `.sln` y Eclipse JDT son mejoras futuras.
+multi-módulo se resuelven correctamente. GraalVM `native-image` (binario Java de archivo
+único), un modo Roslyn consciente de `.sln` y Eclipse JDT son mejoras futuras.
 
 ## Indexadores SCIP (Go y más allá)
 
@@ -617,27 +616,17 @@ Una vez que `scip-go` está en el `PATH`, `leina build`/`refresh` mejoran autom�
 archivos `.go` de tree-sitter a nivel compilador: el indexador corre una vez sobre todo el
 proyecto (el mismo contrato whole-project que los sidecars), el índice `.scip` resultante se
 transmite Document por Document mediante un parser de protobuf hecho a mano (sin dependencia
-nueva — `src/infrastructure/extractors/semantic/scip-proto.ts`), y cada símbolo SCIP se traduce
+nueva), y cada símbolo SCIP se traduce
 al MISMO id de grafo que tree-sitter/ts-morph produciría para ese símbolo, así que nada se
 duplica — se fusiona. Sin el indexador, la extracción de Go queda sin cambios (tree-sitter,
 sintáctica); nada más del build se ve afectado.
 
 ## Estructura del proyecto
 
-Layout hexagonal — `domain` (tipos + ports) ← `application` (casos de uso) ← `infrastructure`
-(adapters) ← `cli` (driving adapter):
-
-```
-src/
-├── domain/          graph/{model,ports} · memory/{model,ports} · install/artifact · shared/{batch,id}
-├── application/     graph/{build,query,manifest,sources,resolve,detect,dedup} · memory/{query,anchor-verify}
-│                    · project/detect-key · install/{agents,command,devin-hooks,devin-skills,migrate,permissions,port,protocol,gitignore} · activate
-├── infrastructure/  sqlite/{graph-store,memory-repository,schema} · extractors/{treesitter,semantic/*}
-│                    · config/freshness · install/{global,share-paths,symlinks,native-assets,shell,safe-exec}
-├── cli/             index (dispatcher) · wiring (composition root) · handlers/{graph,memory,install,system}
-│                    · args · io · doctor · agent-gate · active-context
-└── version.ts
-```
+leina sigue un layout hexagonal: **domain** (tipos + ports) ← **application** (casos de uso)
+← **infrastructure** (adapters) ← **cli** (driving adapter). El core de dominio no depende de
+detalles de framework, de modo que extractores, stores y transportes se conectan por los
+bordes sin tocar la lógica central.
 
 ## Estado
 
@@ -660,11 +649,6 @@ sintácticas — resolución guiada por imports, luego **inferencia de tipo del 
 `JsonReader`). Java llega a 77–78% EXTRACTED; C# queda atrás con 65–72% porque depende de
 `var` proveniente de retornos de método y cadenas LINQ/extension-method que solo un type
 checker real (el sidecar) puede seguir.
-
-El dogfooding sobre estos repos sacó a la luz y corrigió varios bugs de extracción reales
-(métodos receiver de Go, expresiones `new`, herencia de tipos genéricos, colisiones entre
-nombres de constructor/clase). Los typechecks están limpios (`npx tsc --noEmit`); la suite de
-tests de la CLI (`npm test`) pasa.
 
 ## Roadmap
 

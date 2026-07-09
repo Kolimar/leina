@@ -54,8 +54,8 @@ leina tui                # consola interactiva: elegís "install" → assets + h
 
 `leina tui` es la forma más fácil: un menú te guía por qué assets instalar, en qué hosts de IA
 (Devin, Claude Code, Cursor, Windsurf), el modo blanket y el registro MCP. ¿Preferís un solo
-comando sin prompts? `leina setup` hace la instalación recomendada de una (todos los assets +
-blanket; agregá `--mcp` para registrar el server MCP también).
+comando sin prompts? `leina setup --hosts devin,claude` hace la instalación recomendada de una
+(todos los assets + blanket; agregá `--mcp --mcp-hosts claude` para registrar el server MCP también).
 
 Con eso leina queda disponible en **cualquier** sesión de tu IA en la máquina. ¿Querés deshacerlo todo más adelante? Un comando:
 
@@ -74,7 +74,7 @@ leina --help     # lista setup/disable, activate/deactivate, init/deinit, build,
 leina doctor     # diagnostica versión de Node, share global y symlinks
 ```
 
-> **¿Querés las piezas por separado en vez del comando mágico?** `setup` compone dos cosas, y cada una tiene su inverso: `activate` ⟷ `deactivate` (share + symlinks + config user-global, **sin** encender blanket). `install-global` quedó como alias deprecado de `activate`.
+> **¿Querés las piezas por separado en vez del comando mágico?** `setup` compone dos cosas, y cada una tiene su inverso: `activate --hosts devin,claude` ⟷ `deactivate` (share + symlinks + config user-global, **sin** encender blanket).
 
 ### Por proyecto: no hay nada que recordar
 
@@ -97,8 +97,8 @@ leina deinit <dir>        # saca este repo (consent=disabled) y revierte el wiri
 
 **`init` es adaptativo** — escribe solo lo necesario según si blanket está encendido:
 
-- **Con blanket** (lo normal tras `setup`): solo el flag `enabled` + el bloque en `.gitignore`. No escribe `AGENTS.md` ni `.devin/*` porque el share/grant/hooks globales ya cubren el repo.
-- **Standalone** (sin `setup`, querés leina solo en este repo sin tocar la máquina): además escribe `AGENTS.md` (protocolo), `.devin/hooks.v1.json` y un grant `Exec(leina)` **local** en `.devin/config.json`. El repo queda autosuficiente y **nunca** se toca el config user-global.
+- **Con blanket** (lo normal tras `setup`): solo el flag `enabled` + el bloque en `.gitignore`. No escribe `AGENTS.md` ni `.devin/*` porque el share/grant/hooks globales ya cubren el repo. En este modo `init` no necesita `--hosts` ni `--profile`.
+- **Standalone** (sin `setup`, querés leina solo en este repo sin tocar la máquina): requiere `--hosts devin,claude` y `--profile devin|windsurf`. Además escribe `AGENTS.md` (protocolo), `.devin/hooks.v1.json` y un grant `Exec(leina)` **local** en `.devin/config.json` — por ejemplo `leina init <dir> --hosts claude --profile devin`. El repo queda autosuficiente y **nunca** se toca el config user-global.
 
 **Probar:**
 
@@ -279,9 +279,9 @@ contrato completo, incluyendo POST con token en el header y las variantes más e
 
 | Comando | Para qué |
 |---|---|
-| `leina setup` | **Comando mágico** (una vez por máquina): activate + enciende blanket. |
+| `leina setup --hosts devin,claude` | **Comando mágico** (una vez por máquina): activate + enciende blanket. |
 | `leina disable` | Revierte `setup` por completo (symlinks, config user-global, blanket). |
-| `leina activate` / `deactivate` | Pieza global de `setup` (share/symlinks/config user-global) y su inverso. `install-global` = alias deprecado de `activate`. |
+| `leina activate --hosts devin,claude` / `deactivate` | Pieza global de `setup` (share/symlinks/config user-global) y su inverso. |
 | `leina init <dir>` | Da de alta el repo (consent `enabled`). Adaptativo: LIGHT con blanket, FULL standalone. `--build` construye el grafo ahora. |
 | `leina deinit <dir>` | Saca el repo (consent `disabled`) y revierte el wiring (strip-inverso). |
 | `leina build <dir>` | Construye / re-construye el grafo del proyecto. |
@@ -293,7 +293,7 @@ contrato completo, incluyendo POST con token en el header y las variantes más e
 | `leina query <dir> "<pregunta>"` | Subgrafo relevante a una pregunta. |
 | `leina impact analyze <dir> <símbolo>` | Impacto que cruza código→tests→configs→servicios. |
 | `leina visualize <dir>` | Exporta un visor HTML interactivo y offline del grafo. |
-| `leina memory <dir> <sub>` | Memoria local (`save`/`update`/`search`/`verified`/`get`/`context`/`session`/`session-start`/`suggest-topic`/`current-project`/`merge-projects`/`migrate`). |
+| `leina memory <dir> <sub>` | Memoria global (`save`/`update`/`search`/`verified`/`get`/`context`/`session`/`session-start`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`). |
 | `leina workspace <sub> [dir]` | Multi-repo: `build`/`status`/`detect`/`memory context\|search`/`visualize`. |
 | `leina audit [dir]` | Rutas candidatas source→sink + findings (`--format md\|json\|html`). |
 | `leina env <sub>` | Credenciales para skills (names-not-values): `set`/`list`/`get`/`unset`/`exec`. |
@@ -350,7 +350,7 @@ Error: Cannot find module 'C:\Program Files\Git\Users\<user>\AppData\Roaming\npm
 ### A.3 — Cómo fluye la información (mental model corto)
 
 - **El grafo** se construye **localmente** y vive en `<tu-proyecto>/.leina/graph.db`. Es un índice estructural del código (qué llama a qué, qué importa a qué, qué hereda de qué). Cuando le preguntás a la IA _"¿qué se rompe si toco esto?"_, no está releyendo el repo: corre `leina affected`, que consulta ese grafo. Se reconstruye solo cuando detecta que los fuentes cambiaron.
-- **La memoria** vive en una DB **global**, en `~/.leina/memory.db` (respeta `$LEINA_HOME`), particionada por una clave de proyecto derivada — o sea, es compartida entre todos tus repos, no por-proyecto. Ahí se guardan decisiones, bugfixes, descubrimientos y los artefactos de SDD. La IA escribe con `leina memory save` y lee con `leina memory context`/`search`/`verified`. (Una `memory.db` heredada por-repo se puede migrar a la global con `leina memory migrate <dir>`.)
+- **La memoria** vive en una DB **global**, en `~/.leina/memory.db` (respeta `$LEINA_HOME`), particionada por una clave de proyecto derivada — o sea, es compartida entre todos tus repos, no por-proyecto. Ahí se guardan decisiones, bugfixes, descubrimientos y los artefactos de SDD. La IA escribe con `leina memory save` y lee con `leina memory context`/`search`/`verified`.
 - **No hay puente intermedio**: la IA corre el binario `leina` por su shell, recibe la respuesta acotada (un subgrafo o un puñado de observaciones) y deja de grepear el repo entero.
 
 #### ¿Y la memoria del equipo? ¿Se commitea o no?

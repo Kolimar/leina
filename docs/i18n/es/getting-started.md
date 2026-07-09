@@ -69,9 +69,9 @@ El mismo TUI después maneja todo: **status** (resumen de salud), **this project
 skills) y **uninstall**. Cada acción mapea a un comando no-interactivo, así que nada acá es
 exclusivo del TUI.
 
-> **¿Preferís un solo comando sin prompts?** `leina setup` hace la instalación recomendada
-> (todos los assets + modo blanket) de una; agregá `--mcp` para registrar el server MCP también.
-> Deshacé todo más tarde con `leina disable`.
+> **¿Preferís un solo comando sin prompts?** `leina setup --hosts devin,claude` hace la
+> instalación recomendada (todos los assets + modo blanket) de una; agregá `--mcp --mcp-hosts
+> claude` para registrar el server MCP también. Deshacé todo más tarde con `leina disable`.
 
 Verificá que quedó bien:
 
@@ -97,7 +97,7 @@ los hooks instalados lo refrescan tras cada edición.
 primera vez que usás tu IA en un repo te pregunta una vez, *"¿usás leina acá?"*, y lo configura por
 vos. Cada repo guarda un flag de consentimiento local y git-ignored (`.leina/consent`): `unknown` →
 te pregunta una vez, `enabled` → activo, `disabled` → silencio. leina nunca construye un grafo en un
-repo que no aceptaste. Para hacerlo a mano: `leina init <your-project>` (agregá `--build` para
+repo que no aceptaste. Para hacerlo a mano: `leina init <your-project> --hosts claude --profile devin` (agregá `--build` para
 construir ahora) / `leina deinit <your-project>`.
 
 ## 4. Mirá tu código como un grafo
@@ -237,8 +237,11 @@ proyecto antes de que escribas — sin llamar ninguna tool:
 - **Devin** lee el `AGENTS.md` commiteado + `.devin/hooks.v1.json` automáticamente (cloud + CLI).
   Para Devin cloud (una VM), hacé que `leina` esté disponible en el snapshot vía Repository Setup →
   *Install Dependencies* (`npm install -g @kolimar/leina`).
-- **Claude Code** obtiene lo mismo vía `.claude/settings.json` — `leina init <your-project>
-  --claude-hooks` (o cuando elegís Claude Code durante la instalación).
+- **Claude Code** obtiene lo mismo vía `.claude/settings.json` — incluí `claude` en `--hosts`
+  al instalar (`leina init <your-project> --hosts claude --profile devin`, o elegí Claude Code
+  durante la instalación). Si querés forzar los hooks de Claude Code aunque el host `claude` no
+  esté en `--hosts`, agregá `--claude-hooks` (por ejemplo,
+  `leina init <your-project> --hosts devin --profile devin --claude-hooks`).
 
 Cualquier otro host no tiene mecanismo de hooks, así que no puede auto-inyectar — pero por MCP la IA
 trae el mismo contexto on-demand (`memory_context`, `graph_status`). Por eso MCP es el camino que

@@ -68,9 +68,9 @@ The same TUI later manages everything: **status** (health summary), **this proje
 (init/deinit + per-repo `.mcp.json`), **repair**, **env vars** (masked credentials for skills),
 and **uninstall**. Every action maps to a non-interactive command, so nothing here is TUI-only.
 
-> **Prefer one command with no prompts?** `leina setup` does the recommended install
-> (all assets + blanket mode) in one shot; add `--mcp` to register the MCP server too. Undo it
-> all later with `leina disable`.
+> **Prefer one command with no prompts?** `leina setup --hosts devin,claude` does the recommended
+> install (all assets + blanket mode) in one shot; add `--mcp --mcp-hosts claude` to register the
+> MCP server too. Undo it all later with `leina disable`.
 
 Verify it landed:
 
@@ -96,7 +96,7 @@ refresh it after edits.
 time you use your AI in a repo it asks once, *"use leina here?"*, and wires it for you. Each repo
 keeps a local, git-ignored consent flag (`.leina/consent`): `unknown` → asked once, `enabled` → on,
 `disabled` → silent. leina never builds a graph in a repo you haven't opted into. To do it
-manually: `leina init <your-project>` (add `--build` to build now) / `leina deinit <your-project>`.
+manually: `leina init <your-project> --hosts claude --profile devin` (add `--build` to build now) / `leina deinit <your-project>`.
 
 ## 4. See your code as a graph
 
@@ -174,7 +174,8 @@ leina ships a standard MCP server, launched over stdio as `leina mcp`. Any host 
 calls its tools (`graph_affected`, `memory_search`, `graph_visualize`, …) natively — no shell
 protocol needed.
 
-**Hosts leina wires for you** — one command (or pick "MCP" in `leina tui`, or `leina setup --mcp`):
+**Hosts leina wires for you** — one command (or pick "MCP" in `leina tui`, or
+`leina setup --hosts devin,claude --mcp --mcp-hosts claude`):
 
 ```bash
 leina mcp register --hosts claude,cursor,windsurf   # list only the ones you use
@@ -234,7 +235,7 @@ tool call needed:
   For Devin cloud (a VM), make `leina` available in the snapshot via Repository Setup →
   *Install Dependencies* (`npm install -g @kolimar/leina`).
 - **Claude Code** gets the same via `.claude/settings.json` — `leina init <your-project>
-  --claude-hooks` (or when you pick Claude Code during install).
+  --hosts claude --profile devin` (or when you pick Claude Code during install).
 
 Every other host lacks a hooks mechanism, so it can't auto-inject — but through MCP the agent pulls
 the same context on demand (`memory_context`, `graph_status`). That's why MCP is the path we
@@ -242,7 +243,7 @@ recommend for everyone.
 
 For a committed graph (CI, or sharing with Devin cloud), run `leina build . --json` and commit
 `.leina/graph.json` — the `.db` is git-ignored; the portable `.json` is what you commit — then
-`init` with `--freshness refuse`.
+run `leina init . --hosts devin --profile devin --freshness refuse`.
 
 ---
 

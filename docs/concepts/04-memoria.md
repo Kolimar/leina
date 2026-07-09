@@ -22,12 +22,12 @@ solapa.
 
 ### Derivación del project key
 
-`deriveProjectKey` (<ref_file file="src/application/project/detect-key.ts" />) baja por una **cascada fail-open**: usa la
+La derivación del project key baja por una **cascada fail-open**: usa la
 primera fuente que funcione.
 
 ```mermaid
 flowchart TD
-    start["deriveProjectKey(cwd)"] --> lock{¿.leina/config.json<br/>con project_name?}
+    start["derivar project key"] --> lock{¿.leina/config.json<br/>con project_name?}
     lock -->|sí| done["✅ usar ese nombre<br/>(committable, máxima prioridad)"]
     lock -->|no| remote{¿git remote origin?}
     remote -->|sí| r["repo name del remote<br/>(org/repo.git → repo)"]
@@ -39,7 +39,7 @@ flowchart TD
     child -->|ninguno| base["basename(cwd)<br/>(siempre funciona)"]
 ```
 
-El resultado se normaliza (`normalizeProjectKey`): NFKC, minúsculas, separadores de path → `-`,
+El resultado se normaliza: NFKC, minúsculas, separadores de path → `-`,
 colapsa no-alfanuméricos a un solo `-`. **Importante:** los project keys usan **guiones**, no
 guiones bajos (al revés que los IDs de node del grafo, que usan `_`). Eso mantiene los dos
 namespaces separados.
@@ -51,8 +51,6 @@ committable).
 ---
 
 ## El modelo: observations y sessions
-
-Definido en <ref_file file="src/domain/memory/model.ts" />.
 
 ```mermaid
 classDiagram
@@ -128,9 +126,7 @@ sesión, `leina memory session <dir> --content "..."` guarda un resumen.
 
 ## Cómo se guarda (el `memory.db`)
 
-`SQLiteMemoryRepository` (<ref_file file="src/infrastructure/sqlite/memory-repository.ts" />) implementa el port
-`MemoryRepository`. El schema vive en <ref_file file="src/infrastructure/sqlite/schema.ts" /> (versión 4) y tiene cuatro
-piezas:
+La memoria se guarda en SQLite. El schema tiene cuatro piezas:
 
 | Tabla | Qué guarda |
 |-------|-----------|
@@ -150,16 +146,14 @@ Dos detalles del tokenizer importan:
 
 **Triggers guardados:** solo las observaciones **vivas** (`superseded_by IS NULL`) entran al
 índice. Las versiones superseded quedan en la tabla base (auditoría) pero **nunca puntúan** en
-las búsquedas. Hay tres triggers (`obs_ai`, `obs_au`, `obs_ad`) que custodian INSERT/UPDATE/
-DELETE para mantener esa invariante.
+las búsquedas. Triggers dedicados custodian INSERT/UPDATE/DELETE para mantener esa invariante.
 
 ---
 
 ## Cómo se busca (BM25)
 
-`searchMemory` (<ref_file file="src/application/memory/query.ts" />) delega en el repositorio, que corre una query FTS5
-rankeada por **BM25**. Lo interesante es cómo se **sanitiza** la consulta antes de mandarla a
-FTS5:
+La búsqueda corre una query FTS5 rankeada por **BM25**. Lo interesante es cómo se **sanitiza**
+la consulta antes de mandarla a FTS5:
 
 ```mermaid
 flowchart LR
@@ -172,7 +166,7 @@ flowchart LR
 
 La estrategia es **recall-first**: unir con `OR` hace que matchee cualquier término, y BM25
 ordena los mejores hits primero. La frase completa como término extra le da un empujón a los
-documentos donde las palabras aparecen juntas. Cada `SearchHit` trae `id`, `title`, `type`,
+documentos donde las palabras aparecen juntas. Cada resultado trae `id`, `title`, `type`,
 `topicKey`, un `snippet` (primeros ~200 chars), el score BM25 y `updatedAt`.
 
 Comandos de lectura:

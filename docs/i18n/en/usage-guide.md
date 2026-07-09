@@ -53,9 +53,10 @@ leina tui                # interactive console: pick "install" → assets + host
 ```
 
 `leina tui` is the easiest path: a menu walks you through which assets to install, which AI hosts
-(Devin, Claude Code, Cursor, Windsurf), blanket mode, and MCP registration. Prefer a single command
-with no prompts? `leina setup` does the recommended install in one shot (all assets + blanket; add
-`--mcp` to register the MCP server too).
+(Devin, Claude Code), blanket mode, and MCP registration. Prefer a single command with no prompts?
+`leina setup --hosts devin,claude` does the recommended install in one shot (all assets + blanket;
+add `--mcp --mcp-hosts claude` to register the MCP server too). `--hosts` is required — leina never
+picks a host for you.
 
 With that, leina becomes available in **any** AI session on the machine. Want to undo it all later? One command:
 
@@ -74,7 +75,7 @@ leina --help     # lists setup/disable, activate/deactivate, init/deinit, build,
 leina doctor     # diagnoses Node version, global share and symlinks
 ```
 
-> **Want the pieces separately instead of the magic command?** `setup` composes two things, and each has its inverse: `activate` ⟷ `deactivate` (share + symlinks + user-global config, **without** turning on blanket). `install-global` remains as a deprecated alias for `activate`.
+> **Want the pieces separately instead of the magic command?** `setup` composes two things, and each has its inverse: `activate` ⟷ `deactivate` (share + symlinks + user-global config, **without** turning on blanket).
 
 ### Per project: nothing to remember
 
@@ -97,8 +98,8 @@ leina deinit <dir>        # removes this repo (consent=disabled) and reverts the
 
 **`init` is adaptive** — it writes only what's needed depending on whether blanket is on:
 
-- **With blanket** (the normal case after `setup`): just the `enabled` flag + the block in `.gitignore`. It doesn't write `AGENTS.md` or `.devin/*` because the global share/grant/hooks already cover the repo.
-- **Standalone** (without `setup`, when you want leina only in this repo without touching the machine): it also writes `AGENTS.md` (protocol), `.devin/hooks.v1.json` and a **local** `Exec(leina)` grant in `.devin/config.json`. The repo becomes self-sufficient and the user-global config is **never** touched.
+- **With blanket** (the normal case after `setup`): just the `enabled` flag + the block in `.gitignore`. It doesn't write `AGENTS.md` or `.devin/*` because the global share/grant/hooks already cover the repo — no flags needed.
+- **Standalone** (without `setup`, when you want leina only in this repo without touching the machine): a FULL init, which **requires `--hosts <devin|claude>` and `--profile <devin|windsurf>`** (e.g. `leina init <dir> --hosts devin --profile devin`). It also writes `AGENTS.md` (protocol), `.devin/hooks.v1.json` and a **local** `Exec(leina)` grant in `.devin/config.json`. The repo becomes self-sufficient and the user-global config is **never** touched.
 
 **Try it:**
 
@@ -279,10 +280,10 @@ full contract, including POST requests with a token in the header and the strict
 
 | Command | What it's for |
 |---|---|
-| `leina setup` | **Magic command** (once per machine): activate + turns on blanket. |
+| `leina setup --hosts <devin\|claude>` | **Magic command** (once per machine): activate + turns on blanket. `--hosts` required. |
 | `leina disable` | Fully reverts `setup` (symlinks, user-global config, blanket). |
-| `leina activate` / `deactivate` | Global piece of `setup` (share/symlinks/user-global config) and its inverse. `install-global` = deprecated alias for `activate`. |
-| `leina init <dir>` | Onboards the repo (consent `enabled`). Adaptive: LIGHT with blanket, FULL standalone. `--build` builds the graph now. |
+| `leina activate` / `deactivate` | Global piece of `setup` (share/symlinks/user-global config, `--hosts` required) and its inverse. |
+| `leina init <dir>` | Onboards the repo (consent `enabled`). Adaptive: LIGHT with blanket, FULL standalone (`--hosts` + `--profile <devin\|windsurf>`). `--build` builds the graph now. |
 | `leina deinit <dir>` | Removes the repo (consent `disabled`) and reverts the wiring (reverse-strip). |
 | `leina build <dir>` | Builds / rebuilds the project's graph. |
 | `leina refresh <dir>` | Forces a full rebuild of the graph. |
@@ -293,7 +294,7 @@ full contract, including POST requests with a token in the header and the strict
 | `leina query <dir> "<question>"` | Relevant subgraph for a question. |
 | `leina impact analyze <dir> <symbol>` | Impact crossing code→tests→configs→services. |
 | `leina visualize <dir>` | Exports an interactive, offline HTML viewer of the graph. |
-| `leina memory <dir> <sub>` | Local memory (`save`/`update`/`search`/`verified`/`get`/`context`/`session`/`session-start`/`suggest-topic`/`current-project`/`merge-projects`/`migrate`). |
+| `leina memory <dir> <sub>` | Local memory (`add`/`update`/`search`/`verified`/`get`/`context`/`session`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`). |
 | `leina workspace <sub> [dir]` | Multi-repo: `build`/`status`/`detect`/`memory context\|search`/`visualize`. |
 | `leina audit [dir]` | Candidate source→sink paths + findings (`--format md\|json\|html`). |
 | `leina env <sub>` | Credentials for skills (names-not-values): `set`/`list`/`get`/`unset`/`exec`. |
@@ -305,7 +306,7 @@ full contract, including POST requests with a token in the header and the strict
 | `leina events tail [dir]` | Local event outbox (off unless `LEINA_EVENTS_PERSIST=1`). |
 | `leina capabilities list` | The 17 transport-agnostic capabilities with their schemas. |
 
-`memory save`/`update`/`get` accept `--batch` (JSON array via stdin; `--atomic` on save/update).
+`memory save`/`update`/`get` accept `--batch` (JSON array via stdin; `--atomic` on add/update).
 
 ### A.2 — Troubleshooting
 
@@ -350,7 +351,7 @@ Error: Cannot find module 'C:\Program Files\Git\Users\<user>\AppData\Roaming\npm
 ### A.3 — How information flows (short mental model)
 
 - **The graph** is built **locally** and lives at `<your-project>/.leina/graph.db`. It's a structural index of the code (what calls what, what imports what, what inherits from what). When you ask the AI _"what breaks if I touch this?"_, it isn't re-reading the repo: it runs `leina affected`, which queries that graph. It rebuilds itself automatically when it detects the sources changed.
-- **The memory** lives in a **global** DB, at `~/.leina/memory.db` (respects `$LEINA_HOME`), partitioned by a derived project key — meaning it's shared across all your repos, not per-project. That's where decisions, bugfixes, discoveries and SDD artifacts are stored. The AI writes with `leina memory save` and reads with `leina memory context`/`search`/`verified`. (A legacy per-repo `memory.db` can be migrated to the global one with `leina memory migrate <dir>`.)
+- **The memory** lives in a **global** DB, at `~/.leina/memory.db` (respects `$LEINA_HOME`), partitioned by a derived project key — meaning it's shared across all your repos, not per-project. That's where decisions, bugfixes, discoveries and SDD artifacts are stored. The AI writes with `leina memory save` and reads with `leina memory context`/`search`/`verified`.
 - **There's no intermediate bridge**: the AI runs the `leina` binary through its shell, receives a bounded response (a subgraph or a handful of observations) and stops grepping the entire repo.
 
 #### What about team memory? Is it committed or not?

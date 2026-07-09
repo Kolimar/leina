@@ -11,12 +11,10 @@ Sin hooks, todo leina sería opt-in: la IA tendría que acordarse de correr
 
 ## Qué es un hook y cuándo dispara
 
-Devin emite eventos durante una sesión, conectados a `leina agent-hook <Event>` (alias de compatibilidad: `devin-hook`) por hooks
+El host emite eventos durante una sesión, conectados a `leina agent-hook <Event>` por hooks
 que se registran a nivel **user-global** (los instala `setup`/`activate`, disparan en todos los
 repos y resuelven el root en runtime) o, en modo standalone, en un `.devin/hooks.v1.json` que
-escribe `init` (FULL). Los writers que generan ese JSON son funciones puras en
-<ref_file file="src/application/install/devin-hooks.ts" />; la lógica de decisión vive en
-<ref_file file="src/cli/agent-gate.ts" />.
+escribe `init` (FULL).
 
 | Evento | Matcher | Qué hace el conserje |
 |--------|---------|----------------------|
@@ -45,31 +43,29 @@ flowchart LR
 2. **Fail-open.** stdin vacío/inválido, campos faltantes, errores de fs, grafo no disponible →
    `exit 0` en silencio. El sistema nunca crashea al agente.
 3. **Scope-aware no-op.** Un hook user-global dispara en *todos* los repos de la máquina. El gate
-   solo actúa cuando el flag de consentimiento del repo es `enabled`
-   (`isLeinaProject = readConsentFlag(cwd) === "enabled"`, en `.leina/consent`). Si está
-   `unknown` (incluidos repos legacy con solo `.devin/hooks.v1.json`) o `disabled`, `runAgentGate`
-   retorna en silencio. Así el hook global no molesta en repos ajenos, y el skill `leina-setup`
-   pregunta una sola vez en los repos `unknown`.
+   solo actúa cuando el flag de consentimiento del repo es `enabled` (archivo `.leina/consent`).
+   Si está `unknown` o `disabled`, el gate retorna en silencio. Así el hook global no molesta en
+   repos ajenos, y el skill `leina-setup` pregunta una sola vez en los repos `unknown`.
 
 ---
 
 ## ¿En qué proyecto estoy? (resolución del root)
 
 Un hook user-global no está fijado a un directorio. ¿Cómo sabe sobre qué repo opera?
-`resolveHookProjectRoot` prefiere la variable `DEVIN_PROJECT_DIR` (el contrato documentado de
-Devin para decirle a un hook su workspace) y cae a `process.cwd()` si está ausente. Todo lo de
+Prefiere la variable `DEVIN_PROJECT_DIR` (el contrato documentado de Devin para decirle a un
+hook su workspace) y cae al directorio actual si está ausente. Todo lo de
 abajo —el scope guard, los markers, la inyección— se ancla a ese root.
 
 ---
 
 ## Inyección activa: qué se le pone en el escritorio
 
-El corazón es `buildActiveContext(cwd)` (<ref_file file="src/cli/active-context.ts" />). Arma un bloque de
+El corazón es la construcción del **contexto activo**. Arma un bloque de
 `additionalContext` con tres partes, bajo un **presupuesto de 2500ms** que degrada con gracia:
 
 ```mermaid
 flowchart TD
-    start["buildActiveContext(cwd)"] --> key["deriveProjectKey(cwd)"]
+    start["contexto activo"] --> key["derivar project key"]
     key --> mem["1. Sección de memoria<br/>top-10 observaciones recientes<br/>(siempre incluida)"]
     mem --> budget1{¿queda<br/>presupuesto?}
     budget1 -->|sí| gstats["2. Stats del grafo<br/>'graph: N nodes, M edges'"]
@@ -80,16 +76,16 @@ flowchart TD
     fresh --> out["additionalContext +<br/>recordatorio de guardar al final"]
 ```
 
-- **Memoria** (`readMemorySection`): las 10 observaciones más recientes del proyecto, con
+- **Memoria:** las 10 observaciones más recientes del proyecto, con
   título, `type` y un snippet de ~200 chars, hasta un tope de 4000 chars. Si no hay
   observaciones aún, inyecta `## Project memory\n(no observations yet)`.
-- **Grafo** (`readGraphStatsPart`): el conteo `N nodes, M edges` leído del `graph.db`.
-- **Frescura** (`computeFreshnessNote`): corre `isStale` y agrega `(fresh)` o `(stale)` con la
+- **Grafo:** el conteo `N nodes, M edges` leído del `graph.db`.
+- **Frescura:** corre el chequeo de frescura y agrega `(fresh)` o `(stale)` con la
   sugerencia de `refresh` (o `build` si no hay grafo todavía).
 
-Si todo falla, cae a `SESSION_START_CONTEXT`: un texto estático que le recuerda al agente correr
-`memory context` y preferir `query`/`affected` sobre grep. La función devuelve además un flag
-`delivered` que el gate usa para decidir si re-armar el marker de carga.
+Si todo falla, cae a un texto estático que le recuerda al agente correr
+`memory context` y preferir `query`/`affected` sobre grep. La construcción devuelve además un
+flag `delivered` que el gate usa para decidir si re-armar el marker de carga.
 
 ---
 
@@ -103,8 +99,8 @@ El conserje lleva dos banderitas en `<cwd>/.leina/`, que se **borran al SessionS
 | **load** | `session.memory-loaded` | `PostToolUse` cuando un `exec` corre `memory (context\|search\|verified)`; o la inyección exitosa | corta en seco los consejos una vez que la memoria ya se cargó |
 | **save** | `session.memory-saved` | `PostToolUse` cuando un `exec` corre `memory (save\|session\|update)` | lo lee `Stop` para decidir si recordar guardar |
 
-El marker de save excluye `session-start` con un lookahead negativo en el regex (no querés que
-abrir una sesión cuente como "ya guardaste").
+El marker de save excluye el propio arranque de sesión (`session-start`): abrir una sesión no
+cuenta como "ya guardaste".
 
 ---
 
@@ -112,14 +108,14 @@ abrir una sesión cuente como "ya guardaste").
 
 ```mermaid
 sequenceDiagram
-    participant D as Devin
-    participant G as agent-gate
-    participant C as buildActiveContext
+    participant D as Host
+    participant G as agent-hook (gate)
+    participant C as contexto activo
     participant Disk as .leina/
 
     D->>G: SessionStart
     G->>Disk: borra markers (load + save)
-    G->>C: buildActiveContext(cwd)
+    G->>C: construye el contexto activo
     C-->>G: memoria + stats + frescura
     G-->>D: additionalContext (stdout)
     G->>Disk: re-arma marker load (si delivered)
@@ -143,7 +139,7 @@ sequenceDiagram
     Note over G: stdout SIEMPRE vacío en Stop
 ```
 
-Detalles por evento (`decideAgentGate` / `runAgentGate`):
+Detalles por evento:
 
 - **SessionStart**: borra ambos markers e inyecta contexto; re-arma el marker load si la entrega
   fue exitosa.
@@ -164,8 +160,8 @@ Detalles por evento (`decideAgentGate` / `runAgentGate`):
 
 ## doctor: ¿está listo para inyectar?
 
-`leina doctor` (<ref_file file="src/cli/doctor.ts" />) chequea la *injection-readiness*: que exista el
-`globalMemoryPath()` y el `graph.db`, para detectar un estado degradado donde la inyección
+`leina doctor` chequea la *injection-readiness*: que existan la memoria global y el
+`graph.db`, para detectar un estado degradado donde la inyección
 activa funcionaría a medias. Una invariante clave: **doctor nunca abre SQLite** — todos los
 chequeos son solo de filesystem (stat, leer texto/JSON). Eso evita efectos colaterales (WAL/SHM)
 y lo mantiene rápido y seguro.

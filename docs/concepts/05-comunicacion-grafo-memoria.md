@@ -11,9 +11,8 @@ Este es el capítulo donde el cartógrafo y el bibliotecario por fin se dan la m
 ## Dos bases separadas, una conversación
 
 Recordá: el grafo (`graph.db`, por repo) y la memoria (`memory.db`, global) están
-**desacoplados en disco**. La memoria nunca importa `GraphStore` directamente. Se unen en la
-**capa de aplicación**, en el composition root `openMemoryRepo`
-(<ref_snippet file="src/cli/wiring.ts" lines="40-67" />), que le pasa a la memoria dos funciones que *saben* hablar
+**desacoplados en disco**. La memoria nunca accede al grafo directamente. Se unen en la
+**capa de aplicación**, que le pasa a la memoria dos funciones que *saben* hablar
 con el grafo: un **resolver** (para clavar post-its) y un **verifier** (para revisarlos).
 
 ```mermaid
@@ -27,8 +26,8 @@ flowchart TB
         gnode["GraphNode"]
     end
     anchor -.->|apunta a| gnode
-    resolver["makeResolveAnchor<br/>(save-time)"] --> anchor
-    verifier["makeVerifyNode<br/>(read-time)"] --> gnode
+    resolver["resolver<br/>(save-time)"] --> anchor
+    verifier["verifier<br/>(read-time)"] --> gnode
     style mem fill:#fff4e5,stroke:#e8710a
     style gdb fill:#e8f0fe,stroke:#1a73e8
 ```
@@ -41,8 +40,7 @@ no hay grafo, los anchors quedan sin resolver (estado `unverified`) y nada se ro
 ## El post-it: cómo se clava un anchor
 
 Pensá un anchor como una nota adhesiva pegada a una página de un libro que se reescribe. Cuando
-guardás una observación con `--anchors "TokenFactory"`, en **save-time** ocurre
-(`makeResolveAnchor`, <ref_file file="src/application/memory/anchor-verify.ts" />):
+guardás una observación con `--anchors "TokenFactory"`, en **save-time** ocurre:
 
 1. Se busca en el grafo el/los node(s) cuyo label coincide **exacto** (functional-exact, sin
    substring difuso) con `"TokenFactory"`.
@@ -59,9 +57,9 @@ devuelve `[]`, nunca rompe el save.
 ## La revisión: detectar drift en read-time
 
 Cuando corrés `leina memory verified`, el bibliotecario revisa cada post-it
-**en el momento de leer** (nunca se persiste el resultado). Para cada anchor, `makeVerifyNode`
+**en el momento de leer** (nunca se persiste el resultado). Para cada anchor, el verifier
 pregunta al grafo: *¿este node todavía existe? ¿cuál es el hash actual del archivo en el disco?*
-Y `deriveAnchorState` (<ref_file file="src/application/memory/query.ts" />) decide el estado:
+Y a partir de eso se decide el estado:
 
 ```mermaid
 flowchart TD
@@ -88,7 +86,7 @@ Los cuatro estados (`MemoryState`):
 | `contradicted` | el node **ya no existe** en el grafo | la página fue arrancada |
 | `unverified` | nunca resolvió a un node, o el grafo no está disponible | no sabemos contra qué página estaba |
 
-Cuando una observación tiene **varios** anchors, `deriveMemoryState` agrega: gana el peor caso
+Cuando una observación tiene **varios** anchors, el estado se agrega: gana el peor caso
 (`contradicted` > `stale` > `unverified` > `active`).
 
 ---
@@ -105,7 +103,7 @@ Acá está la sutileza más importante. No todas las notas envejecen igual:
 
 El `type` de la observación define su `nature`: tipos como `architecture`/`bugfix` son
 **descriptivos**; `decision`/`preference` son **normativos**. La clasificación final
-(`classify`) cruza `nature` × `state` para dar un `verdict`:
+cruza `nature` × `state` para dar un `verdict`:
 
 ```mermaid
 flowchart TD
@@ -116,7 +114,7 @@ flowchart TD
     end
     subgraph norm["NORMATIVA (la regla sobrevive)"]
         n1["active → usable ✅"]
-        n2["stale / contradicted → usable<br/>+ checkViolation ⚠️<br/>(la regla aplica, pero el código drifteó)"]
+        n2["stale / contradicted → usable<br/>+ chequeo de violación ⚠️<br/>(la regla aplica, pero el código drifteó)"]
         n3["unverified → warning ⚠️"]
     end
 ```
@@ -127,7 +125,7 @@ flowchart TD
 | `warning` | usala con cuidado; puede estar desactualizada o no se pudo verificar |
 | `do_not_use` | esta descripción ya no aplica; ignorala |
 
-`getVerifiedContext` arma la respuesta completa: busca las observaciones que matchean la query,
+El contexto verificado arma la respuesta completa: busca las observaciones que matchean la query,
 deriva el estado de cada una contra el grafo vivo, y las reparte en `usable` / `warning` /
 `doNotUse` con su razón. Así el agente no solo recibe *qué* se anotó, sino *cuánto puede
 confiar* en cada nota hoy.

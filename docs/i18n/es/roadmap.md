@@ -28,9 +28,9 @@ se publican — este archivo nunca hace propaganda del pasado.
 ## Próximo (alcance y profundidad)
 
 - **Sidecars semánticos preconstruidos** — `sidecar install <lang>`: descargas
-  verificadas con sha256, sin necesitar .NET/JDK local. La CLI ya está lista; todavía
-  no se publicó ningún release `sidecars-v1`, así que actualmente recae en
-  `sidecar build <lang>` en todas las plataformas.
+  verificadas con sha256, sin necesitar .NET/JDK local. Mientras tanto,
+  `sidecar build <lang>` los compila on-demand con el toolchain local en todas las
+  plataformas.
 - **Puerto de proveedor de embeddings** — búsqueda semántica opt-in detrás de un puerto
   de comando externo (modelo local / API de host); nunca una dependencia nativa dura.
 - **Estrategia incremental de ts-morph** — el profile muestra que el type-check de TS

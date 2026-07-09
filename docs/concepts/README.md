@@ -70,7 +70,7 @@ flowchart TB
     end
 
     subgraph cli["leina (CLI)"]
-        cmds["Comandos:<br/>build · query · affected · path<br/>memory save/search/verified<br/>devin-hook"]
+        cmds["Comandos:<br/>build · query · affected · path<br/>memory save/search/verified<br/>agent-hook"]
     end
 
     subgraph stores["Almacenamiento (SQLite)"]

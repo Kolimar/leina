@@ -12,11 +12,10 @@ Without hooks, all of leina would be opt-in: the AI would have to remember to ru
 ## What a hook is and when it fires
 
 Devin emits events during a session, wired to `leina agent-hook <Event>` (compatibility alias:
-`devin-hook`) through hooks that are registered either at the **user-global** level (installed by
+`devin-hook`). Hooks are registered either at the **user-global** level (installed by
 `setup`/`activate`, they fire in every repo and resolve the root at runtime) or, in standalone
-mode, in a `.devin/hooks.v1.json` written by `init` (FULL). The writers that generate that JSON
-are pure functions in <ref_file file="src/application/install/devin-hooks.ts" />; the decision
-logic lives in <ref_file file="src/cli/agent-gate.ts" />.
+mode, in a `.devin/hooks.v1.json` written by a full `init`. The JSON is produced by pure
+writers, and a single gate holds the decision logic.
 
 | Event | Matcher | What the concierge does |
 |--------|---------|----------------------|
@@ -45,32 +44,29 @@ flowchart LR
 2. **Fail-open.** Empty/invalid stdin, missing fields, fs errors, graph unavailable →
    `exit 0` silently. The system never crashes the agent.
 3. **Scope-aware no-op.** A user-global hook fires in *every* repo on the machine. The gate only
-   acts when the repo's consent flag is `enabled`
-   (`isLeinaProject = readConsentFlag(cwd) === "enabled"`, in `.leina/consent`). If it's
-   `unknown` (including legacy repos with only `.devin/hooks.v1.json`) or `disabled`,
-   `runAgentGate` returns silently. This way the global hook doesn't bother other repos, and the
-   `leina-setup` skill asks only once in `unknown` repos.
+   acts when the repo's consent flag is `enabled` (stored in `.leina/consent`). If it's
+   `unknown` or `disabled`, the gate returns silently. This way the global hook doesn't bother
+   other repos, and the `leina-setup` skill asks only once in `unknown` repos.
 
 ---
 
 ## Which project am I in? (root resolution)
 
 A user-global hook isn't pinned to a directory. How does it know which repo it's operating on?
-`resolveHookProjectRoot` prefers the `DEVIN_PROJECT_DIR` variable (Devin's documented contract
-for telling a hook its workspace) and falls back to `process.cwd()` if it's absent. Everything
-below —the scope guard, the markers, the injection— is anchored to that root.
+It prefers the `DEVIN_PROJECT_DIR` variable (Devin's documented contract for telling a hook its
+workspace) and falls back to `process.cwd()` if it's absent. Everything below —the scope guard,
+the markers, the injection— is anchored to that root.
 
 ---
 
 ## Active injection: what gets put on the desk
 
-The heart of it is `buildActiveContext(cwd)` (<ref_file file="src/cli/active-context.ts" />). It
-assembles an `additionalContext` block with three parts, under a **2500ms budget** that degrades
-gracefully:
+The heart of it is the active-context builder. It assembles an `additionalContext` block with
+three parts, under a **2500ms budget** that degrades gracefully:
 
 ```mermaid
 flowchart TD
-    start["buildActiveContext(cwd)"] --> key["deriveProjectKey(cwd)"]
+    start["build active context (cwd)"] --> key["derive project key (cwd)"]
     key --> mem["1. Memory section<br/>top-10 recent observations<br/>(always included)"]
     mem --> budget1{budget<br/>remaining?}
     budget1 -->|yes| gstats["2. Graph stats<br/>'graph: N nodes, M edges'"]
@@ -81,16 +77,16 @@ flowchart TD
     fresh --> out["additionalContext +<br/>reminder to save at the end"]
 ```
 
-- **Memory** (`readMemorySection`): the project's 10 most recent observations, with title,
-  `type`, and a ~200-char snippet, up to a 4000-char cap. If there are no observations yet, it
-  injects `## Project memory\n(no observations yet)`.
-- **Graph** (`readGraphStatsPart`): the `N nodes, M edges` count read from `graph.db`.
-- **Freshness** (`computeFreshnessNote`): runs `isStale` and adds `(fresh)` or `(stale)` along
-  with the `refresh` suggestion (or `build` if there's no graph yet).
+- **Memory**: the project's 10 most recent observations, with title, `type`, and a ~200-char
+  snippet, up to a 4000-char cap. If there are no observations yet, it injects
+  `## Project memory\n(no observations yet)`.
+- **Graph**: the `N nodes, M edges` count read from `graph.db`.
+- **Freshness**: runs the staleness check and adds `(fresh)` or `(stale)` along with the
+  `refresh` suggestion (or `build` if there's no graph yet).
 
-If everything fails, it falls back to `SESSION_START_CONTEXT`: a static text that reminds the
-agent to run `memory context` and to prefer `query`/`affected` over grep. The function also
-returns a `delivered` flag that the gate uses to decide whether to re-arm the load marker.
+If everything fails, it falls back to a static text that reminds the agent to run
+`memory context` and to prefer `query`/`affected` over grep. The builder also returns a
+`delivered` flag that the gate uses to decide whether to re-arm the load marker.
 
 ---
 
@@ -115,12 +111,12 @@ opening a session to count as "already saved").
 sequenceDiagram
     participant D as Devin
     participant G as agent-gate
-    participant C as buildActiveContext
+    participant C as active context
     participant Disk as .leina/
 
     D->>G: SessionStart
     G->>Disk: clears markers (load + save)
-    G->>C: buildActiveContext(cwd)
+    G->>C: build active context (cwd)
     C-->>G: memory + stats + freshness
     G-->>D: additionalContext (stdout)
     G->>Disk: re-arms load marker (if delivered)
@@ -144,7 +140,7 @@ sequenceDiagram
     Note over G: stdout ALWAYS empty on Stop
 ```
 
-Details per event (`decideAgentGate` / `runAgentGate`):
+Details per event:
 
 - **SessionStart**: clears both markers and injects context; re-arms the load marker if the
   delivery succeeded.
@@ -165,11 +161,10 @@ Details per event (`decideAgentGate` / `runAgentGate`):
 
 ## doctor: is it ready to inject?
 
-`leina doctor` (<ref_file file="src/cli/doctor.ts" />) checks *injection-readiness*: that the
-`globalMemoryPath()` and the `graph.db` exist, in order to detect a degraded state where active
-injection would only work halfway. One key invariant: **doctor never opens SQLite** — all checks
-are filesystem-only (stat, reading text/JSON). This avoids side effects (WAL/SHM) and keeps it
-fast and safe.
+`leina doctor` checks *injection-readiness*: that the global memory database and the `graph.db`
+exist, in order to detect a degraded state where active injection would only work halfway. One
+key invariant: **doctor never opens SQLite** — all checks are filesystem-only (stat, reading
+text/JSON). This avoids side effects (WAL/SHM) and keeps it fast and safe.
 
 ---
 

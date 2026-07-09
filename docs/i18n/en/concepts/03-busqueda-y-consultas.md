@@ -5,14 +5,14 @@
 > *"how do I get from A to B?"* (`path`)— plus a guardian that makes sure the map is up to date
 > before answering.
 
-All the logic lives in <ref_file file="src/application/graph/query.ts" />. All three are traversals (BFS) over the graph;
-they differ in *which direction* they walk and *what stops them*.
+All three are traversals (BFS) over the graph; they differ in *which direction* they walk and
+*what stops them*.
 
 ---
 
 ## `query` — "what's around this topic?"
 
-It's the GPS that, given a destination in natural language, shows you the neighborhood. `queryGraph` does
+It's the GPS that, given a destination in natural language, shows you the neighborhood. It runs
 four steps:
 
 ```mermaid
@@ -24,7 +24,7 @@ flowchart TD
     expand --> sub["subgraph:<br/>seeds + nodes + edges"]
 ```
 
-The **scoring** (`scoreNode`) rewards more specific matches:
+The **scoring** rewards more specific matches:
 
 | Term match against... | Points |
 |---|---|
@@ -34,7 +34,7 @@ The **scoring** (`scoreNode`) rewards more specific matches:
 | the file's **path** contains the term | +1 |
 
 All terms are summed; results are sorted highest to lowest; the **top 3** are the *seeds*.
-From there, `expandNeighborhood` walks in **both directions** (out + in edges) up to
+From there, the neighborhood is expanded in **both directions** (out + in edges) up to
 depth 2 or until it collects 40 nodes. The result is a focused subgraph: the most
 relevant corners and the streets that connect them.
 
@@ -62,9 +62,9 @@ flowchart BT
     style d stroke-dasharray: 4 4,color:#999
 ```
 
-Two rules make the result **trustworthy** (`affectedHitFor`):
+Two rules make the result **trustworthy**:
 
-1. **Only certain relations propagate impact** (`AFFECTED_RELATIONS`): `calls`, `references`,
+1. **Only certain relations propagate impact**: `calls`, `references`,
    `imports`, `imports_from`, `inherits`, `extends`, `implements`, `uses`. A `contains` or
    `method` edge (purely structural) doesn't count as "affects you".
 2. **`AMBIGUOUS` edges do NOT propagate.** A blast radius has to be trustworthy; a guessed
@@ -78,15 +78,14 @@ Each hit reports the `node`, the `depth` at which it was reached, and the `viaRe
 
 ## `path` — "how does A connect to B?"
 
-`shortestPath` is a BFS over the **undirected view** (looks at both out and in edges), capped at
+`path` is a BFS over the **undirected view** (looks at both out and in edges), capped at
 8 hops. It keeps track of each node's predecessor; as soon as it touches the destination, it
 reconstructs the chain of steps backward.
 
 ```mermaid
 flowchart LR
-    cli["cli/index.ts"] -->|calls| handler["handlers/graph.ts"]
-    handler -->|calls| query["queryGraph"]
-    query -->|calls| store["GraphStore"]
+    a["Symbol A"] -->|calls| b["intermediate"]
+    b -->|imports| c["Symbol B"]
 ```
 
 It's useful for answering "how does the CLI reach the database?" by showing the concrete chain
@@ -100,10 +99,10 @@ Here's the magic that avoids answering with a stale map. The cartographer saved,
 **manifest** with the fingerprint of every source file. Before each read, a guardian compares the
 current state against that fingerprint.
 
-### How the map is detected as stale (`isStale`)
+### How the map is detected as stale
 
-`isStale` (<ref_file file="src/application/graph/manifest.ts" />) compares the current sources against the manifest and
-returns at the **first** sign of staleness (so the reason is deterministic):
+The staleness check compares the current sources against the manifest and returns at the
+**first** sign of staleness (so the reason is deterministic):
 
 ```mermaid
 flowchart TD
@@ -126,8 +125,7 @@ touches the `mtime` but leaves the content unchanged does **not** trigger an unn
 
 ### Auto vs refuse: the *posture*
 
-When the map is stale, what do we do? `openFreshStore` decides
-(<ref_snippet file="src/cli/wiring.ts" lines="87-108" />) based on the configured *posture*:
+When the map is stale, what do we do? The gate decides based on the configured *posture*:
 
 ```mermaid
 flowchart TD
@@ -145,7 +143,7 @@ flowchart TD
   The writer and the reader never coexist (build → close → reopen).
 - **`refuse`**: doesn't touch anything; tells you to run `leina refresh` yourself.
 
-The `import()` of `buildGraph` is **dynamic** and only happens on the `auto` branch when needed:
+The `import()` of the build stack is **dynamic** and only happens on the `auto` branch when needed:
 that way, the common path (fresh map) never loads the heavy extraction stack, and that's why a
 `query` starts up in ~0.15s.
 

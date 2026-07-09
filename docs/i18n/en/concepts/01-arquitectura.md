@@ -10,14 +10,14 @@
 
 Think of leina as a restaurant:
 
-- The **waiter** (`cli/`) takes your order (`leina query ...`), carries it to the
+- The **waiter** (the CLI layer) takes your order (`leina query ...`), carries it to the
   kitchen, and brings you the dish. It doesn't cook; it only translates between you and
   the kitchen.
-- The **recipes** (`application/`) describe *how* to prepare each dish step by step, no
+- The **recipes** (the application layer) describe *how* to prepare each dish step by step, no
   matter what brand of oven or fridge you have.
-- The **pantry and appliances** (`infrastructure/`) are the concrete things: the fridge
+- The **pantry and appliances** (the infrastructure layer) are the concrete things: the fridge
   (SQLite), the oven (tree-sitter, ts-morph), the scale (git).
-- The **definitions of what each dish is** (`domain/`) — what goes into a "pizza," what a
+- The **definitions of what each dish is** (the domain layer) — what goes into a "pizza," what a
   "node" or an "edge" is — are pure contracts: no appliances, no brands.
 
 The golden rule of the kitchen: **the recipes and the definitions never mention brands**.
@@ -30,10 +30,10 @@ of hexagonal architecture.
 
 ```mermaid
 flowchart TD
-    cli["cli/<br/><i>the waiter</i><br/>arg parsing · I/O · wiring"]
-    app["application/<br/><i>the recipes</i><br/>build · query · resolve · drift"]
-    infra["infrastructure/<br/><i>the pantry</i><br/>SQLite · tree-sitter · ts-morph · git"]
-    domain["domain/<br/><i>the definitions</i><br/>model.ts · ports.ts (pure interfaces)"]
+    cli["cli<br/><i>the waiter</i><br/>arg parsing · I/O · wiring"]
+    app["application<br/><i>the recipes</i><br/>build · query · resolve · drift"]
+    infra["infrastructure<br/><i>the pantry</i><br/>SQLite · tree-sitter · ts-morph · git"]
+    domain["domain<br/><i>the definitions</i><br/>pure types · ports (interfaces)"]
 
     cli --> app
     cli --> infra
@@ -44,28 +44,28 @@ flowchart TD
     style app fill:#e6f4ea,stroke:#137333
 ```
 
-The arrows are **allowed dependencies**. Notice that they all point toward `domain/`, and
-that `application/` **never** points to `infrastructure/`: the recipes don't know about
+The arrows are **allowed dependencies**. Notice that they all point toward the domain, and
+that the application layer **never** points to infrastructure: the recipes don't know about
 brands.
 
-| Layer | Folder | Responsibility | Examples |
-|------|---------|-----------------|----------|
-| **Domain** | `src/domain/` | Pure types and contracts. Zero I/O, zero external dependencies. | `graph/model.ts` (`GraphNode`, `GraphEdge`), `graph/ports.ts` (`GraphRepository`), `memory/model.ts`, `memory/ports.ts` |
-| **Application** | `src/application/` | Use cases / algorithms. Depends only on `domain`. | `graph/build.ts`, `graph/query.ts`, `graph/resolve.ts`, `memory/query.ts` (drift), `project/detect-key.ts` |
-| **Infrastructure** | `src/infrastructure/` | Concrete adapters that *implement* the ports. | `sqlite/graph-store.ts`, `sqlite/memory-repository.ts`, `extractors/treesitter.ts`, `extractors/semantic/tsmorph.ts` |
-| **CLI** | `src/cli/` | Composition + I/O. The only place that *builds* infrastructure. | `index.ts` (dispatcher), `wiring.ts` (composition root), `handlers/*`, `io.ts` |
+| Layer | Responsibility |
+|------|-----------------|
+| **Domain** | Pure types and contracts (`GraphNode`, `GraphEdge`, the memory model, and the ports they flow through). Zero I/O, zero external dependencies. |
+| **Application** | Use cases and algorithms: build, query, resolve, drift detection, project-key detection. Depends only on the domain. |
+| **Infrastructure** | Concrete adapters that *implement* the ports: the SQLite stores, the tree-sitter and ts-morph extractors, git. |
+| **CLI** | Composition and I/O. The only place that *builds* infrastructure: it dispatches commands and wires everything together. |
 
 ---
 
 ## Ports and adapters, concretely
 
-The contract lives in `domain`; the implementation, in `infrastructure`. The
-`application` layer receives the contract and never knows who fulfills it.
+The contract lives in the domain; the implementation, in infrastructure. The
+application layer receives the contract and never knows who fulfills it.
 
 ```mermaid
 classDiagram
     class GraphRepository {
-        <<interface — domain/graph/ports.ts>>
+        <<port — domain>>
         +addNodes(nodes)
         +addEdges(edges)
         +getNode(id) GraphNode
@@ -74,21 +74,21 @@ classDiagram
         +inEdges(id) GraphEdge[]
         +stats()
     }
-    class GraphStore {
-        <<infrastructure/sqlite/graph-store.ts>>
+    class SQLiteAdapter {
+        <<adapter — infrastructure>>
         -db: SQLite
     }
-    class queryGraph {
-        <<application/graph/query.ts>>
+    class QueryUseCase {
+        <<application>>
         receives GraphRepository
     }
-    GraphStore ..|> GraphRepository : implements
-    queryGraph ..> GraphRepository : depends on the port
+    SQLiteAdapter ..|> GraphRepository : implements
+    QueryUseCase ..> GraphRepository : depends on the port
 ```
 
-The **composition root** is <ref_file file="src/cli/wiring.ts" />: it's the *only* place
-where `new GraphStore(...)` or `new SQLiteMemoryRepository(...)` is called. Handlers
-receive the port, never the concrete class. <ref_snippet file="src/cli/wiring.ts" lines="26-30" />
+A single **composition root** is the *only* place where concrete stores are constructed.
+Handlers receive the port, never the concrete class — so the read and write logic never
+depends on SQLite.
 
 ---
 
@@ -99,26 +99,26 @@ When you run `leina query <dir> "who uses TokenFactory"`, here's what happens:
 ```mermaid
 sequenceDiagram
     participant U as You / the agent
-    participant I as cli/index.ts<br/>(dispatcher)
-    participant H as cli/handlers/graph.ts
-    participant W as cli/wiring.ts
-    participant A as application/graph/query.ts
-    participant S as GraphStore (SQLite)
+    participant I as Dispatcher
+    participant H as Graph handler
+    participant W as Composition root
+    participant A as Query use case
+    participant S as Graph store (SQLite)
 
     U->>I: leina query dir "..."
-    I->>H: switch(cmd) → graph handler
-    H->>W: openFreshStore(dir)
-    W->>S: opens graph.db (rebuild if stale)
+    I->>H: routes to the graph handler
+    H->>W: open a fresh store for dir
+    W->>S: opens the graph (rebuild if stale)
     W-->>H: GraphRepository
-    H->>A: queryGraph(store, question)
+    H->>A: query the graph with the question
     A->>S: findByLabel / outEdges / inEdges
     S-->>A: nodes + edges
     A-->>H: subgraph
-    H-->>U: prints result (io.ts)
+    H-->>U: prints the result
 ```
 
-`index.ts` is a **pure dispatcher**: a `switch (cmd)` over `process.argv` that routes to
-the correct handler. All the logic lives further in.
+The dispatcher is a **pure router**: it reads the subcommand and routes to the correct
+handler. All the logic lives further in.
 
 ---
 
@@ -130,17 +130,15 @@ Every capability is a `leina <subcommand>` that starts up, responds, and dies. W
 
 - **Fast startup (~0.15s) on the read path.** The heavy extraction stack (tree-sitter +
   ts-morph) is loaded with a *dynamic* `import()`, only in `build`/`refresh`. A `query` or
-  a `memory search` never pays that cost. That's why `wiring.ts` notes that the
-  extractor's `import()` "stays in the command handlers".
+  a `memory search` never pays that cost.
 - **No state between invocations.** There's no daemon that can drift out of sync; every
   command reads fresh state from disk.
 
-### Pure writers (`FileArtifact`)
+### Pure writers
 
 Everything that *writes files* on the install surface (skills, agents, hooks, protocol)
-is modeled as **pure functions** that return `FileArtifact { path, content }` — defined in
-`src/domain/install/artifact.ts`. The writer **never touches disk**; the CLI does all the
-I/O.
+is modeled as **pure functions** that return an artifact `{ path, content }`. The writer
+**never touches disk**; the CLI does all the I/O.
 
 Two practical consequences:
 
@@ -151,7 +149,7 @@ Two practical consequences:
 
 ```mermaid
 flowchart LR
-    writer["pure writer<br/>(application/install/*)"] -->|returns| artifact["FileArtifact<br/>{ path, content }"]
+    writer["pure writer"] -->|returns| artifact["artifact<br/>{ path, content }"]
     artifact -->|the CLI writes| disk[("disk")]
     style writer fill:#e6f4ea,stroke:#137333
 ```

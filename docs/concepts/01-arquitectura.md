@@ -1,8 +1,8 @@
 # 1. Arquitectura general
 
 > **En una frase:** leina es una CLI con arquitectura **hexagonal** (puertos y
-> adaptadores) en cuatro capas, donde la lógica de negocio no sabe nada de SQLite ni del
-> sistema de archivos — y donde *no hay servidor*.
+> adaptadores), donde la lógica de negocio no depende de SQLite ni del sistema de
+> archivos — y donde *no hay servidor*.
 
 ---
 
@@ -10,13 +10,13 @@
 
 Pensá leina como un restaurante:
 
-- El **mozo** (`cli/`) toma tu pedido (`leina query ...`), lo lleva a la cocina y te
+- El **mozo** toma tu pedido (`leina query ...`), lo lleva a la cocina y te
   trae el plato. No cocina; solo traduce entre vos y la cocina.
-- Las **recetas** (`application/`) describen *cómo* preparar cada plato paso a paso, sin
+- Las **recetas** describen *cómo* preparar cada plato paso a paso, sin
   importar qué marca de horno o heladera tengas.
-- La **despensa y los electrodomésticos** (`infrastructure/`) son las cosas concretas: la
-  heladera (SQLite), el horno (tree-sitter, ts-morph), la balanza (git).
-- Las **definiciones de qué es cada plato** (`domain/`) — qué lleva una "pizza", qué es un
+- La **despensa y los electrodomésticos** son las cosas concretas: la
+  heladera (SQLite), el horno (los extractores de código), la balanza (git).
+- Las **definiciones de qué es cada plato** — qué lleva una "pizza", qué es un
   "node" o un "edge" — son contratos puros: ningún electrodoméstico, ninguna marca.
 
 La regla de oro de la cocina: **las recetas y las definiciones nunca mencionan marcas**. Si
@@ -29,10 +29,10 @@ arquitectura hexagonal.
 
 ```mermaid
 flowchart TD
-    cli["cli/<br/><i>el mozo</i><br/>parseo de args · I/O · wiring"]
-    app["application/<br/><i>las recetas</i><br/>build · query · resolve · drift"]
-    infra["infrastructure/<br/><i>la despensa</i><br/>SQLite · tree-sitter · ts-morph · git"]
-    domain["domain/<br/><i>las definiciones</i><br/>model.ts · ports.ts (interfaces puras)"]
+    cli["Interfaz (CLI)<br/><i>el mozo</i><br/>parseo de args · I/O"]
+    app["Aplicación<br/><i>las recetas</i><br/>build · query · resolve · drift"]
+    infra["Infraestructura<br/><i>la despensa</i><br/>SQLite · extractores · git"]
+    domain["Dominio<br/><i>las definiciones</i><br/>tipos y contratos puros"]
 
     cli --> app
     cli --> infra
@@ -43,50 +43,36 @@ flowchart TD
     style app fill:#e6f4ea,stroke:#137333
 ```
 
-Las flechas son **dependencias permitidas**. Fijate que todas apuntan hacia `domain/`, y que
-`application/` **nunca** apunta a `infrastructure/`: las recetas no conocen marcas.
+Las flechas son **dependencias permitidas**. Fijate que todas apuntan hacia el **dominio**, y que
+la **aplicación** **nunca** apunta a la **infraestructura**: las recetas no conocen marcas.
 
-| Capa | Carpeta | Responsabilidad | Ejemplos |
-|------|---------|-----------------|----------|
-| **Domain** | `src/domain/` | Tipos y contratos puros. Cero I/O, cero dependencias externas. | `graph/model.ts` (`GraphNode`, `GraphEdge`), `graph/ports.ts` (`GraphRepository`), `memory/model.ts`, `memory/ports.ts` |
-| **Application** | `src/application/` | Casos de uso / algoritmos. Depende solo de `domain`. | `graph/build.ts`, `graph/query.ts`, `graph/resolve.ts`, `memory/query.ts` (drift), `project/detect-key.ts` |
-| **Infrastructure** | `src/infrastructure/` | Adaptadores concretos que *implementan* los ports. | `sqlite/graph-store.ts`, `sqlite/memory-repository.ts`, `extractors/treesitter.ts`, `extractors/semantic/tsmorph.ts` |
-| **CLI** | `src/cli/` | Composición + I/O. El único lugar que *construye* infraestructura. | `index.ts` (dispatcher), `wiring.ts` (composition root), `handlers/*`, `io.ts` |
+| Capa | Responsabilidad |
+|------|-----------------|
+| **Dominio** | Tipos y contratos puros. Cero I/O, cero dependencias externas. Define qué es un `node`, un `edge`, una `observation`. |
+| **Aplicación** | Casos de uso y algoritmos: build, query, resolve, drift. Depende solo del dominio. |
+| **Infraestructura** | Adaptadores concretos que *implementan* los contratos: SQLite, los extractores de código, git. |
+| **Interfaz (CLI)** | Composición + I/O. El único lugar que *construye* infraestructura. |
 
 ---
 
 ## Puertos y adaptadores en concreto
 
-El contrato vive en `domain`; la implementación, en `infrastructure`. La capa `application`
-recibe el contrato y nunca sabe quién lo cumple.
+El contrato vive en el **dominio**; la implementación, en la **infraestructura**. La capa de
+**aplicación** recibe el contrato y nunca sabe quién lo cumple.
 
 ```mermaid
-classDiagram
-    class GraphRepository {
-        <<interface — domain/graph/ports.ts>>
-        +addNodes(nodes)
-        +addEdges(edges)
-        +getNode(id) GraphNode
-        +findByLabel(q) GraphNode[]
-        +outEdges(id) GraphEdge[]
-        +inEdges(id) GraphEdge[]
-        +stats()
-    }
-    class GraphStore {
-        <<infrastructure/sqlite/graph-store.ts>>
-        -db: SQLite
-    }
-    class queryGraph {
-        <<application/graph/query.ts>>
-        recibe GraphRepository
-    }
-    GraphStore ..|> GraphRepository : implements
-    queryGraph ..> GraphRepository : depende del puerto
+flowchart LR
+    port["Contrato de repositorio<br/>(dominio)<br/>addNodes · getNode · outEdges · inEdges · stats"]
+    adapter["Adaptador SQLite<br/>(infraestructura)"]
+    usecase["Caso de uso: query<br/>(aplicación)"]
+
+    adapter -->|implementa| port
+    usecase -->|depende del contrato| port
 ```
 
-El **composition root** es <ref_file file="src/cli/wiring.ts" />: es el *único* lugar donde se hace
-`new GraphStore(...)` o `new SQLiteMemoryRepository(...)`. Los handlers reciben el port, nunca
-la clase concreta. <ref_snippet file="src/cli/wiring.ts" lines="26-30" />
+Hay un **único lugar de composición** que construye los adaptadores concretos y se los inyecta a
+los casos de uso. Estos reciben siempre el contrato, nunca la implementación concreta. Cambiar de
+motor de almacenamiento no toca ni una línea de la lógica de negocio.
 
 ---
 
@@ -97,26 +83,19 @@ Cuando ejecutás `leina query <dir> "quién usa TokenFactory"`, esto es lo que p
 ```mermaid
 sequenceDiagram
     participant U as Vos / el agente
-    participant I as cli/index.ts<br/>(dispatcher)
-    participant H as cli/handlers/graph.ts
-    participant W as cli/wiring.ts
-    participant A as application/graph/query.ts
-    participant S as GraphStore (SQLite)
+    participant I as CLI (dispatcher)
+    participant A as Caso de uso: query
+    participant S as Grafo (SQLite)
 
     U->>I: leina query dir "..."
-    I->>H: switch(cmd) → handler de graph
-    H->>W: openFreshStore(dir)
-    W->>S: abre graph.db (rebuild si stale)
-    W-->>H: GraphRepository
-    H->>A: queryGraph(store, pregunta)
+    I->>S: abre el grafo (rebuild si está viejo)
+    I->>A: query(pregunta)
     A->>S: findByLabel / outEdges / inEdges
     S-->>A: nodes + edges
-    A-->>H: subgrafo
-    H-->>U: imprime resultado (io.ts)
+    A-->>U: imprime el subgrafo
 ```
 
-`index.ts` es un **dispatcher puro**: un `switch (cmd)` sobre `process.argv` que rutea al
-handler correcto. Toda la lógica vive más adentro.
+La CLI enruta cada comando al caso de uso correcto; toda la lógica vive más adentro.
 
 ---
 
@@ -126,18 +105,17 @@ handler correcto. Toda la lógica vive más adentro.
 
 Toda capacidad es un `leina <subcomando>` que arranca, responde y muere. ¿Por qué?
 
-- **Arranque rápido (~0.15s) en el camino de lectura.** El stack pesado de extracción
-  (tree-sitter + ts-morph) se carga con `import()` *dinámico*, solo en `build`/`refresh`. Una
-  `query` o un `memory search` nunca pagan ese costo. Por eso `wiring.ts` aclara que el
-  `import()` del extractor "stays in the command handlers".
+- **Arranque rápido (~0.15s) en el camino de lectura.** El stack pesado de extracción de código
+  se carga solo al construir o refrescar el grafo. Una `query` o un `memory search` nunca pagan
+  ese costo.
 - **Sin estado entre invocaciones.** No hay daemon que se desincronice; cada comando lee el
   estado fresco del disco.
 
-### Writers puros (`FileArtifact`)
+### Writers puros
 
 Todo lo que *escribe archivos* en la superficie de install (skills, agents, hooks, protocolo)
-se modela como **funciones puras** que devuelven `FileArtifact { path, content }` — definido en
-`src/domain/install/artifact.ts`. El writer **no toca el disco**; la CLI hace todo el I/O.
+se modela como **funciones puras** que devuelven un artefacto `{ path, content }`. El writer
+**no toca el disco**; la CLI hace todo el I/O.
 
 Dos consecuencias prácticas:
 
@@ -146,7 +124,7 @@ Dos consecuencias prácticas:
 
 ```mermaid
 flowchart LR
-    writer["writer puro<br/>(application/install/*)"] -->|devuelve| artifact["FileArtifact<br/>{ path, content }"]
+    writer["writer puro"] -->|devuelve| artifact["artefacto<br/>{ path, content }"]
     artifact -->|la CLI escribe| disk[("disco")]
     style writer fill:#e6f4ea,stroke:#137333
 ```

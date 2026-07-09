@@ -26,9 +26,7 @@ advertises the past.
 ## Next (reach & depth)
 
 - **Prebuilt semantic sidecars** — `sidecar install <lang>`: sha256-verified downloads,
-  no local .NET/JDK needed. The CLI is ready; no `sidecars-v1` release has been
-  published yet, so it currently falls back to `sidecar build <lang>` on every
-  platform.
+  no local .NET/JDK needed, with `sidecar build <lang>` as the local-toolchain fallback.
 - **Embedding provider port** — opt-in semantic search behind an external-command port
   (local model / host API); never a hard native dependency.
 - **ts-morph incremental strategy** — the profile shows the TS type-check dominates

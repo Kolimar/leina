@@ -15,8 +15,7 @@ El **cartógrafo** hace otra cosa: recorre el código una vez, dibuja un mapa, y
 responde "¿quién llega a esta esquina?" mirando el mapa, no las calles. Ese mapa es el grafo, y
 vive en `<proyecto>/.leina/graph.db` (SQLite, uno por repo, git-ignored).
 
-Construirlo es el comando `leina build` (o `refresh`). El punto de entrada es
-`buildGraph(root, store)` en <ref_file file="src/application/graph/build.ts" />.
+Construirlo es el comando `leina build` (o `refresh`).
 
 ---
 
@@ -24,12 +23,12 @@ Construirlo es el comando `leina build` (o `refresh`). El punto de entrada es
 
 ```mermaid
 flowchart LR
-    src["listSourceFiles(root)<br/>(enumera fuentes)"] --> detect["detect.ts<br/>¿qué lenguaje?"]
+    src["enumera<br/>archivos fuente"] --> detect["¿qué lenguaje?"]
     detect --> extract["extracción<br/>(3 niveles)"]
-    extract --> resolve["resolve.ts<br/>raw calls → edges"]
-    resolve --> dedup["dedup.ts<br/>fusiona duplicados"]
-    dedup --> store["GraphStore<br/>(graph.db)"]
-    store --> manifest["writeManifest<br/>(para staleness)"]
+    extract --> resolve["resolución<br/>raw calls → edges"]
+    resolve --> dedup["dedup<br/>fusiona duplicados"]
+    dedup --> store["graph.db"]
+    store --> manifest["manifest<br/>(para staleness)"]
 ```
 
 Tras volcar nodes y edges en SQLite, `build` escribe un **manifest** (huellas de los archivos
@@ -55,9 +54,9 @@ flowchart TD
 
 | Nivel | Lenguajes | Herramienta | Qué garantiza |
 |-------|-----------|-------------|---------------|
-| **Semántico (compiler-grade)** | TypeScript / TSX | **ts-morph** (TS compiler API) — `extractTsProject` en `extractors/semantic/tsmorph.ts` | Resolución exacta de símbolos: edges con confianza `EXTRACTED` |
-| **Semántico (sidecar)** | C# / Java | proceso externo (Roslyn para C#, JDT para Java) — `runSemanticSidecarProject` en `extractors/semantic/sidecar.ts` | Igual de exacto; si no hay sidecar, **cae** a tree-sitter |
-| **Sintáctico** | todo lo demás (JS, Go, Python, …) | **tree-sitter** — `extractFile` en `extractors/treesitter.ts` | AST sin resolución; emite *raw calls* que se resuelven después |
+| **Semántico (compiler-grade)** | TypeScript / TSX | **ts-morph** (TS compiler API) | Resolución exacta de símbolos: edges con confianza `EXTRACTED` |
+| **Semántico (sidecar)** | C# / Java | proceso externo (Roslyn para C#, JDT para Java) | Igual de exacto; si no hay sidecar, **cae** a tree-sitter |
+| **Sintáctico** | todo lo demás (JS, Go, Python, …) | **tree-sitter** | AST sin resolución; emite *raw calls* que se resuelven después |
 
 ### El sidecar de C#/Java
 
@@ -71,19 +70,18 @@ LEINA_JAVA_SIDECAR="java -jar /path/jdt-graph.jar"
 ```
 
 Si no hay ninguno configurado, podés optar por que se construya on-demand
-(`LEINA_BUILD_SIDECARS=1`): se materializan plantillas desde `assets/sidecars/{lang}/`,
+(`LEINA_BUILD_SIDECARS=1`): se materializan plantillas incluidas,
 se compila con el toolchain local (dotnet SDK / JDK 17+) y el binario queda cacheado en
 `~/.leina/sidecars/{lang}/dist/`. Sin sidecar, C#/Java se extraen igual con tree-sitter
 (menos preciso, pero funciona).
 
 ### El truco de las dos pasadas (TypeScript)
 
-`extractTsProject` recorre el proyecto **dos veces**:
+Para TypeScript, la extracción recorre el proyecto **dos veces**:
 
-1. **Pasada 1** (`registerSourceFileDefs`): anota *todas* las declaraciones (funciones, clases,
-   métodos) en un mapa `declToId`. Arma la "guía telefónica".
-2. **Pasada 2** (`linkHeritageAndCalls`): ahora que la guía está completa, resuelve cada
-   llamada/herencia al nodo exacto.
+1. **Pasada 1:** anota *todas* las declaraciones (funciones, clases, métodos). Arma la "guía
+   telefónica".
+2. **Pasada 2:** ahora que la guía está completa, resuelve cada llamada/herencia al nodo exacto.
 
 ¿Por qué dos? Porque TypeScript permite *forward references* y llamadas cruzadas entre
 archivos: no podés resolver una llamada a algo que todavía no registraste.
@@ -91,8 +89,6 @@ archivos: no podés resolver una llamada a algo que todavía no registraste.
 ---
 
 ## El modelo: nodes y edges
-
-Definido en <ref_file file="src/domain/graph/model.ts" />.
 
 ```mermaid
 classDiagram
@@ -119,10 +115,9 @@ classDiagram
 
 ### El `node` (la esquina)
 
-- `id` — identificador **estable y file-scoped**, generado por `makeId(...)` en
-  `domain/shared/id.ts`. Normaliza cada parte (NFKC + casefold + colapsa no-alfanuméricos) y une
-  con `:`. Ejemplo: `makeId("src/auth.ts", "TokenFactory", "create")` →
-  `src_auth_ts:tokenfactory:create`.
+- `id` — identificador **estable y file-scoped**. Normaliza cada parte (NFKC + casefold +
+  colapsa no-alfanuméricos) y une con `:`. Ejemplo: el método `create` de `TokenFactory` en el
+  archivo `src/auth.ts` → `src_auth_ts:tokenfactory:create`.
 - `kind` — `class` · `function` · `method` · `interface` · `module` · `concept`.
 - `signature` — solo para funciones/métodos: tipo de retorno, parámetros (con tipo,
   nullabilidad, opcionalidad), modificador de acceso, flags `isAsync`/`isGenerator`.
@@ -157,8 +152,8 @@ flowchart LR
 ## Resolución: de *raw calls* a *edges*
 
 tree-sitter no resuelve símbolos: cuando ve `factory.make()`, solo sabe que hay una llamada a
-algo llamado `make`. Eso es un **raw call**. Convertirlos en edges reales es trabajo de
-`resolve()` en <ref_file file="src/application/graph/resolve.ts" />, en dos fases:
+algo llamado `make`. Eso es un **raw call**. Convertirlos en edges reales es trabajo de la fase
+de **resolución**, en dos pasos:
 
 1. **Retarget de herencia** — los edges `extends`/`implements`/`inherits` apuntan al principio
    a IDs placeholder por etiqueta; se reapuntan al nodo real buscando el label en el índice
@@ -187,7 +182,7 @@ adivinar.
 
 ## Deduplicación
 
-Antes de volcar a SQLite, `dedup()` (<ref_file file="src/application/graph/dedup.ts" />) limpia:
+Antes de volcar a SQLite, una fase de **deduplicación** limpia:
 
 - **Nodes** — por `id` (last-write-wins).
 - **Edges** — por la tupla `(source, target, relation, context)`. Si hay multi-edges, se
@@ -198,7 +193,7 @@ Antes de volcar a SQLite, `dedup()` (<ref_file file="src/application/graph/dedup
 
 ## Cómo se guarda (el `graph.db`)
 
-`GraphStore` (<ref_file file="src/infrastructure/sqlite/graph-store.ts" />) implementa el port `GraphRepository`. El schema:
+El grafo se guarda en SQLite con este schema:
 
 ```sql
 CREATE TABLE nodes (
@@ -237,8 +232,7 @@ Decisiones a notar:
   (`outEdges`/`inEdges`), de los que depende toda la búsqueda del próximo capítulo.
 - **`signature` como JSON** — se guarda como texto y se parsea al leer.
 
-El schema se versiona con `PRAGMA user_version` (versión 2; v1→v2 agregó la columna
-`signature`).
+El schema se versiona internamente con `PRAGMA user_version`.
 
 ---
 
