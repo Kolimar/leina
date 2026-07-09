@@ -325,11 +325,14 @@ Sale con el código de salida del hijo.
 
 ## Comandos de sidecar (extracción Java / C# de precisión de compilador)
 
-`leina sidecar [build|status|clean|verify] [csharp|java] [--force]` gestiona los sidecars
+`leina sidecar [build|install|status|clean|verify] [csharp|java] [--force]` gestiona los sidecars
 opcionales de compilador bajo demanda. Sin sidecar, Java/C# igual se extraen vía tree-sitter
 (SYNTACTIC — call edges best-effort); el sidecar agrega precisión de compilador.
 
 - `sidecar status` — reporta si cada sidecar está configurado y si el toolchain está presente.
+- `sidecar install [csharp|java]` — descarga un binario de sidecar precompilado y verificado con
+  sha256 desde los release assets y lo cachea (no requiere toolchain local de .NET/JDK);
+  `sidecar build` es la alternativa con toolchain local.
 - `sidecar build <csharp|java>` — construye el sidecar (necesita el toolchain local: dotnet
   SDK para C#; JDK 17+ con `jpackage` para Java).
 - `sidecar clean [csharp|java]` — elimina los sidecars construidos.

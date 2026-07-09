@@ -22,11 +22,12 @@ advertises the past.
 - **Word-wise query scoring** — camelCase/snake_case subtokens on both sides of the
   match, closing most of the "vocabulary gap" without embeddings.
 - **Benchmark harness** — `npm run bench` (docs/benchmarks).
+- **Prebuilt semantic sidecars** — `sidecar install <lang>`: sha256-verified downloads of a
+  CI-published per-platform binary, no local .NET/JDK needed; `sidecar build <lang>` remains
+  the local-toolchain fallback.
 
 ## Next (reach & depth)
 
-- **Prebuilt semantic sidecars** — `sidecar install <lang>`: sha256-verified downloads,
-  no local .NET/JDK needed, with `sidecar build <lang>` as the local-toolchain fallback.
 - **Embedding provider port** — opt-in semantic search behind an external-command port
   (local model / host API); never a hard native dependency.
 - **ts-morph incremental strategy** — the profile shows the TS type-check dominates

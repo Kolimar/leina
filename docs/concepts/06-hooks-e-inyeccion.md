@@ -1,4 +1,4 @@
-# 6. Devin hooks and context injection
+# 6. Agent hooks and context injection
 
 > **In one sentence:** *hooks* are the concierge of the repo — at the start of the session they
 > leave the librarian's notes and the state of the map on your desk, at the end they remind you
@@ -11,8 +11,8 @@ Without hooks, all of leina would be opt-in: the AI would have to remember to ru
 
 ## What a hook is and when it fires
 
-Devin emits events during a session, wired to `leina agent-hook <Event>` (compatibility alias:
-`devin-hook`). Hooks are registered either at the **user-global** level (installed by
+Your AI host (Devin or Claude Code) emits events during a session, wired to
+`leina agent-hook <Event>` (compatibility alias: `devin-hook`). Hooks are registered either at the **user-global** level (installed by
 `setup`/`activate`, they fire in every repo and resolve the root at runtime) or, in standalone
 mode, in a `.devin/hooks.v1.json` written by a full `init`. The JSON is produced by pure
 writers, and a single gate holds the decision logic.
@@ -53,8 +53,9 @@ flowchart LR
 ## Which project am I in? (root resolution)
 
 A user-global hook isn't pinned to a directory. How does it know which repo it's operating on?
-It prefers the `DEVIN_PROJECT_DIR` variable (Devin's documented contract for telling a hook its
-workspace) and falls back to `process.cwd()` if it's absent. Everything below —the scope guard,
+It reads the host's documented "project dir" variable — `CLAUDE_PROJECT_DIR` (Claude Code) or
+`DEVIN_PROJECT_DIR` (Devin), same contract under a different name, first non-blank wins — and
+falls back to `process.cwd()` if neither is set. Everything below —the scope guard,
 the markers, the injection— is anchored to that root.
 
 ---
@@ -109,7 +110,7 @@ opening a session to count as "already saved").
 
 ```mermaid
 sequenceDiagram
-    participant D as Devin
+    participant D as AI host
     participant G as agent-gate
     participant C as active context
     participant Disk as .leina/

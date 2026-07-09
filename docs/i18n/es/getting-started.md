@@ -187,7 +187,7 @@ leina trae un server MCP estándar, que se lanza por stdio como `leina mcp`. Cua
 MCP llama sus herramientas (`graph_affected`, `memory_search`, `graph_visualize`, …) de forma nativa
 — sin protocolo de shell.
 
-**Hosts que leina configura por vos** — un comando (o elegí "MCP" en `leina tui`, o `leina setup --mcp`):
+**Hosts que leina configura por vos** — un comando (o elegí "MCP" en `leina tui`, o `leina setup --mcp --mcp-hosts claude`):
 
 ```bash
 leina mcp register --hosts claude,cursor,windsurf   # listá solo los que usás

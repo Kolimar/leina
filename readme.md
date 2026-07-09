@@ -169,8 +169,7 @@ leina deinit <dir>                   # opt this repo out (consent=disabled) + st
 ```
 
 Prefer the granular pieces? They compose what `setup` does and each has an inverse:
-`activate` ⟷ `deactivate` (global share/symlinks/user-config; no blanket), and
-`install-global` (deprecated alias of `activate`).
+`activate` ⟷ `deactivate` (global share/symlinks/user-config; no blanket).
 
 Choose WHICH bundled skills/agents install (see `assets/catalog.json` for the full list,
 groups and dependencies). Omit the flags to keep your previous choice; default is full.
@@ -183,7 +182,8 @@ leina activate --preset sdd            # core + the SDD workflow
 leina activate --skills graph-viz,github-pr --agents none
 ```
 
-Choose which AI hosts to link into (default: devin). Claude Code gets the skills as
+Choose which AI hosts to link into — `--hosts` is required; leina never picks a host for you
+(e.g. `--hosts devin,claude`). Claude Code gets the skills as
 `~/.claude/skills/<name>` and the agents as `~/.claude/agents/<name>.md` (its native
 format). `--hosts` alone changes WHERE without touching the asset selection.
 
@@ -233,7 +233,6 @@ leina memory session-start <dir> [--title "..."]
 leina memory suggest-topic <dir> --title "..." [--type ..]
 leina memory current-project <dir>         # show derived project key + detection method
 leina memory merge-projects <dir> --from <old-key> --to <new-key> [--dry-run]
-leina memory migrate <dir>                 # fold legacy per-repo memory.db into global DB
 # Portable memory: decisions travel WITH the repo (no server). `sync` merges the committable
 # snapshot .leina/memory-export.jsonl both ways; export/import move JSONL between machines.
 leina memory sync <dir>                    # absorb + rewrite the snapshot; commit it
@@ -404,7 +403,7 @@ freshness without rebuilding; `refresh` forces a rebuild.
 >   turns on the machine-wide **blanket** sentinel (`~/.leina/.blanket`). `disable` undoes all
 >   of it (strip-inverse — preserves third-party entries; no `.bak` reliance).
 > - **Global, granular:** `activate` ⟷ `deactivate` (the global half of `setup`, without the
->   blanket sentinel). `install-global` is a deprecated alias of `activate`.
+>   blanket sentinel).
 > - **Repo, granular:** `init` ⟷ `deinit`.
 >
 > **Tri-state consent (per repo, local & git-ignored — `.leina/consent`):** `unknown`
@@ -473,10 +472,10 @@ anchored code moved — stale), or **DO-NOT-USE** (a normative claim the code no
 contradicts). Memory that quietly goes wrong is worse than no memory; drift
 detection is what keeps recalled context trustworthy.
 
-**Migrating from the old per-repo layout.** If you have a `<dir>/.leina/memory.db`
-from an earlier version, run `leina memory migrate <dir>` to fold it into the global
-DB. The original file is left untouched. `leina doctor <dir>` warns if a legacy DB is
-present.
+**Migrating from the old per-repo layout.** Memory now lives only in the global DB;
+a `<dir>/.leina/memory.db` from an earlier version is simply ignored (never read),
+and `leina doctor <dir>` warns when it finds one so you can remove it. The file is
+left untouched.
 
 ## Languages
 

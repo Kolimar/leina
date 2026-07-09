@@ -1,15 +1,16 @@
 # AGENTS.md — leina project conventions
 
 This file documents conventions and tooling for AI agents working on the leina
-codebase itself. **leina exposes a command-line interface.** Devin is the supported
-install target; the Windsurf editor uses the same `.devin/` on-disk shape.
+codebase itself. **leina exposes a command-line interface.** Its supported install
+targets are your AI host(s) — Devin and Claude Code (`--hosts devin,claude`); the
+Windsurf editor uses the same `.devin/` on-disk shape as Devin.
 
 ---
 
 ## Memory (CLI)
 
-Memory lives in `<dir>/.leina/memory.db` and is accessed through the
-`leina memory <sub>` CLI. Anchors resolve against the
+Memory lives in the global DB `~/.leina/memory.db` (honoring `$LEINA_HOME`), keyed by a
+stable project key, and is accessed through the `leina memory <sub>` CLI. Anchors resolve against the
 live graph on save, and `memory verified` re-checks them (drift detection).
 
 ### Memory subcommands
@@ -126,21 +127,21 @@ match while the code is dozens of commits behind).
 
 ## Global install surface
 
-> `install-global` is a deprecated alias of `activate` — prefer `leina activate` in new
-> scripts and docs. It is documented here at length because the mechanics it describes
-> (share versioning, symlinks, permission grants) are exactly what `activate` runs today.
+> The global install mechanics below (share versioning, symlinks, permission grants) are
+> what `leina activate` runs today. (`install-global`, an older alias, was removed in 2.0.0.)
 
-`leina install-global` populates a single source of truth under
-`~/.leina/share/{skills,agents,workflows}` and symlinks each entry into the Devin
-global directory:
+`leina activate` populates a single source of truth under
+`~/.leina/share/{skills,agents,workflows}` and symlinks each entry into each selected
+host's global dir:
 
-- `~/.config/devin/skills/<name>/` and `~/.config/devin/agents/<name>/`
+- Devin: `~/.config/devin/skills/<name>/` and `~/.config/devin/agents/<name>/`
+- Claude Code: `~/.claude/skills/<name>/` and `~/.claude/agents/<name>.md`
 
 The share is versioned via `share/.version`: when the running package version differs from
 the sentinel, the share is rebuilt from bundled `assets/`. macOS/Linux use symlinks; Windows
 falls back to a recursive copy with a stderr notice (`linkOrCopy` in `src/infrastructure/install/symlinks.ts`).
 
-`leina init` invokes `install-global` implicitly. It also cleans up any leftover legacy
+`leina init` invokes `activate` implicitly. It also cleans up any leftover legacy
 config (see `src/application/install/migrate.ts`): a stale `leina` entry in
 `.devin/config.json` is stripped, dead hook matchers are removed, and the legacy global
 registry (`~/.leina/projects.json`) is moved aside.
@@ -153,11 +154,11 @@ It also pre-authorizes the CLI so the agent never gets a permission prompt for `
 - **Project-scoped** `.devin/config.json` (committable) — the grant travels with the repo, so
   anyone who clones it gets a zero-prompt CLI.
 - **User-global** `~/.config/devin/config.json` — applied by `init` (always, even without
-  `--write-user-config`) and by `install-global` via `ensureUserConfigCliGrant` (global.ts), so a
+  `--write-user-config`) and by `activate` via `ensureUserConfigCliGrant` (global.ts), so a
   single machine-wide grant covers every repo. Unlike the user-global *hooks* (still opt-in,
   because a hook fires in every project), the permission grant is benign and so is unconditional.
 
-## Devin hooks (advisory, scope-aware)
+## Agent hooks (advisory, scope-aware)
 
 `leina init` writes a project-scoped `.devin/hooks.v1.json`. The hooks are merge-safe
 and idempotent; a `.bak-<ISO>` is dropped on the first content-changing write to a
@@ -280,7 +281,6 @@ MEMORY (always-on injection + global DB, keyed by project — advisory, never bl
 - To lock a project name permanently: `leina init --name <name>` (writes
   `.leina/config.json`, committable, takes priority over all other detection steps).
 - To move memories under a new key: `leina memory merge-projects <dir> --from <old> --to <new>`.
-- To import from a legacy per-repo memory.db: `leina memory migrate <dir>`.
 
 SHELL
 - Prefer `bash` for any command execution when the host offers a choice (`interactive_shell`,

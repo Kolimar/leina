@@ -57,7 +57,7 @@ Read them in this order if you're starting from scratch:
 | 3 | [Search and queries](./03-busqueda-y-consultas.md) | `query`, `affected`, `path`, and the *freshness gate* (auto-rebuild vs refuse) | the cartographer |
 | 4 | [Project memory](./04-memoria.md) | `observations`, `sessions`, the *project key*, FTS5/BM25 search | the librarian |
 | 5 | [How the graph and memory talk to each other](./05-comunicacion-grafo-memoria.md) | `anchors` and *drift detection* (USABLE / WARNING / DO-NOT-USE) | the sticky notes |
-| 6 | [Hooks and context injection](./06-hooks-e-inyeccion.md) | Devin hooks lifecycle, markers, active injection | the concierge |
+| 6 | [Hooks and context injection](./06-hooks-e-inyeccion.md) | Agent hooks lifecycle, markers, active injection | the concierge |
 
 ---
 
@@ -65,9 +65,9 @@ Read them in this order if you're starting from scratch:
 
 ```mermaid
 flowchart TB
-    subgraph host["AI host (Devin)"]
+    subgraph host["AI host"]
         agent["Agent"]
-        hooks["Devin hooks"]
+        hooks["agent hooks"]
     end
 
     subgraph cli["leina (CLI)"]

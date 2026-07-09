@@ -310,11 +310,14 @@ Exits with the child's exit code.
 
 ## Sidecar commands (Java / C# compiler-grade extraction)
 
-`leina sidecar [build|status|clean|verify] [csharp|java] [--force]` manages the optional
+`leina sidecar [build|install|status|clean|verify] [csharp|java] [--force]` manages the optional
 on-demand compiler sidecars. Without a sidecar, Java/C# still extract via tree-sitter (SYNTACTIC —
 call edges best-effort); the sidecar adds compiler-grade precision.
 
 - `sidecar status` — report whether each sidecar is configured and whether the toolchain is present.
+- `sidecar install [csharp|java]` — download a prebuilt, sha256-verified sidecar binary from the
+  release assets and cache it (no local .NET/JDK toolchain required); `sidecar build` is the
+  local-toolchain alternative.
 - `sidecar build <csharp|java>` — build the sidecar (needs the local toolchain: dotnet SDK for C#;
   JDK 17+ with `jpackage` for Java).
 - `sidecar clean [csharp|java]` — remove built sidecars.

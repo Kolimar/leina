@@ -392,7 +392,7 @@ leina affected <your-project> "GraphStore"
 ### Entrada por lotes (stdin JSON)
 
 `memory save`, `memory update` y `memory get` aceptan `--batch`: un array JSON en stdin
-condensa N escrituras/lecturas en un solo proceso. `add`/`update` también aceptan `--atomic`
+condensa N escrituras/lecturas en un solo proceso. `save`/`update` también aceptan `--atomic`
 para una transacción de todo o nada.
 
 ```bash

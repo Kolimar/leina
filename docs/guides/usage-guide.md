@@ -79,7 +79,7 @@ leina doctor     # diagnoses Node version, global share and symlinks
 
 ### Per project: nothing to remember
 
-With blanket mode on, **you don't need to initialize each repo by hand**. The first time you use Devin in a repo, the `leina-setup` skill asks you once:
+With blanket mode on, **you don't need to initialize each repo by hand**. The first time you use Devin or Claude Code in a repo, the `leina-setup` skill asks you once:
 
 > *"leina is available — do you want to use it in this workspace?"*
 
@@ -115,7 +115,7 @@ You don't have to repeat anything: with blanket, the AI offers it the first time
 
 ## Part 2 — What you can ask the AI once it's installed
 
-With leina active, your AI (Devin) gains new capabilities that it executes as `leina` commands. Here's the catalog.
+With leina active, your AI host (Devin, Claude Code, and any MCP-capable assistant) gains new capabilities that it executes as `leina` commands. Here's the catalog.
 
 > 💡 **Subagent tip for SDD.** Hosts with subagents (Devin, Claude Code) can delegate each SDD phase to a dedicated subagent with its own clean context. For serious changes (features, refactors, migrations) this improves quality: the orchestrator integrates results without "getting dirty" with intermediate details.
 
@@ -294,7 +294,7 @@ full contract, including POST requests with a token in the header and the strict
 | `leina query <dir> "<question>"` | Relevant subgraph for a question. |
 | `leina impact analyze <dir> <symbol>` | Impact crossing code→tests→configs→services. |
 | `leina visualize <dir>` | Exports an interactive, offline HTML viewer of the graph. |
-| `leina memory <dir> <sub>` | Local memory (`add`/`update`/`search`/`verified`/`get`/`context`/`session`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`). |
+| `leina memory <dir> <sub>` | Local memory (`save`/`update`/`search`/`verified`/`get`/`context`/`session`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`). |
 | `leina workspace <sub> [dir]` | Multi-repo: `build`/`status`/`detect`/`memory context\|search`/`visualize`. |
 | `leina audit [dir]` | Candidate source→sink paths + findings (`--format md\|json\|html`). |
 | `leina env <sub>` | Credentials for skills (names-not-values): `set`/`list`/`get`/`unset`/`exec`. |
@@ -306,7 +306,7 @@ full contract, including POST requests with a token in the header and the strict
 | `leina events tail [dir]` | Local event outbox (off unless `LEINA_EVENTS_PERSIST=1`). |
 | `leina capabilities list` | The 17 transport-agnostic capabilities with their schemas. |
 
-`memory save`/`update`/`get` accept `--batch` (JSON array via stdin; `--atomic` on add/update).
+`memory save`/`update`/`get` accept `--batch` (JSON array via stdin; `--atomic` on save/update).
 
 ### A.2 — Troubleshooting
 

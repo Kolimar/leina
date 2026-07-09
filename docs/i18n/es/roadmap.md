@@ -24,13 +24,12 @@ se publican — este archivo nunca hace propaganda del pasado.
 - **Puntuación de consultas por palabra** — subtokens camelCase/snake_case en ambos
   lados del match, que cierra la mayor parte del "vocabulary gap" sin usar embeddings.
 - **Arnés de benchmarks** — `npm run bench` (docs/benchmarks).
+- **Sidecars semánticos preconstruidos** — `sidecar install <lang>`: descargas verificadas
+  con sha256 de un binario por plataforma publicado por CI, sin necesitar .NET/JDK local;
+  `sidecar build <lang>` sigue siendo la alternativa con toolchain local.
 
 ## Próximo (alcance y profundidad)
 
-- **Sidecars semánticos preconstruidos** — `sidecar install <lang>`: descargas
-  verificadas con sha256, sin necesitar .NET/JDK local. Mientras tanto,
-  `sidecar build <lang>` los compila on-demand con el toolchain local en todas las
-  plataformas.
 - **Puerto de proveedor de embeddings** — búsqueda semántica opt-in detrás de un puerto
   de comando externo (modelo local / API de host); nunca una dependencia nativa dura.
 - **Estrategia incremental de ts-morph** — el profile muestra que el type-check de TS

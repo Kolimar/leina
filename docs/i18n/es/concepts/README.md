@@ -56,7 +56,7 @@ Leelos en este orden si venís de cero:
 | 3 | [Búsqueda y consultas](./03-busqueda-y-consultas.md) | `query`, `affected`, `path` y el *freshness gate* (auto-rebuild vs refuse) | el cartógrafo |
 | 4 | [La memoria de proyecto](./04-memoria.md) | `observations`, `sessions`, el *project key*, búsqueda FTS5/BM25 | el bibliotecario |
 | 5 | [Cómo se hablan grafo y memoria](./05-comunicacion-grafo-memoria.md) | `anchors` y *drift detection* (USABLE / WARNING / DO-NOT-USE) | los post-its |
-| 6 | [Hooks e inyección de contexto](./06-hooks-e-inyeccion.md) | Ciclo de vida de los hooks de Devin, markers, inyección activa | el conserje |
+| 6 | [Hooks e inyección de contexto](./06-hooks-e-inyeccion.md) | Ciclo de vida de los hooks del agente, markers, inyección activa | el conserje |
 
 ---
 
@@ -64,9 +64,9 @@ Leelos en este orden si venís de cero:
 
 ```mermaid
 flowchart TB
-    subgraph host["IA host (Devin)"]
+    subgraph host["Host de IA"]
         agent["Agente"]
-        hooks["Hooks de Devin"]
+        hooks["hooks del agente"]
     end
 
     subgraph cli["leina (CLI)"]

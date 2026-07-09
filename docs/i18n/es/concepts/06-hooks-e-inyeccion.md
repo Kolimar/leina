@@ -1,4 +1,4 @@
-# 6. Hooks de Devin e inyección de contexto
+# 6. Hooks del agente e inyección de contexto
 
 > **En una frase:** los *hooks* son el conserje del repo — al empezar la sesión te dejan en el
 > escritorio las notas del bibliotecario y el estado del mapa, al terminar te recuerdan guardar,
@@ -52,8 +52,9 @@ flowchart LR
 ## ¿En qué proyecto estoy? (resolución del root)
 
 Un hook user-global no está fijado a un directorio. ¿Cómo sabe sobre qué repo opera?
-Prefiere la variable `DEVIN_PROJECT_DIR` (el contrato documentado de Devin para decirle a un
-hook su workspace) y cae al directorio actual si está ausente. Todo lo de
+Lee la variable "project dir" que documenta el host — `CLAUDE_PROJECT_DIR` (Claude Code) o
+`DEVIN_PROJECT_DIR` (Devin), el mismo contrato bajo otro nombre, gana la primera no vacía— y cae
+al directorio actual si ninguna está seteada. Todo lo de
 abajo —el scope guard, los markers, la inyección— se ancla a ese root.
 
 ---

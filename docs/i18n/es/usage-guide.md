@@ -78,7 +78,7 @@ leina doctor     # diagnostica versión de Node, share global y symlinks
 
 ### Por proyecto: no hay nada que recordar
 
-Con el modo blanket encendido, **no necesitás inicializar cada repo a mano**. La primera vez que uses Devin en un repo, el skill `leina-setup` te pregunta una vez:
+Con el modo blanket encendido, **no necesitás inicializar cada repo a mano**. La primera vez que uses Devin o Claude Code en un repo, el skill `leina-setup` te pregunta una vez:
 
 > *"leina está disponible, ¿lo usás en este workspace?"*
 
@@ -114,7 +114,7 @@ No hay que repetir nada: con blanket, cada repo nuevo te lo ofrece la IA la prim
 
 ## Parte 2 — Qué le podés pedir a la IA una vez instalado
 
-Con leina activo, tu IA (Devin) gana capacidades nuevas que ejecuta como comandos `leina`. Acá está el catálogo.
+Con leina activo, tu host de IA (Devin, Claude Code, y cualquier asistente compatible con MCP) gana capacidades nuevas que ejecuta como comandos `leina`. Acá está el catálogo.
 
 > 💡 **Tip de subagentes en SDD.** Los hosts con subagentes (Devin, Claude Code) pueden delegar cada fase de SDD a un subagente dedicado con su propio contexto limpio. Para cambios serios (features, refactors, migraciones) eso mejora la calidad: el orquestador integra resultados sin "ensuciarse" con los detalles intermedios.
 
