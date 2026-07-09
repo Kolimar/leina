@@ -217,16 +217,6 @@ export interface MemoryRepository {
     opts?: { dryRun?: boolean },
   ): { moved: number; superseded: number };
 
-  /**
-   * Copy observations, sessions and anchors from a legacy per-repo memory.db
-   * into this (global) store, remapping `fromKey` → `toKey`. Idempotent.
-   */
-  importFromLegacy(
-    legacyDbPath: string,
-    fromKey: string,
-    toKey: string,
-  ): { moved: number; skipped: number };
-
   // ---- lifecycle ----------------------------------------------------------
 
   /** Close the underlying database connection. */

@@ -1,6 +1,6 @@
 // cli/handlers/memory.ts — `leina memory <sub>` command handler.
 // sub-commands: save | update | search | verified | get | context | session |
-//               session-start | suggest-topic | current-project | merge-projects | migrate
+//               session-start | suggest-topic | current-project | merge-projects
 //
 // handleMemory is a thin dispatcher: it resolves <dir> and routes to a per-subcommand
 // function (each kept under the Cognitive-Complexity gate) via MEM_HANDLERS.
@@ -17,7 +17,6 @@ import type {
   Scope,
   UpdateFields,
 } from "../../domain/memory/model.ts";
-import { makeId } from "../../domain/shared/id.ts";
 import {
   AmbiguousProjectError,
   deriveProjectKey,
@@ -330,38 +329,6 @@ function memMergeProjects(rest: string[], dir: string): void {
   }
 }
 
-function memMigrate(_rest: string[], dir: string): void {
-  // memory migrate <dir> — fold legacy per-repo memory.db into global memory
-  const migrateDir = resolvePath(dir);
-  const legacyDbPath = join(migrateDir, ".leina", "memory.db");
-  if (!existsSync(legacyDbPath)) {
-    console.log(`no legacy memory.db at ${legacyDbPath}; nothing to migrate`);
-    return;
-  }
-  const fromKey = makeId(legacyDbPath.replaceAll("\\", "/").split("/").at(-3) ?? "unknown");
-  let toKey: string;
-  try {
-    toKey = deriveProjectKey(migrateDir).key;
-  } catch (e) {
-    if (e instanceof AmbiguousProjectError) {
-      fail(
-        `Ambiguous project — cannot determine target key. Candidates: ${e.candidates.join(", ")}.\n` +
-          `Create .leina/config.json with {"project_name":"<name>"} then re-run.`,
-      );
-    }
-    throw e;
-  }
-  const { store, close } = memOpenGuarded(migrateDir);
-  try {
-    const r = store.importFromLegacy(legacyDbPath, fromKey, toKey);
-    console.log(`migrated: ${r.moved} inserted, ${r.skipped} skipped as duplicates`);
-    console.log(`key mapping: ${fromKey} => ${toKey}`);
-    console.log(`the original file was not modified.`);
-  } finally {
-    close();
-  }
-}
-
 // memory reanchor <dir> [--dry-run] — retro-anchor existing observations by extracting
 // EXPLICIT path/symbol references from their text and resolving them against the live
 // graph (see application/memory/reanchor.ts for the conservative extraction rules).
@@ -413,7 +380,6 @@ function memHelp(): void {
       `  suggest-topic <dir> --title "..." [--type ..]\n` +
       `  current-project <dir>              (show derived project key + detection method)\n` +
       `  merge-projects <dir> --from <key> --to <key> [--dry-run]  (rename/merge project keys)\n` +
-      `  migrate <dir>                      (fold legacy per-repo memory.db into global memory)\n` +
       `  reanchor <dir> [--dry-run]         (retro-anchor observations to real graph nodes)\n` +
       `  export <dir> [--out file.jsonl]    (dump this project's observations+anchors as JSONL)\n` +
       `  import <dir> [--in file.jsonl]     (merge an export from stdin/file; newer revision wins)\n` +
@@ -525,7 +491,6 @@ const MEM_HANDLERS: Record<string, MemSubHandler> = {
   "suggest-topic": memSuggestTopic,
   "current-project": memCurrentProject,
   "merge-projects": memMergeProjects,
-  migrate: memMigrate,
   reanchor: memReanchor,
 };
 

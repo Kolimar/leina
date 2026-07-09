@@ -376,9 +376,6 @@ function checkProject(out: CheckResult[], root: string): void {
   // Project key detection (does not open DB — pure FS read + git exec).
   checkProjectKey(out, g, root);
 
-  // Legacy per-repo memory.db nudge: if the old per-repo DB still exists, advise migration.
-  checkLegacyMemDb(out, g, root);
-
   // Injection readiness: signals needed for active additionalContext injection (FS-only, no DB).
   checkInjectionReadiness(out, g, root);
 }
@@ -444,19 +441,6 @@ function checkGlobalMemory(out: CheckResult[], g: string): void {
     status: existsSync(globalMem) ? "ok" : "warn",
     detail: existsSync(globalMem) ? globalMem : `${globalMem} — not created yet (run any memory command to initialize)`,
   });
-}
-
-// Legacy per-repo memory.db nudge: if the old per-repo DB still exists, advise migration.
-function checkLegacyMemDb(out: CheckResult[], g: string, root: string): void {
-  const legacyMemDb = join(root, ".leina", "memory.db");
-  if (existsSync(legacyMemDb)) {
-    out.push({
-      group: g,
-      label: "legacy memory.db",
-      status: "warn",
-      detail: `per-repo memory.db found at ${legacyMemDb}. Run: leina memory migrate ${root}`,
-    });
-  }
 }
 
 // Injection readiness: verifies the three FS signals required for active additionalContext

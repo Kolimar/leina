@@ -212,22 +212,6 @@ test("(doc-h) global memory.db present → ok; absent → warn", () => {
   });
 });
 
-test("(doc-i) legacy per-repo memory.db present → legacy memory.db warn (nudge to migrate)", () => {
-  withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
-    const root = makeInitProject(home);
-    // Drop a legacy per-repo memory.db
-    const legacyDir = join(root, ".leina");
-    mkdirSync(legacyDir, { recursive: true });
-    writeFileSync(join(legacyDir, "memory.db"), "");
-    const report = runDoctor("0.8.0-test", root);
-    const legacyCheck = find(report.results, "project", "legacy memory.db");
-    assert.ok(legacyCheck !== undefined, "legacy memory.db check present");
-    assert.equal(legacyCheck.status, "warn");
-    assert.match(legacyCheck.detail ?? "", /migrate/i);
-  });
-});
-
 test("(doc-j) project key check present with ok or warn status", () => {
   withTmpHome((home) => {
     installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });

@@ -1,4 +1,4 @@
-// memory-manage-cli.test.ts — CLI tests for memory current-project, merge-projects, migrate
+// memory-manage-cli.test.ts — CLI tests for memory current-project, merge-projects
 // Run: node --no-warnings --experimental-strip-types --test test/memory-manage-cli.test.ts
 
 import { test } from "node:test";
@@ -6,7 +6,6 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -15,8 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { makeId } from "../src/domain/shared/id.ts";
-import { deriveProjectKey, normalizeProjectKey } from "../src/application/project/detect-key.ts";
+import { normalizeProjectKey } from "../src/application/project/detect-key.ts";
 import { SQLiteMemoryRepository as MemoryStore } from "../src/infrastructure/sqlite/memory-repository.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
@@ -254,63 +252,3 @@ test("(WU-07f) merge-projects --from missing → exit 1", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// memory migrate
-// ---------------------------------------------------------------------------
-
-test("(WU-07g) migrate: imports legacy per-repo memory.db into global, exits 0", () => {
-  const home = tmpHome();
-  const dir = tmpGitRepo("https://github.com/org/migrate-test.git");
-  try {
-    const env = { ...process.env, LEINA_HOME: home };
-
-    // The migrate command derives fromKey as makeId(basename(dir)) — the OLD
-    // underscore-form key that was used before FR-11 switched to hyphens.
-    const fromKey = makeId(basename(dir));
-
-    // Create legacy per-repo memory.db seeded under the ACTUAL old key.
-    const legacyDir = join(dir, ".leina");
-    mkdirSync(legacyDir, { recursive: true });
-    const legacyPath = join(legacyDir, "memory.db");
-    const legacy = new MemoryStore(legacyPath, fromKey);
-    legacy.save({ title: "Old note", content: "Legacy content", type: "manual" });
-    legacy.save({ title: "Old note 2", content: "Legacy content 2", type: "manual" });
-    legacy.close();
-
-    const r = runCli(["memory", "migrate", dir], { env });
-    assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
-    // Output mentions moved counts
-    assert.match(r.stdout, /migrated:/);
-    assert.ok(existsSync(join(home, "memory.db")), "global DB created");
-
-    // After migration, rows must be queryable under the NEW hyphen key (FR-20 remap).
-    // deriveProjectKey(dir) returns "migrate-test" via git-remote detection.
-    const newKey = deriveProjectKey(dir).key;
-    assert.equal(newKey, "migrate-test", "new key should be hyphenated");
-    const globalPath = join(home, "memory.db");
-    const verify = new MemoryStore(globalPath, newKey);
-    const ctx = verify.recentContext({ limit: 10 });
-    verify.close();
-    assert.ok(
-      ctx.observations.length > 0,
-      `global DB must have rows under new key "${newKey}" after migrate (got ${ctx.observations.length})`,
-    );
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("(WU-07h) migrate: no legacy memory.db → friendly message, exit 0", () => {
-  const home = tmpHome();
-  const dir = mkdtempSync(join(tmpdir(), "leina-mmcli-nomigrate-"));
-  try {
-    const env = { ...process.env, LEINA_HOME: home };
-    const r = runCli(["memory", "migrate", dir], { env });
-    assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
-    assert.match(r.stdout, /nothing to migrate/);
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(dir, { recursive: true, force: true });
-  }
-});

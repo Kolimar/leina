@@ -250,14 +250,6 @@ export class MockMemoryRepository implements MemoryRepository {
     return { moved: 0, superseded: 0 };
   }
 
-  importFromLegacy(
-    _legacyDbPath: string,
-    _fromKey: string,
-    _toKey: string,
-  ): { moved: number; skipped: number } {
-    return { moved: 0, skipped: 0 };
-  }
-
   exportAll(): import("../../src/domain/memory/model.ts").ExportedObservation[] {
     return this.observations.map((o) => ({
       ...o,

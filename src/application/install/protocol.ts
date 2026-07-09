@@ -91,7 +91,6 @@ MEMORY (always-on injection + global DB, keyed by project — advisory, never bl
 - To lock a project name permanently: \`leina init --name <name>\` (writes
   \`.leina/config.json\`, committable, takes priority over all other detection steps).
 - To move memories under a new key: \`leina memory merge-projects <dir> --from <old> --to <new>\`.
-- To import from a legacy per-repo memory.db: \`leina memory migrate <dir>\`.
 
 SHELL
 - Prefer \`bash\` for any command execution when the host offers a choice (\`interactive_shell\`,

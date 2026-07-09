@@ -795,13 +795,6 @@ export function handleRepair(rest: string[]): void {
 
   if (hasFlag(rest, "--write-shell-wrapper")) maybeWriteShellWrapper();
 
-  // DBs are never repaired; surface the one known DB-adjacent remedy instead.
-  if (existsSync(join(project, ".leina", "memory.db"))) {
-    console.log(
-      `note: legacy per-repo memory.db detected — run 'leina memory migrate ${project}' (repair never touches DBs)`,
-    );
-  }
-
   // Post-repair verification with the same read-only checks the user would run next.
   const after = runDoctor(readPackageVersion(), project);
   const fails = after.results.filter((r) => r.status === "fail");

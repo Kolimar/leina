@@ -249,14 +249,6 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     return this.hostRepo.mergeProject(from, to, opts);
   }
 
-  importFromLegacy(
-    legacyDbPath: string,
-    fromKey: string,
-    toKey: string,
-  ): { moved: number; skipped: number } {
-    return this.hostRepo.importFromLegacy(legacyDbPath, fromKey, toKey);
-  }
-
   // ---- Lifecycle ----------------------------------------------------------
 
   /**
