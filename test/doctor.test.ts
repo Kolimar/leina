@@ -86,7 +86,7 @@ test("(doc-a) fresh machine: share missing → fail and exit code 1", () => {
 
 test("(doc-b) after installGlobal: share version + symlinks are ok", () => {
   withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test");
+    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
     const report = runDoctor("0.8.0-test", join(home, "proj"));
     assert.equal(find(report.results, "share", "share dir")!.status, "ok");
     assert.equal(find(report.results, "share", "share version")!.status, "ok");
@@ -113,7 +113,7 @@ test("(doc-c) stale share: version drift is a warn, not a fail (exit 0 with no o
 
 test("(doc-d) init'd project (no MCP): AGENTS/.gitignore/.devin checks pass; unbuilt graph fails", () => {
   withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test");
+    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
     const root = makeInitProject(home);
     const report = runDoctor("0.8.0-test", root);
     const g = "project";
@@ -134,7 +134,7 @@ test("(doc-d) init'd project (no MCP): AGENTS/.gitignore/.devin checks pass; unb
 
 test("(doc-e) legacy leina MCP entry present → .devin/config.json warn", () => {
   withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test");
+    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
     const root = makeInitProject(home, { seedMcp: true });
     const report = runDoctor("0.8.0-test", root);
     const cfg = find(report.results, "project", ".devin/config.json")!;
@@ -145,7 +145,7 @@ test("(doc-e) legacy leina MCP entry present → .devin/config.json warn", () =>
 
 test("(doc-f) malformed .devin/config.json → fail", () => {
   withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test");
+    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
     const root = join(home, "bad");
     mkdirSync(join(root, ".devin"), { recursive: true });
     writeFileSync(join(root, ".devin", "config.json"), "{ not json");
@@ -162,7 +162,7 @@ test("(doc-f) malformed .devin/config.json → fail", () => {
 
 test("(doc-d2a) claude-only selection → no .devin/* findings even when the files exist", () => {
   withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test");
+    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
     writeFileSync(shareSelectionFile(), serializeSelection({ skills: null, agents: null, hosts: ["claude"] }));
     const root = makeInitProject(home); // seeds .devin/config.json + .devin/hooks.v1.json
     const report = runDoctor("0.8.0-test", root);
@@ -174,7 +174,7 @@ test("(doc-d2a) claude-only selection → no .devin/* findings even when the fil
 
 test("(doc-d2b) devin selected + hooks.v1.json missing → warn unchanged (regression)", () => {
   withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test");
+    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
     writeFileSync(shareSelectionFile(), serializeSelection({ skills: null, agents: null, hosts: ["devin"] }));
     const root = join(home, "devin-proj");
     mkdirSync(root, { recursive: true });
@@ -188,7 +188,7 @@ test("(doc-d2b) devin selected + hooks.v1.json missing → warn unchanged (regre
 
 test("(doc-g) absent .devin/config.json is healthy (CLI-only)", () => {
   withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test");
+    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
     const root = join(home, "noconfig");
     mkdirSync(root, { recursive: true });
     const report = runDoctor("0.8.0-test", root);
@@ -198,7 +198,7 @@ test("(doc-g) absent .devin/config.json is healthy (CLI-only)", () => {
 
 test("(doc-h) global memory.db present → ok; absent → warn", () => {
   withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test");
+    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
     const root = makeInitProject(home);
     // Absent → warn
     const r1 = runDoctor("0.8.0-test", root);
@@ -214,7 +214,7 @@ test("(doc-h) global memory.db present → ok; absent → warn", () => {
 
 test("(doc-i) legacy per-repo memory.db present → legacy memory.db warn (nudge to migrate)", () => {
   withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test");
+    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
     const root = makeInitProject(home);
     // Drop a legacy per-repo memory.db
     const legacyDir = join(root, ".leina");
@@ -230,7 +230,7 @@ test("(doc-i) legacy per-repo memory.db present → legacy memory.db warn (nudge
 
 test("(doc-j) project key check present with ok or warn status", () => {
   withTmpHome((home) => {
-    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test");
+    installGlobal(makeFakeAssetsRoot(home), "0.8.0-test", { skills: null, agents: null, hosts: ["devin"] });
     const root = makeInitProject(home);
     const report = runDoctor("0.8.0-test", root);
     const pk = find(report.results, "project", "project key");

@@ -11,7 +11,7 @@ import { join, resolve } from "node:path";
 import { homedir, platform } from "node:os";
 import type { HostId } from "../../domain/install/hosts.ts";
 
-export { DEFAULT_HOSTS, type HostId } from "../../domain/install/hosts.ts";
+export { type HostId } from "../../domain/install/hosts.ts";
 
 /** Root of leina's own home dir. Override with $LEINA_HOME (used by tests). */
 export function leinaHome(): string {

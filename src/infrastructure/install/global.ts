@@ -33,7 +33,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   blanketFile,
   devinUserConfigFile,
-  DEFAULT_HOSTS,
   HOSTS,
   type HostId,
   type HostSpec,
@@ -79,9 +78,12 @@ function agentEntries(spec: HostSpec): { name: string; src: string; dest: string
   }));
 }
 
+// Filter a persisted host list down to the ones this binary knows. Returns [] when none
+// are known/present — NEVER a default vendor. A fresh CLI always persists explicit hosts,
+// so [] only happens for an empty/hostless selection (e.g. a pre-1.0 file), where "no
+// hosts" is the honest answer.
 export function normalizeHosts(hosts: string[] | undefined): HostId[] {
-  const known = hosts?.filter((h): h is HostId => HOSTS.some((spec) => spec.id === h));
-  return known !== undefined && known.length > 0 ? known : [...DEFAULT_HOSTS];
+  return hosts?.filter((h): h is HostId => HOSTS.some((spec) => spec.id === h)) ?? [];
 }
 
 /**
@@ -299,7 +301,7 @@ export function sweepDanglingHostLinks(): number {
  * Devin: one symlink per skill (`~/.config/devin/skills/<name>/`) and per agent
  *        (`~/.config/devin/agents/<name>/`).
  */
-export function linkHosts(hosts: HostId[] = [...DEFAULT_HOSTS]): HostLink[] {
+export function linkHosts(hosts: HostId[]): HostLink[] {
   const out: HostLink[] = [];
 
   const skillEntries = listSubdirs(shareSkillsDir());

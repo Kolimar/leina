@@ -12,7 +12,6 @@
 //     (`requires` edges, "skill:x" / "agent:y") plus every `required: true` asset.
 //   - presets name group sets ("minimal" → core, "sdd" → core+sdd, "full" → all groups).
 
-import { DEFAULT_HOSTS } from "../../domain/install/hosts.ts";
 
 export type AssetKind = "skill" | "agent";
 
@@ -180,10 +179,12 @@ export function resolveSelection(catalog: Catalog, input: SelectionInput): Resol
   };
 }
 
-/** Stable serialized form persisted as share/.selection.json (null = everything). */
+/** Stable serialized form persisted as share/.selection.json (null = everything). Hosts
+ * are always an explicit user choice by the time we serialize (the CLI requires --hosts);
+ * an absent value persists as `[]`, never a default vendor. */
 export function serializeSelection(selection: Selection): string {
   return JSON.stringify(
-    { version: 1, skills: selection.skills, agents: selection.agents, hosts: selection.hosts ?? [...DEFAULT_HOSTS] },
+    { version: 1, skills: selection.skills, agents: selection.agents, hosts: selection.hosts ?? [] },
     null,
     2,
   );
@@ -193,7 +194,8 @@ export function deserializeSelection(json: string | null): Selection | null {
   if (json === null) return null;
   try {
     const raw = JSON.parse(json) as { skills?: string[] | null; agents?: string[] | null; hosts?: string[] };
-    return { skills: raw.skills ?? null, agents: raw.agents ?? null, hosts: raw.hosts ?? [...DEFAULT_HOSTS] };
+    // hosts stays as-persisted (undefined when absent) — no default vendor is injected.
+    return { skills: raw.skills ?? null, agents: raw.agents ?? null, hosts: raw.hosts };
   } catch {
     return null;
   }
@@ -206,6 +208,6 @@ export function sameSelection(a: Selection, b: Selection): boolean {
   return (
     eq(a.skills, b.skills) &&
     eq(a.agents, b.agents) &&
-    eq(a.hosts ?? [...DEFAULT_HOSTS], b.hosts ?? [...DEFAULT_HOSTS])
+    eq(a.hosts ?? [], b.hosts ?? [])
   );
 }

@@ -28,10 +28,12 @@ import {
   devinSkillsRoot,
   shareAgentsDir,
   shareRoot,
+  shareSelectionFile,
   shareSkillsDir,
   shareVersionFile,
   shareWorkflowsDir,
 } from "../src/infrastructure/install/share-paths.ts";
+import { serializeSelection } from "../src/application/install/catalog.ts";
 import {
   __setSymlinkImplForTests,
   copyTree,
@@ -439,7 +441,7 @@ test("(gi-c) populateShare re-runs when version changes", () => {
 test("(gi-d) installGlobal symlinks every skill+agent into Devin global roots", () => {
   withTmpHome((home) => {
     const assets = makeFakeAssetsRoot(home);
-    const report = installGlobal(assets, "1.0.0-test");
+    const report = installGlobal(assets, "1.0.0-test", { skills: null, agents: null, hosts: ["devin"] });
     assert.ok(report.populated);
     assert.ok(report.skillCount >= 2, `expected ≥2 skills, got ${report.skillCount}`);
     assert.ok(report.agentCount >= 1, `expected ≥1 agent, got ${report.agentCount}`);
@@ -458,8 +460,8 @@ test("(gi-d) installGlobal symlinks every skill+agent into Devin global roots", 
 test("(gi-e) installGlobal is idempotent: second run leaves every symlink unchanged", () => {
   withTmpHome((home) => {
     const assets = makeFakeAssetsRoot(home);
-    installGlobal(assets, "1.0.0-test");
-    const second = installGlobal(assets, "1.0.0-test");
+    installGlobal(assets, "1.0.0-test", { skills: null, agents: null, hosts: ["devin"] });
+    const second = installGlobal(assets, "1.0.0-test", { skills: null, agents: null, hosts: ["devin"] });
     assert.equal(second.populated, false);
     const changed = second.hostLinks.filter((l) => l.result.action !== "unchanged");
     assert.equal(changed.length, 0, `expected all symlinks unchanged, got: ${JSON.stringify(changed)}`);
@@ -471,6 +473,10 @@ test("(gi-e) installGlobal is idempotent: second run leaves every symlink unchan
 test("(heal-a) maybeHealShare populates an empty share and writes the version sentinel", () => {
   withTmpHome((home) => {
     const assets = makeFakeAssetsRoot(home);
+    // maybeHealShare has no selection parameter — it reads hosts from the persisted
+    // share selection. Persist an explicit devin selection so healing links into devin.
+    mkdirSync(shareRoot(), { recursive: true });
+    writeFileSync(shareSelectionFile(), serializeSelection({ skills: null, agents: null, hosts: ["devin"] }));
     const report = maybeHealShare(assets, "9.9.9-heal");
     assert.equal(report.populated, true, "empty share is populated");
     assert.equal(readFileSync(shareVersionFile(), "utf8").trim(), "9.9.9-heal");
@@ -502,7 +508,7 @@ test("(heal-c) maybeHealShare repopulates when the version drifts (upgrade simul
 test("(inspect-a) inspectHostLinks reports ok for every link after installGlobal", () => {
   withTmpHome((home) => {
     const assets = makeFakeAssetsRoot(home);
-    installGlobal(assets, "1.0.0-test");
+    installGlobal(assets, "1.0.0-test", { skills: null, agents: null, hosts: ["devin"] });
     const links = inspectHostLinks();
     assert.ok(links.length > 0, "some links inspected");
     assert.ok(links.every((l) => l.state === "ok"), `all ok, got ${JSON.stringify(links.map((l) => l.state))}`);
@@ -512,7 +518,7 @@ test("(inspect-a) inspectHostLinks reports ok for every link after installGlobal
 test("(inspect-b) inspectHostLinks reports 'missing' when a host link is absent", () => {
   withTmpHome((home) => {
     const assets = makeFakeAssetsRoot(home);
-    installGlobal(assets, "1.0.0-test");
+    installGlobal(assets, "1.0.0-test", { skills: null, agents: null, hosts: ["devin"] });
     // Remove one devin skill link, leaving the share entry in place.
     rmSync(join(devinSkillsRoot(), "sdd-explore"), { recursive: true, force: true });
     const link = inspectHostLinks().find((l) => l.kind === "skill" && l.name === "sdd-explore");
@@ -524,7 +530,7 @@ test("(inspect-b) inspectHostLinks reports 'missing' when a host link is absent"
 test("(inspect-c) inspectHostLinks degrades gracefully when a share entry is removed", () => {
   withTmpHome((home) => {
     const assets = makeFakeAssetsRoot(home);
-    installGlobal(assets, "1.0.0-test");
+    installGlobal(assets, "1.0.0-test", { skills: null, agents: null, hosts: ["devin"] });
     // Delete the share entry: it is enumerated FROM the share, so it simply drops out — and the
     // reader must never throw on the now-dangling host symlink left behind.
     rmSync(join(shareSkillsDir(), "sdd-explore"), { recursive: true, force: true });
@@ -658,7 +664,7 @@ test("(unlink-T2-1) unlinkHosts removes a managed symlink pointing into the shar
   withTmpHome((home) => {
     const fakeAssets = makeFakeAssetsRoot(home);
     // Populate share + create host symlinks via installGlobal
-    installGlobal(fakeAssets, "0.0.1-test");
+    installGlobal(fakeAssets, "0.0.1-test", { skills: null, agents: null, hosts: ["devin"] });
 
     // Verify at least one skill symlink exists before unlink
     const skillsInShare = readdirSync(shareSkillsDir()).filter((e) => {
