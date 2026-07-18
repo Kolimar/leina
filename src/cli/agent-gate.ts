@@ -126,6 +126,8 @@ export interface AgentHookPayload {
   hook_event_name?: string;
   tool_name?: string;
   tool_input?: { command?: unknown; [k: string]: unknown };
+  /** Claude Code Stop payloads: true when a Stop hook already blocked once. */
+  stop_hook_active?: unknown;
   /** PostCompaction summary text — present but intentionally ignored; re-injection is unconditional. */
   summary?: string | null;
 }
@@ -306,7 +308,12 @@ function normalizeHostToolNames(payload: AgentHookPayload): void {
   if (mapped !== undefined) payload.tool_name = mapped;
 }
 
-export function runAgentGate(rawStdin: string, cwd: string, fallbackEvent?: string): void {
+export function runAgentGate(
+  rawStdin: string,
+  cwd: string,
+  fallbackEvent?: string,
+  harnessSessionContext?: string,
+): void {
   // Scope guard: silent no-op unless consent=enabled. A user-global hook fires in every Devin
   // project on the machine; this keeps it quiet in repos without explicit consent (including
   // legacy repos with .devin/hooks.v1.json but no consent flag — those resolve to "unknown").
@@ -344,7 +351,7 @@ export function runAgentGate(rawStdin: string, cwd: string, fallbackEvent?: stri
   // SessionStart (only deleted here); load marker is re-armed when injection succeeds.
   if (event === "SessionStart") {
     maybeSelfHealGraph(cwd);
-    emitInjectedContext(cwd, markerPath, saveMarkerPath, "SessionStart", true);
+    emitInjectedContext(cwd, markerPath, saveMarkerPath, "SessionStart", true, harnessSessionContext);
     return;
   }
 
@@ -421,6 +428,7 @@ function emitInjectedContext(
   saveMarkerPath: string,
   eventName: "SessionStart" | "PostCompaction" | "UserPromptSubmit",
   resetMarkers: boolean,
+  harnessSessionContext?: string,
 ): void {
   if (resetMarkers) {
     try {
@@ -440,10 +448,16 @@ function emitInjectedContext(
     }
   }
   const { text, delivered } = buildActiveContext(cwd);
+  // Harness contract context (active contract + intake rules) rides in the SAME
+  // additionalContext payload — two separate JSON objects on stdout would break
+  // the host's hook-output parsing. Present only when a harness contract is
+  // active (see runHarnessAgentGate below); undefined otherwise, leaving the
+  // advisory output byte-for-byte identical to the pre-harness behaviour.
+  const combined = harnessSessionContext ? `${harnessSessionContext}\n\n${text}` : text;
   const out = {
     hookSpecificOutput: {
       hookEventName: eventName,
-      additionalContext: text,
+      additionalContext: combined,
     },
   };
   process.stdout.write(`${JSON.stringify(out)}\n`);
@@ -471,6 +485,148 @@ function emitStopNudge(saveMarkerPath: string): void {
     /* fail open: read error → treat as absent → emit nudge */
   }
   if (!saved) process.stderr.write(`${STOP_SAVE_NUDGE}\n`); // NEVER writes to stdout
+}
+
+// ===========================================================================
+// HARNESS ENFORCEMENT BRANCH — PRODUCT INVARIANT (non-negotiable):
+//
+//   The agent gate may return a BLOCKING decision (PreToolUse edit/bash exit 2,
+//   Stop {"decision":"block"}) ONLY when BOTH hold:
+//     1. the repo has an ACTIVE harness contract
+//        (.harness/state/current/contract.json exists), AND
+//     2. leina consent is NOT "disabled" (readConsentFlag !== "disabled";
+//        "unknown" still enforces — harness sync wires hooks independently of
+//        `leina init`, so a harness-governed repo need not be leina-enabled).
+//
+//   WITHOUT an active contract the pre-existing ADVISORY behaviour must not
+//   change BY A SINGLE BYTE: runHarnessAgentGate returns { handled: false }
+//   and the caller falls through to runAgentGate exactly as before. The same
+//   applies when consent is "disabled" — the harness branch never blocks there.
+//
+//   Covered explicitly by test/harness-agent-gate.test.ts (with contract →
+//   blocks; without contract → never blocks; consent disabled → never blocks).
+//
+// The decision logic itself lives in application/harness/hooks.ts (shared with
+// `leina harness hook <event>`); this wrapper maps host payloads to those
+// decisions and emits the per-host output protocol. All harness modules are
+// loaded via dynamic import so the ~0.15s read-path startup of every other
+// leina command never pays for the harness engine.
+// ===========================================================================
+
+export interface HarnessAgentGateResult {
+  /** True when the harness branch fully handled the event (caller exits with exitCode). */
+  handled: boolean;
+  exitCode: number;
+  /**
+   * SessionStart with an active contract: harness context (contract status +
+   * intake rules) for the caller to merge into the advisory injection.
+   * `handled` stays false — the advisory gate still owns the event.
+   */
+  sessionContext?: string;
+}
+
+const HARNESS_NOT_HANDLED: HarnessAgentGateResult = { handled: false, exitCode: 0 };
+
+/** Sync existence probe for the active-contract sentinel. Fail-open → false. */
+export function hasActiveHarnessContract(cwd: string): boolean {
+  try {
+    return existsSync(join(cwd, ".harness", "state", "current", "contract.json"));
+  } catch {
+    return false;
+  }
+}
+
+// Host tool vocabularies for the enforcement branch: Devin lowercase
+// (edit/write/exec) and Claude Code capitalized (Edit/Write/MultiEdit/
+// NotebookEdit/Bash). Deliberately NOT added to HOST_TOOL_ALIASES: that map
+// feeds the ADVISORY decision, and widening it would change advisory behaviour
+// in repos without a contract — forbidden by the invariant above.
+const HARNESS_EDIT_TOOLS = new Set(["edit", "write", "Edit", "Write", "MultiEdit", "NotebookEdit"]);
+const HARNESS_BASH_TOOLS = new Set(["exec", "Bash"]);
+
+type HooksModule = typeof import("../application/harness/hooks.ts");
+
+async function harnessPorts(): Promise<import("../domain/harness/ports.ts").HarnessPorts> {
+  const [{ ShellProcessRunner }, { HarnessGit }] = await Promise.all([
+    import("../infrastructure/harness/exec.ts"),
+    import("../infrastructure/harness/git.ts"),
+  ]);
+  return { proc: new ShellProcessRunner(), git: new HarnessGit() };
+}
+
+async function harnessPreToolUse(
+  cwd: string,
+  payload: AgentHookPayload,
+  hooks: HooksModule,
+): Promise<HarnessAgentGateResult> {
+  const tool = payload.tool_name;
+  if (tool !== undefined && HARNESS_EDIT_TOOLS.has(tool)) {
+    const decision = await hooks.decidePreEdit(cwd, hooks.payloadFilePath(payload as unknown as Record<string, unknown>));
+    if (decision.block) {
+      process.stderr.write(`${decision.message}\n`);
+      return { handled: true, exitCode: 2 };
+    }
+    return HARNESS_NOT_HANDLED;
+  }
+  if (tool !== undefined && HARNESS_BASH_TOOLS.has(tool)) {
+    const decision = await hooks.decidePreBash(cwd, hooks.payloadCommand(payload as unknown as Record<string, unknown>));
+    if (decision.block) {
+      process.stderr.write(`${decision.message}\n`);
+      return { handled: true, exitCode: 2 };
+    }
+  }
+  return HARNESS_NOT_HANDLED;
+}
+
+async function harnessStop(
+  cwd: string,
+  payload: AgentHookPayload,
+  hooks: HooksModule,
+): Promise<HarnessAgentGateResult> {
+  const decision = await hooks.decideStop(cwd, await harnessPorts(), payload.stop_hook_active === true);
+  if (decision.kind === "block") {
+    // Claude Code Stop protocol: {"decision":"block","reason":...} on stdout,
+    // exit 0 — the reason becomes the model's next instruction.
+    process.stdout.write(`${JSON.stringify({ decision: "block", reason: decision.reason })}\n`);
+    return { handled: true, exitCode: 0 };
+  }
+  if (decision.kind === "yield") {
+    // Retry cap exhausted or engine error: cede honestly, never claim success.
+    process.stderr.write(`${decision.message}\n`);
+    return { handled: true, exitCode: 0 };
+  }
+  return HARNESS_NOT_HANDLED; // verify green → the advisory stop nudge still runs
+}
+
+/**
+ * Enforcement wrapper (see the invariant block above). Returns
+ * `{ handled: false }` in every situation where the harness must not intervene,
+ * letting the caller fall through to the unchanged advisory gate. Fails OPEN:
+ * any unexpected error yields not-handled, never a block.
+ */
+export async function runHarnessAgentGate(
+  rawStdin: string,
+  cwd: string,
+  fallbackEvent?: string,
+): Promise<HarnessAgentGateResult> {
+  if (readConsentFlag(cwd) === "disabled") return HARNESS_NOT_HANDLED;
+  if (!hasActiveHarnessContract(cwd)) return HARNESS_NOT_HANDLED;
+
+  const payload = parseHookPayload(rawStdin, fallbackEvent);
+  if (!payload) return HARNESS_NOT_HANDLED;
+
+  try {
+    const hooks = await import("../application/harness/hooks.ts");
+    const event = payload.hook_event_name;
+    if (event === "PreToolUse") return await harnessPreToolUse(cwd, payload, hooks);
+    if (event === "Stop") return await harnessStop(cwd, payload, hooks);
+    if (event === "SessionStart") {
+      return { handled: false, exitCode: 0, sessionContext: await hooks.sessionStartContext(cwd) };
+    }
+  } catch {
+    return HARNESS_NOT_HANDLED; // fail open — enforcement must never crash the host hook
+  }
+  return HARNESS_NOT_HANDLED;
 }
 
 function emitAdvisory(payload: AgentHookPayload, markerPath: string): void {

@@ -11,11 +11,14 @@
 export const GITIGNORE_START = "# leina:ignore:start";
 export const GITIGNORE_END = "# leina:ignore:end";
 
-// Two-line body: ignore all contents of .leina/ (so git descends the dir and evaluates
+// Body: ignore all contents of .leina/ (so git descends the dir and evaluates
 // the negation below), but re-include config.json so the project-name lock can be committed.
 // Using `.leina/*` instead of `.leina/` is required: a directory-level ignore
 // prevents git from descending, making any nested negation dead.
-export const GITIGNORE_BODY = ".leina/*\n!.leina/config.json\n!.leina/memory-export.jsonl";
+// `.harness/state/` keeps harness task state (contracts, verify reports, retry
+// counters) out of version control — rules/config/lockfile stay committable.
+export const GITIGNORE_BODY =
+  ".leina/*\n!.leina/config.json\n!.leina/memory-export.jsonl\n.harness/state/";
 
 export function mergeGitignore(existing: string | null): string {
   const section = `${GITIGNORE_START}\n${GITIGNORE_BODY}\n${GITIGNORE_END}`;

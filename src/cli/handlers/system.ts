@@ -1,7 +1,7 @@
 // cli/handlers/system.ts — diagnostics, hook bridge, sidecar, capabilities, verify and root help.
 
 import { runDoctor, formatDoctor } from "../doctor.ts";
-import { runAgentGate, resolveHookProjectRoot } from "../agent-gate.ts";
+import { runAgentGate, runHarnessAgentGate, resolveHookProjectRoot } from "../agent-gate.ts";
 import { readPackageVersion } from "../../version.ts";
 import { readStdin } from "../io.ts";
 import { capabilities } from "../../application/capabilities/registry.ts";
@@ -30,18 +30,27 @@ function useColor(): boolean {
   return process.stdout.isTTY === true && !process.env.NO_COLOR && process.env.TERM !== "dumb";
 }
 
-export function handleAgentHook(rest: string[]): never {
+export async function handleAgentHook(rest: string[]): Promise<never> {
   // Host-neutral agent hooks bridge — invoked as `leina agent-hook <EventName>` (compat
   // alias: `devin-hook`, still emitted by existing `.devin/hooks.v1.json` installs) with the
-  // hook's JSON payload on stdin. Advisory-only: emits a stderr nudge when memory hasn't been
-  // loaded, never blocks. Fails OPEN on every error path. See src/cli/agent-gate.ts.
+  // hook's JSON payload on stdin. Advisory-only by default: emits a stderr nudge when memory
+  // hasn't been loaded, never blocks. Fails OPEN on every error path. See src/cli/agent-gate.ts.
   // Supported managed events: PreToolUse, PostToolUse, UserPromptSubmit, SessionStart,
   // PostCompaction (re-injects memory + graph context after compaction),
   // Stop (advisory nudge to persist session memory when session.memory-saved is absent).
+  //
+  // HARNESS ENFORCEMENT BRANCH (product invariant — see runHarnessAgentGate): when the repo
+  // has an ACTIVE harness contract (.harness/state/current/contract.json) and leina consent
+  // is not "disabled", PreToolUse edit/bash and Stop may BLOCK (exit 2 / decision:block).
+  // Without a contract the advisory behaviour below is untouched, byte for byte.
   const eventName = rest[0];
   // Resolve the project root from Devin's documented DEVIN_PROJECT_DIR env var (fallback to
   // process.cwd()) — the hook payload itself never carries a cwd. See resolveHookProjectRoot.
-  runAgentGate(readStdin(), resolveHookProjectRoot(process.env, process.cwd()), eventName);
+  const rawStdin = readStdin();
+  const root = resolveHookProjectRoot(process.env, process.cwd());
+  const harness = await runHarnessAgentGate(rawStdin, root, eventName);
+  if (harness.handled) process.exit(harness.exitCode);
+  runAgentGate(rawStdin, root, eventName, harness.sessionContext);
   process.exit(0);
 }
 
@@ -373,6 +382,10 @@ export function printRootHelp(): void {
       `  env <sub>               variables for skills that call services (names-not-values:\n` +
       `                          set KEY [hidden prompt/stdin] | list [masked] | get KEY [--reveal]\n` +
       `                          | unset KEY | exec [--only K1,K2] -- <cmd...> [injects values])\n` +
+      `  harness <sub>           task harness (rules + executable gates in .harness/):\n` +
+      `                          contract new|show|edit|end · verify [--json] · sync\n` +
+      `                          [--check|--force] · list · hook <event>; run\n` +
+      `                          'leina harness' for the full per-sub-command flags\n` +
       `  agent-hook <Event>      host-neutral agent hook gate (stdin = payload JSON;\n` +
       `                          alias: devin-hook)\n` +
       `  version | --version     print the leina version\n`,

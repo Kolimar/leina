@@ -214,10 +214,15 @@ test("(E1) blanket workflow completo: setup → init LIGHT (B2/I1-1) → disable
     // .gitignore written (I1-1)
     assert.ok(existsSync(join(project, ".gitignore")), ".gitignore written in LIGHT init (E1/I1-1)");
 
-    // AGENTS.md NOT written (I1-1: LIGHT no escribe AGENTS.md)
+    // LIGHT no escribe el bloque de protocolo leina en AGENTS.md (E1/I1-1).
+    // El bootstrap harness de init (adapter baseline agentsmd) sí puede crear
+    // AGENTS.md, pero solo con su bloque gestionado — nunca el protocolo leina.
+    const agentsLight = existsSync(join(project, "AGENTS.md"))
+      ? readFileSync(join(project, "AGENTS.md"), "utf8")
+      : "";
     assert.ok(
-      !existsSync(join(project, "AGENTS.md")),
-      "AGENTS.md NOT written in LIGHT init (E1/I1-1)",
+      !agentsLight.includes("leina:protocol:start"),
+      "leina protocol block NOT written in LIGHT init (E1/I1-1)",
     );
 
     // .devin/ NOT created (I1-1: LIGHT no escribe hooks ni config local)

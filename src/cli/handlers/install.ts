@@ -49,6 +49,7 @@ import { addMcpRegistration, removeMcpRegistration } from "../../application/ins
 import { registerMcpGlobal, unregisterMcpGlobal } from "../../infrastructure/install/mcp-hosts.ts";
 import { printMcpResults } from "./mcp-admin.ts";
 import { AGENT_HOOK_MARK, claudeHooksJson, removeClaudeHooks } from "../../application/install/claude-hooks.ts";
+import { bootstrapHarness, deinitHarness } from "../../application/install/harness-init.ts";
 
 type CliBase = ReturnType<typeof deriveCliCommand>;
 
@@ -588,6 +589,15 @@ export async function handleInit(rest: string[]): Promise<void> {
   // (idempotent: a no-op when the FULL branch above already wrote it).
   if (doClaudeHooks) writeClaudeHooksStep(project, cliBase, written, failures);
 
+  // Harness bootstrap (FULL and LIGHT): seed .harness/config.json if absent and
+  // run the in-process sync (same engine as `leina harness sync`) so the
+  // CLAUDE.md/AGENTS.md blocks + skills exist for the hosts detected in the
+  // repo. Runs AFTER the host wiring above so platform detection sees the
+  // freshly written .claude/ files. Best-effort like every other init step.
+  const harness = await bootstrapHarness(project);
+  written.push(...harness.written);
+  failures.push(...harness.failures);
+
   maybeActivationNudge();
 
   // --build: optional synchronous foreground graph build (I2, OQ-3).
@@ -923,8 +933,14 @@ export function handleDeinit(rest: string[]): void {
 
   const written: string[] = [];
   const removed: string[] = [];
+  const failures: string[] = [];
 
   deinitConsent(project, written);
+  // Harness first: stripping its AGENTS.md managed block before the leina
+  // protocol strip lets deinitAgentsMd see whether only our content remains.
+  const harness = deinitHarness(project);
+  removed.push(...harness.removed);
+  failures.push(...harness.failures);
   deinitAgentsMd(project, removed);
   deinitGitignore(project, removed);
   deinitDevinConfig(project, removed);
@@ -933,7 +949,7 @@ export function handleDeinit(rest: string[]): void {
   deinitClaudeHooks(project, removed);
 
   // Report: "nothing to revert" when no changes were needed (idempotent second run). [OQ-2]
-  if (written.length === 0 && removed.length === 0) {
+  if (written.length === 0 && removed.length === 0 && failures.length === 0) {
     console.log(`leina deinit — nothing to revert.`);
     return;
   }
@@ -941,4 +957,6 @@ export function handleDeinit(rest: string[]): void {
   console.log(`leina deinit — cleaned up from ${project}:`);
   for (const w of written) console.log(`  + ${w}`);
   for (const r of removed) console.log(`  - ${r}`);
+  for (const f of failures) console.log(`  ✖ ${f}`);
+  if (failures.length > 0) process.exitCode = 1;
 }

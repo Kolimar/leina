@@ -185,12 +185,23 @@ switch (cmd) {
 
   case "agent-hook": // primary, host-neutral form
   case "devin-hook": // compat alias — existing .devin/hooks.v1.json installs invoke this
-    handleAgentHook(rest);
+    await handleAgentHook(rest);
     break;
 
   case "sidecar":
     await handleSidecar(rest);
     break;
+
+  // ---------------------------------------------------------------------------
+  // Harness sub-command dispatcher (`leina harness <contract|verify|sync|list|hook>`)
+  // Lazy: the harness engine (rule loader, gates, adapters) must not tax the
+  // ~0.15s read-path startup of every other command.
+  // ---------------------------------------------------------------------------
+  case "harness": {
+    const { handleHarness } = await import("./handlers/harness.ts");
+    await handleHarness(rest);
+    break;
+  }
 
   case "scip":
     await handleScip(rest);
