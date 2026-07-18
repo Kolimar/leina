@@ -369,6 +369,64 @@ process those files.
 
 ---
 
+## Harness commands (rules + executable gates)
+
+The harness turns "agent best practices" into machine-checkable **gates**. It lives in
+`<dir>/.harness/`: markdown **rules** (JSON frontmatter) anchored to a lifecycle phase
+(`intake → plan → execute → verify → deliver`) with severity `blocking` | `advisory`,
+optionally carrying an executable **gate** (`command`, `file`, `diff`, `diff-content`,
+`checklist`, `js`). Rules resolve across three layers — builtin < `.harness/rules/`
+(project) < `~/.leina/harness/rules/` (user) — and a local layer can **never weaken** a
+blocking project rule. See [concepts/07-harness.md](concepts/07-harness.md) for the model.
+
+All subcommands run against the repo root found upward from cwd (`.harness/` or `.git`).
+
+### `harness contract new --goal "<t>" [--type <t>] [--scope <glob>]... [--out-of-scope <glob>]... [--criterion <text>]... [--max-retries <n>]`
+Declare the task contract **before** starting a non-trivial task: goal, allowed scope
+globs, explicit out-of-scope globs, acceptance criteria, and the retry budget for the
+stop-hook loop (default 3). Records the current git HEAD as `baseRef` — the diff gates
+compare against it. Writes `.harness/state/current/contract.json` + `checklist.md`.
+Refuses to overwrite an active contract. Exit 2 on invalid usage.
+
+### `harness contract show`
+Print the active contract. Exit 1 when none is active.
+
+### `harness contract edit [--goal <t>] [--add-scope <g>]... [--add-out-of-scope <g>]... [--add-criterion <t>]... [--check-criterion <t>]...`
+Amend the active contract. Scope widening is **explicit, never silent** — the diff gate
+fails until the new paths are declared here. `--check-criterion` marks a criterion done.
+
+### `harness contract end`
+Archive `state/current/` to `state/history/<timestamp>/` and close the contract.
+
+### `harness verify [--json] [--phase p1,p2] [--rule <id>]`
+Run the gates (default phases: `verify,deliver`). **The exit code is the completion
+contract**: `0` = every blocking gate passed, `1` = blocking failure, `2` = engine/config
+error. Gates honor `onlyIfChanged` (skip when nothing relevant changed) and run in a
+bounded parallel pool. The report persists to `.harness/state/current/verify-report.json`;
+`--json` prints it to stdout.
+
+### `harness sync [--check] [--force] [--platforms a,b]`  *(alias: `compile`)*
+Regenerate platform artifacts from the canonical rules: managed blocks in
+`AGENTS.md`/`CLAUDE.md`, Claude Code skills, Cursor `.mdc` rules + hooks, Windsurf/Devin
+rule mirrors, an OpenCode plugin. Detection is **evidence-based** (a platform is targeted
+only when `config.platforms` names it, `--platforms` selects it, or the repo already
+carries its files — leina never elects a host for you). A lockfile
+(`.harness/harness.lock.json`) hashes every artifact: hand-edited files **conflict**
+instead of being clobbered (`--force` overrides). `--check` computes drift without
+writing — exit 1 on drift (CI mode).
+
+### `harness list [--phase <p>] [--tag <t>] [--json]`
+Resolved rules with source layer, phase, severity, gate types and enabled state.
+
+### `harness hook <event>`
+Platform hook entry point (reads the event JSON on stdin): `session-start` (context
+injection), `pre-edit` / `pre-bash` (hard blocks, exit 2), `stop` (completion gate with a
+retry loop that **yields honestly** at the cap), `cursor-shell` / `cursor-after-edit` /
+`cursor-stop` (Cursor protocol), `idle`. Wired automatically by `leina init` for the
+chosen hosts; you rarely run it by hand.
+
+---
+
 ## MCP server & tools (dual transport)
 
 Every read/write capability is exposed twice: as the CLI commands above **and** as MCP
@@ -399,6 +457,11 @@ server in, i.e. the workspace root).
 | `memory suggest-topic` | `memory_suggest_topic` | |
 | `memory session` | `memory_session` | |
 | `agent-hook SessionStart` | `context_build` | |
+| `harness contract new` | `harness_contract_new` | |
+| `harness contract show` | `harness_contract_show` | |
+| `harness contract end` | `harness_contract_end` | |
+| `harness verify` | `harness_verify` | full report + exit-code contract |
+| `harness list` | `harness_rules_list` | |
 
 CLI-only, by design: `env exec` (the names-not-values contract injects secrets
 process-to-process; an MCP tool result would pull values into model context),

@@ -41,7 +41,12 @@ página, el bibliotecario se entera de que su nota **puede haber quedado vieja**
 *drift*). Y un **conserje (los `hooks`)** deja notas en tu escritorio al empezar y al terminar
 cada sesión — sin trabarte nunca la puerta.
 
-Esa metáfora — cartógrafo, bibliotecario, post-its y conserje — vuelve en cada documento.
+Un cuarto empleado es opcional y más estricto: el **inspector de obra (el `harness`)** se
+asegura de que cada trabajo se declare antes de empezar (el *contract*) y se verifique antes
+de darlo por terminado (los *gates*) — el único empleado autorizado a negarse a firmar.
+
+Esa metáfora — cartógrafo, bibliotecario, post-its, conserje e inspector — vuelve en cada
+documento.
 
 ---
 
@@ -57,6 +62,7 @@ Leelos en este orden si venís de cero:
 | 4 | [La memoria de proyecto](./04-memoria.md) | `observations`, `sessions`, el *project key*, búsqueda FTS5/BM25 | el bibliotecario |
 | 5 | [Cómo se hablan grafo y memoria](./05-comunicacion-grafo-memoria.md) | `anchors` y *drift detection* (USABLE / WARNING / DO-NOT-USE) | los post-its |
 | 6 | [Hooks e inyección de contexto](./06-hooks-e-inyeccion.md) | Ciclo de vida de los hooks del agente, markers, inyección activa | el conserje |
+| 7 | [El harness](./07-harness.md) | Rules con gates ejecutables, contracts de tarea, `verify` como oráculo de completitud, sync multi-host | el inspector de obra |
 
 ---
 

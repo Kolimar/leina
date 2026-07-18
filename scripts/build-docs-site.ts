@@ -51,6 +51,7 @@ const PAGES: PageDef[] = [
   { id: "concepts-04-memoria", section: "concepts", nativeLang: "en", en: p("docs/concepts/04-memoria.md"), es: p("docs/i18n/es/concepts/04-memoria.md") },
   { id: "concepts-05-comunicacion-grafo-memoria", section: "concepts", nativeLang: "en", en: p("docs/concepts/05-comunicacion-grafo-memoria.md"), es: p("docs/i18n/es/concepts/05-comunicacion-grafo-memoria.md") },
   { id: "concepts-06-hooks-e-inyeccion", section: "concepts", nativeLang: "en", en: p("docs/concepts/06-hooks-e-inyeccion.md"), es: p("docs/i18n/es/concepts/06-hooks-e-inyeccion.md") },
+  { id: "concepts-07-harness", section: "concepts", nativeLang: "en", en: p("docs/concepts/07-harness.md"), es: p("docs/i18n/es/concepts/07-harness.md") },
   { id: "roadmap", section: "project", nativeLang: "en", en: p("docs/ROADMAP.md"), es: p("docs/i18n/es/roadmap.md") },
   { id: "benchmarks", section: "project", nativeLang: "en", en: p("docs/benchmarks/README.md"), es: p("docs/i18n/es/benchmarks.md") },
   { id: "contributing", section: "project", nativeLang: "en", en: p("CONTRIBUTING.md"), es: p("docs/i18n/es/contributing.md") },

@@ -41,8 +41,12 @@ redraws that page, the librarian learns that their note **may have gone stale** 
 *drift*). And a **concierge (the `hooks`)** leaves notes on your desk at the start and end of
 each session — without ever locking the door on you.
 
-That metaphor — cartographer, librarian, sticky notes, and concierge — comes back in every
-document.
+A fourth employee is optional and stricter: the **site inspector (the `harness`)** makes
+sure every job is declared before it starts (the *contract*) and verified before it is
+called done (the *gates*) — the one employee allowed to refuse a sign-off.
+
+That metaphor — cartographer, librarian, sticky notes, concierge, and inspector — comes
+back in every document.
 
 ---
 
@@ -58,6 +62,7 @@ Read them in this order if you're starting from scratch:
 | 4 | [Project memory](./04-memoria.md) | `observations`, `sessions`, the *project key*, FTS5/BM25 search | the librarian |
 | 5 | [How the graph and memory talk to each other](./05-comunicacion-grafo-memoria.md) | `anchors` and *drift detection* (USABLE / WARNING / DO-NOT-USE) | the sticky notes |
 | 6 | [Hooks and context injection](./06-hooks-e-inyeccion.md) | Agent hooks lifecycle, markers, active injection | the concierge |
+| 7 | [The harness](./07-harness.md) | Rules with executable gates, task contracts, `verify` as the completion oracle, multi-host sync | the site inspector |
 
 ---
 

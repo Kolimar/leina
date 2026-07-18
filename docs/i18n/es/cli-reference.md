@@ -376,6 +376,68 @@ nada, dejando que tree-sitter procese esos archivos.
 
 ---
 
+## Comandos de harness (rules + gates ejecutables)
+
+El harness convierte las "buenas prácticas de agente" en **gates** verificables por máquina.
+Vive en `<dir>/.harness/`: **rules** en markdown (frontmatter JSON) ancladas a una fase del
+ciclo de vida (`intake → plan → execute → verify → deliver`) con severity `blocking` |
+`advisory`, que opcionalmente llevan un **gate** ejecutable (`command`, `file`, `diff`,
+`diff-content`, `checklist`, `js`). Las rules se resuelven en tres capas — builtin <
+`.harness/rules/` (proyecto) < `~/.leina/harness/rules/` (usuario) — y una capa local
+**nunca puede debilitar** una rule blocking de proyecto. Ver
+[concepts/07-harness.md](concepts/07-harness.md) para el modelo.
+
+Todos los subcomandos corren contra la raíz del repo hallada hacia arriba desde el cwd
+(`.harness/` o `.git`).
+
+### `harness contract new --goal "<t>" [--type <t>] [--scope <glob>]... [--out-of-scope <glob>]... [--criterion <text>]... [--max-retries <n>]`
+Declara el contract de la tarea **antes** de empezar una tarea no trivial: goal, globs de
+scope permitidos, globs explícitos fuera de scope, criterios de aceptación y el presupuesto
+de reintentos para el loop del stop-hook (default 3). Registra el HEAD de git actual como
+`baseRef` — los gates de diff comparan contra él. Escribe
+`.harness/state/current/contract.json` + `checklist.md`. Se niega a pisar un contract
+activo. Exit 2 ante uso inválido.
+
+### `harness contract show`
+Imprime el contract activo. Exit 1 cuando no hay ninguno activo.
+
+### `harness contract edit [--goal <t>] [--add-scope <g>]... [--add-out-of-scope <g>]... [--add-criterion <t>]... [--check-criterion <t>]...`
+Enmienda el contract activo. Ampliar el scope es **explícito, nunca silencioso** — el gate
+`diff` falla hasta que los paths nuevos se declaren acá. `--check-criterion` marca un
+criterio como cumplido.
+
+### `harness contract end`
+Archiva `state/current/` en `state/history/<timestamp>/` y cierra el contract.
+
+### `harness verify [--json] [--phase p1,p2] [--rule <id>]`
+Corre los gates (fases por defecto: `verify,deliver`). **El exit code es el contrato de
+completitud**: `0` = todos los gates blocking pasaron, `1` = falla blocking, `2` = error de
+engine/config. Los gates respetan `onlyIfChanged` (skip cuando nada relevante cambió) y
+corren en un pool paralelo acotado. El reporte persiste en
+`.harness/state/current/verify-report.json`; `--json` lo imprime a stdout.
+
+### `harness sync [--check] [--force] [--platforms a,b]`  *(alias: `compile`)*
+Regenera los artifacts de plataforma a partir de las rules canónicas: bloques managed en
+`AGENTS.md`/`CLAUDE.md`, skills de Claude Code, rules `.mdc` + hooks de Cursor, espejos de
+rules para Windsurf/Devin, un plugin de OpenCode. La detección es **basada en evidencia**
+(una plataforma se targetea solo cuando `config.platforms` la nombra, `--platforms` la
+selecciona, o el repo ya trae sus archivos — leina nunca elige un host por vos). Un lockfile
+(`.harness/harness.lock.json`) hashea cada artifact: los archivos editados a mano entran en
+**conflicto** en vez de ser pisados (`--force` lo overridea). `--check` calcula el drift sin
+escribir — exit 1 si hay drift (modo CI).
+
+### `harness list [--phase <p>] [--tag <t>] [--json]`
+Rules resueltas con capa de origen, phase, severity, tipos de gate y estado de habilitación.
+
+### `harness hook <event>`
+Punto de entrada de hooks de plataforma (lee el JSON del evento por stdin): `session-start`
+(inyección de contexto), `pre-edit` / `pre-bash` (bloqueos duros, exit 2), `stop` (gate de
+completitud con un loop de reintentos que **cede honestamente** al llegar al tope),
+`cursor-shell` / `cursor-after-edit` / `cursor-stop` (protocolo Cursor), `idle`. Lo cablea
+automáticamente `leina init` para los hosts elegidos; rara vez lo corrés a mano.
+
+---
+
 ## MCP server y tools (transporte dual)
 
 Cada capacidad de lectura/escritura se expone dos veces: como los comandos de CLI de arriba
@@ -406,6 +468,11 @@ defecto: el cwd en el que el host lanzó el server, es decir, la raíz del works
 | `memory suggest-topic` | `memory_suggest_topic` | |
 | `memory session` | `memory_session` | |
 | `agent-hook SessionStart` | `context_build` | |
+| `harness contract new` | `harness_contract_new` | |
+| `harness contract show` | `harness_contract_show` | |
+| `harness contract end` | `harness_contract_end` | |
+| `harness verify` | `harness_verify` | reporte completo + contrato de exit codes |
+| `harness list` | `harness_rules_list` | |
 
 Solo-CLI, por diseño: `env exec` (el contrato names-not-values inyecta secretos de proceso a
 proceso; el resultado de una MCP tool traería los valores al contexto del modelo),

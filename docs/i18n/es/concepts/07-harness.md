@@ -1,0 +1,161 @@
+# El harness — reglas con gates ejecutables
+
+> **El empleado:** el **inspector de obra**. El cartógrafo sabe qué ES el código, el
+> bibliotecario sabe POR QUÉ llegó a ser así — el inspector se asegura de que un trabajo se
+> **declare antes de empezar y se verifique antes de darlo por terminado**. A diferencia del
+> conserje (los hooks, que solo dejan notas), el inspector puede negarse a firmar.
+
+---
+
+## Por qué un harness
+
+Las instrucciones a un agente ("corré los tests", "quedate dentro del scope", "no commitees
+secretos") son texto — el modelo puede ignorarlas, olvidarlas o racionalizar para esquivarlas.
+El harness convierte cada una de esas instrucciones en dos mitades acopladas:
+
+- un **cuerpo markdown** que el modelo lee (el *por qué* y el *cómo*), y
+- un **gate** opcional que la máquina ejecuta (la *prueba*).
+
+"Los tests tienen que pasar" deja de ser prosa y se convierte en `npm test` saliendo con 0,
+chequeado por un proceso con el que el modelo no puede discutir. Ese es todo el diseño en una
+frase: **consejo para el modelo, evidencia para la máquina.**
+
+## El modelo
+
+### Rules
+
+Una rule es un archivo markdown con frontmatter JSON, resuelto desde tres capas:
+
+| capa | dónde | le gana a |
+|---|---|---|
+| `builtin` | viene con leina (`assets/harness/rules/`) | — |
+| `project` | `<repo>/.harness/rules/` | builtin |
+| `user` | `~/.leina/harness/rules/` | project — **excepto para debilitar** |
+
+Cada rule declara un `id` (`namespace/slug`), una `phase` del ciclo de vida
+(`intake → plan → execute → verify → deliver`), una `severity` (`blocking` | `advisory`),
+un `scope` opcional (`paths`, `taskTypes`, `languages`) y cero o más gates.
+
+**La invariante de exigibilidad:** una capa user-local puede *reemplazar* una rule de
+proyecto, pero nunca puede **deshabilitar** una rule blocking ni **degradarla** a advisory.
+El intento se ignora con un warning. Unos guardarraíles que cualquier capa pudiera apagar no
+serían guardarraíles.
+
+### Gates
+
+Seis tipos de gate ejecutables, corridos por un engine con un pool paralelo acotado, timeouts
+por gate y semántica **fail-closed** (`fail`, `error` y `timeout` cuentan todos como falla
+blocking cuando la rule es blocking):
+
+| gate | prueba |
+|---|---|
+| `command` | un comando de shell sale con el código esperado (y el stdout matchea, opcionalmente) |
+| `file` | un archivo existe / matchea / tiene un tamaño mínimo (p. ej. `plan.md` antes de codear) |
+| `diff` | el diff de git se mantiene dentro del scope declarado en el contract |
+| `diff-content` | ninguna línea **agregada** matchea un patrón prohibido (secretos, `.only`/`.skip`) — incluso en archivos aún sin `git add` |
+| `checklist` | cada criterio de aceptación está tildado |
+| `js` | cualquier otra cosa — un módulo local del repo devuelve `{ pass, message }` |
+
+Los globs `onlyIfChanged` permiten que un gate se saltee a sí mismo cuando nada relevante
+cambió, lo que mantiene `verify` rápido en tareas solo-docs.
+
+### El contract
+
+La pieza que invierte la carga de la prueba. Antes de una tarea no trivial, el agente (o
+vos) declara:
+
+```bash
+leina harness contract new --goal "Add the export endpoint" --type feature \
+  --scope "src/routes/**" --scope "test/**" \
+  --criterion "endpoint covered by a failing-first test"
+```
+
+El contract registra el HEAD de git al momento de la declaración (`baseRef`). Desde ahí, la
+**propia declaración del agente es la frontera objetiva**: el gate `diff` falla ante
+cualquier archivo fuera del scope declarado, y ampliar el scope exige un
+`contract edit --add-scope` explícito — visible, auditable, nunca silencioso. Cerrar la
+tarea (`contract end`) archiva todo el estado en `.harness/state/history/`.
+
+La declaración ocurre *antes* del trabajo, cuando no hay incentivo para hacer trampa; la
+verificación ocurre *después*, cuando no hay manera de hacerla.
+
+### Recipes
+
+Procedimientos de camino dorado (`add-endpoint`, `fix-bug`) — listas de pasos parametrizadas
+que empiezan con un contract y terminan con `verify` + `contract end`. Solo sus gates
+terminales son exigibles; su valor es la reducción de varianza: el agente sigue una secuencia
+conocida y probada en vez de improvisar una.
+
+## El muro de completitud
+
+`leina harness verify` es el oráculo único, con un contrato de exit codes que todos los
+transportes comparten:
+
+- `0` — todos los gates blocking pasaron; la tarea puede darse por completa;
+- `1` — falla blocking; el reporte dice exactamente qué y por qué;
+- `2` — el harness mismo está mal configurado (rule inválida, config rota).
+
+En hosts con hooks, el **stop hook** corre verify cuando el agente intenta terminar su turno:
+las fallas vuelven como la siguiente instrucción del agente (block), hasta `maxRetries` veces
+— y entonces **cede honestamente**: "allowing stop so a human can look", nunca un verde
+falso. El hook pre-bash rechaza `git commit` / `git push` mientras haya gates blocking
+fallando, y el hook pre-edit mantiene al agente dentro del scope del contract.
+
+**Frontera de integridad:** `.harness/rules/`, `.harness/config.json` y el lockfile son de
+solo lectura para el agente en *todos* los modos de strictness — editar los gates para pasar
+un gate es la vía de escape obvia, así que el camino de escritura para rules y config es la
+CLI/TUI de `leina harness`, manejada por un humano. El estado de la tarea
+(`.harness/state/` — plan, checklist, contract) sigue siendo escribible por el agente: esa es
+la superficie que el flujo de trabajo necesita.
+
+## Un solo set de rules, muchos hosts
+
+`leina harness sync` compila las rules canónicas a lo que cada plataforma puede exigir:
+
+```mermaid
+flowchart LR
+    rules[".harness/rules/ + builtin<br/>(canónicas, markdown + gates)"] --> sync["harness sync"]
+    sync --> agents["AGENTS.md<br/>bloque managed"]
+    sync --> claude["bloque en CLAUDE.md<br/>+ .claude/skills/"]
+    sync --> cursor[".cursor/rules/*.mdc<br/>+ hooks.json"]
+    sync --> windsurf[".windsurf/ + .devin/<br/>espejos de rules"]
+    sync --> opencode["opencode.json<br/>+ plugin"]
+    sync --> lock[("harness.lock.json<br/>(hashes)")]
+```
+
+Tres propiedades hacen que esto sea seguro de re-correr para siempre:
+
+1. **Targeting basado en evidencia.** Una plataforma solo se escribe cuando la config o los
+   flags la nombran, o el repo ya trae sus archivos. leina nunca elige un host de IA por vos.
+2. **Bloques managed + lockfile.** El harness co-posee archivos como `CLAUDE.md` mediante
+   bloques marcados; todo lo que queda fuera de los marcadores no se toca jamás. El hash de
+   cada artifact vive en `.harness/harness.lock.json` — un artifact editado a mano entra en
+   **conflicto** (se conserva intacto, se reporta) en vez de ser pisado; `--force` es el
+   override explícito.
+3. **Remoción simétrica.** `leina deinit` recorre el mismo lockfile en reversa: los archivos
+   propios se borran solo si no fueron tocados, los bloques se quitan solo si su interior no
+   fue tocado, y las entradas del harness se eliminan de los JSON compartidos (las entradas
+   del usuario sobreviven textuales).
+
+La exigencia difiere por host — Claude Code y OpenCode reciben hooks blocking, Cursor recibe
+hooks advisory más un guard de commit, los hosts solo-AGENTS.md reciben instrucciones — pero
+el **oráculo es idéntico en todas partes**: pueda o no exigirlo el host,
+`leina harness verify` sale con 0 o no sale con 0.
+
+## Dónde vive cada cosa
+
+```
+.harness/
+├── config.json          # platforms, strictness (guided|strict), overrides de rules
+├── rules/               # rules de proyecto (overridean las builtin por id)
+├── harness.lock.json    # hashes de artifacts — el libro contable de paridad del sync
+├── generated/           # archivos de host que el harness posee por completo (p. ej. rules de opencode)
+└── state/               # estado de tarea git-ignored
+    ├── current/         #   contract.json · checklist.md · plan.md · verify-report.json · retries.json
+    └── history/<ts>/    #   contracts archivados, un dir por tarea terminada
+```
+
+Las rules builtin específicas de leina (`leina-memory-first`, `leina-graph-consult`,
+`leina-graph-fresh`, `leina-session-summary`) cierran el círculo con los otros dos
+empleados: el inspector exige que el agente consulte al bibliotecario antes de empezar,
+mantenga fresco el mapa del cartógrafo y deje la entrada en la bitácora antes de firmar.
