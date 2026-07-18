@@ -592,9 +592,10 @@ export async function handleInit(rest: string[]): Promise<void> {
   // Harness bootstrap (FULL and LIGHT): seed .harness/config.json if absent and
   // run the in-process sync (same engine as `leina harness sync`) targeting the
   // hosts the user chose with --hosts (plus AGENTS.md only when the repo
-  // already carries one) — never auto-elected. Best-effort like every other
-  // init step.
-  const harness = await bootstrapHarness(project, hosts);
+  // already carries one) — never auto-elected. A LIGHT init (blanket active:
+  // "don't wire repos") passes no hosts, so only pre-existing platform
+  // evidence is refreshed. Best-effort like every other init step.
+  const harness = await bootstrapHarness(project, mode === "full" ? hosts : []);
   written.push(...harness.written);
   failures.push(...harness.failures);
 

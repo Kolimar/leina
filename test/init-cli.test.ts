@@ -569,18 +569,10 @@ test("(I1-1) init LIGHT (blanket activo): solo consent + gitignore; AGENTS.md y 
     // Gitignore written (I1-1)
     assert.ok(existsSync(join(dir, ".gitignore")), ".gitignore written");
 
-    // LIGHT no escribe el bloque de protocolo leina en AGENTS.md. Desde la
-    // absorción del harness, init (LIGHT y FULL) también ejecuta el bootstrap
-    // harness, cuyo adapter baseline (agentsmd) SÍ crea AGENTS.md — pero solo
-    // con el bloque gestionado del harness, nunca con el protocolo leina.
-    const agentsLight = existsSync(join(dir, "AGENTS.md"))
-      ? readFileSync(join(dir, "AGENTS.md"), "utf8")
-      : "";
-    assert.ok(
-      !agentsLight.includes("leina:protocol:start"),
-      "leina protocol block NOT written in LIGHT mode",
-    );
-    assert.ok(agentsLight.includes("harness:begin"), "harness bootstrap block present (LIGHT too)");
+    // LIGHT no escribe AGENTS.md en absoluto: ni el protocolo leina ni el
+    // bloque del harness. El bootstrap harness en LIGHT no recibe hosts y su
+    // detección es por evidencia — en un repo vacío no elige plataforma alguna.
+    assert.ok(!existsSync(join(dir, "AGENTS.md")), "AGENTS.md NOT written in LIGHT mode");
     assert.ok(existsSync(join(dir, ".harness", "config.json")), ".harness/config.json seeded");
 
     // .devin/ NOT created (I1-1: LIGHT no escribe hooks ni config local)
