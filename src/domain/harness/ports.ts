@@ -67,7 +67,9 @@ export interface GitPort {
    */
   changedFiles(repoRoot: string, base?: string): Promise<string[] | null>;
   /**
-   * Raw `git diff --unified=0` output for content-level gates.
+   * Raw `git diff --unified=0` output for content-level gates, with untracked
+   * text files appended as synthetic new-file diffs (content gates must see a
+   * secret before it is ever staged).
    * Returns null when the diff cannot be produced (e.g. not a repository).
    */
   diffUnified(repoRoot: string, options?: GitDiffOptions): Promise<string | null>;

@@ -280,6 +280,20 @@ describe("diff-content gate", () => {
     assert.equal(clean.status, "pass");
   });
 
+  it("sees content in brand-new UNTRACKED files (secrets cannot hide before git add)", async () => {
+    await repo.write("src/fresh-file.ts", 'const apiKey = "sk_live_untracked_secret_x";\n');
+    try {
+      const hit = await runDiffContentGate(
+        { type: "diff-content", forbidAdded: "api[_-]?key\\s*=", ignoreCase: true },
+        ctx(),
+      );
+      assert.equal(hit.status, "fail");
+      assert.ok(hit.output?.includes("sk_live_untracked_secret_x"));
+    } finally {
+      repo.git("clean", "-fq", "--", "src/fresh-file.ts");
+    }
+  });
+
   it("respects path filters", async () => {
     await repo.write("docs/todo.md", "TODO: later\n");
     repo.git("add", "docs/todo.md");
