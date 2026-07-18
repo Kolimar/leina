@@ -234,6 +234,21 @@ describe("filterRules", () => {
     assert.equal(filterRules([scoped, open], { taskType: "feature" }).length, 2);
   });
 
+  it("applies taskTypes-scoped rules when the contract declared no type (fail-closed)", () => {
+    const scoped = mk({ scope: { taskTypes: ["feature"] } });
+    assert.equal(filterRules([scoped], {}).length, 1);
+  });
+
+  it("filters by scope languages against changed-file extensions", () => {
+    const rules = [mk({ scope: { languages: ["typescript"] } })];
+    assert.equal(filterRules(rules, { changedFiles: ["src/a.ts"] }).length, 1);
+    assert.equal(filterRules(rules, { changedFiles: ["src/a.tsx", "README.md"] }).length, 1);
+    assert.deepEqual(filterRules(rules, { changedFiles: ["src/a.py", "README.md"] }), []);
+    // Bare entries match as extensions; without changedFiles the rule applies.
+    assert.equal(filterRules([mk({ scope: { languages: ["rs"] } })], { changedFiles: ["lib.rs"] }).length, 1);
+    assert.equal(filterRules(rules, {}).length, 1);
+  });
+
   it("flags blocking verify rules without gates", () => {
     const missing = mk({ id: "project/gateless" });
     const ok = mk({ id: "project/gated", gate: { type: "command", run: "true", expectExitCode: 0 } });

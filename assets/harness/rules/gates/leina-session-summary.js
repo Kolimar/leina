@@ -1,9 +1,12 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
 /**
  * Deliver gate: a leina session summary must have been saved AFTER the active
  * contract was created. Session/observation ids embed their creation epoch in
  * milliseconds (…:1784319414078:…), so recency is machine-checkable.
+ *
+ * Async on purpose: a sync exec would freeze the engine's event loop, stall
+ * the parallel gate pool and defeat the engine-level timeout.
  */
 export default async function leinaSessionSummary(ctx) {
   const contract = ctx.contract;
@@ -13,9 +16,13 @@ export default async function leinaSessionSummary(ctx) {
 
   let out;
   try {
-    out = execFileSync('leina', ['memory', 'context', ctx.repoRoot, '--limit', '20'], {
-      encoding: 'utf8',
-      timeout: 20_000,
+    out = await new Promise((resolve, reject) => {
+      execFile(
+        'leina',
+        ['memory', 'context', ctx.repoRoot, '--limit', '20'],
+        { encoding: 'utf8', timeout: 20_000 },
+        (err, stdout) => (err ? reject(err) : resolve(stdout)),
+      );
     });
   } catch (err) {
     return { pass: false, message: `cannot query leina memory: ${err.message}` };

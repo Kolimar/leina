@@ -104,15 +104,51 @@ export interface FilterOptions {
   taskType?: string;
 }
 
+/** scope.languages entries → file extensions (bare entries match as extensions). */
+const LANGUAGE_EXTENSIONS: Record<string, readonly string[]> = {
+  typescript: ["ts", "tsx", "mts", "cts"],
+  javascript: ["js", "jsx", "mjs", "cjs"],
+  python: ["py", "pyi"],
+  go: ["go"],
+  rust: ["rs"],
+  java: ["java"],
+  kotlin: ["kt", "kts"],
+  ruby: ["rb"],
+  php: ["php"],
+  csharp: ["cs"],
+  c: ["c", "h"],
+  cpp: ["cc", "cpp", "cxx", "hpp", "hh"],
+  swift: ["swift"],
+};
+
+function anyFileInLanguages(files: readonly string[], languages: readonly string[]): boolean {
+  const extensions = new Set<string>();
+  for (const lang of languages) {
+    const mapped = LANGUAGE_EXTENSIONS[lang.toLowerCase()];
+    if (mapped) for (const e of mapped) extensions.add(e);
+    else extensions.add(lang.toLowerCase().replace(/^\./, ""));
+  }
+  return files.some((f) => {
+    const dot = f.lastIndexOf(".");
+    return dot >= 0 && extensions.has(f.slice(dot + 1).toLowerCase());
+  });
+}
+
 export function filterRules(rules: Rule[], opts: FilterOptions = {}): Rule[] {
   return rules.filter((rule) => {
     if (!rule.enabled) return false;
     if (opts.phases && !opts.phases.includes(rule.phase)) return false;
+    // Fail-closed on the unknown: a taskTypes-scoped rule is only dropped when
+    // the contract DECLARED a type outside the rule's scope. An untyped
+    // contract gets every rule — declaring `--type docs` is how you narrow.
     if (opts.taskType && rule.scope.taskTypes && !rule.scope.taskTypes.includes(opts.taskType)) {
       return false;
     }
     if (opts.changedFiles && rule.scope.paths && rule.scope.paths.length > 0) {
       if (!anyFileMatches(opts.changedFiles, rule.scope.paths)) return false;
+    }
+    if (opts.changedFiles && rule.scope.languages && rule.scope.languages.length > 0) {
+      if (!anyFileInLanguages(opts.changedFiles, rule.scope.languages)) return false;
     }
     return true;
   });

@@ -79,8 +79,13 @@ export async function endContract(repoRoot: string, now = new Date()): Promise<E
     return { ok: false, error: "no active contract" };
   }
   const stamp = now.toISOString().replaceAll(":", "-").replace(/\..+$/, "");
-  const archive = path.join(harnessDir(repoRoot), "state", "history", stamp);
-  await fs.mkdir(path.dirname(archive), { recursive: true });
+  const historyDir = path.join(harnessDir(repoRoot), "state", "history");
+  await fs.mkdir(historyDir, { recursive: true });
+  // Second-resolution stamps can collide (two ends within a second) — suffix.
+  let archive = path.join(historyDir, stamp);
+  for (let n = 2; await fileExists(archive); n += 1) {
+    archive = path.join(historyDir, `${stamp}-${n}`);
+  }
   await fs.rename(current, archive);
   return { ok: true, archivedTo: archive };
 }

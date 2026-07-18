@@ -107,4 +107,17 @@ describe("endContract", () => {
     assert.ok(!result.ok);
     assert.equal(result.error, "no active contract");
   });
+
+  it("suffixes the archive dir when two contracts end within the same second", async () => {
+    const sameInstant = new Date("2026-07-18T10:20:30.456Z");
+    await saveContract(repo.root, CONTRACT);
+    const first = await endContract(repo.root, sameInstant);
+    assert.ok(first.ok);
+
+    await saveContract(repo.root, CONTRACT);
+    const second = await endContract(repo.root, sameInstant);
+    assert.ok(second.ok);
+    assert.notEqual(second.archivedTo, first.archivedTo);
+    assert.ok(second.archivedTo.endsWith("2026-07-18T10-20-30-2"));
+  });
 });
