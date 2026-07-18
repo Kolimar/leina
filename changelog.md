@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] — 2026-07-18
+
+### Added
+- **Harness subsystem (absorbed from the standalone `harness-framework`).** Lifecycle rules (intake → plan → execute → verify → deliver) + executable gates, task contracts enforced against the real git diff, and multi-platform sync — now native to leina, zero new dependencies (hand-rolled validators instead of zod, JSON front matter instead of YAML, `safe-exec` instead of execa, own glob matcher calibrated against picomatch).
+  - `leina harness contract new|show|edit|end`, `verify`, `sync [--check|--force]`, `list`, `hook <event>`.
+  - 14 builtin rules under `assets/harness/rules/` (JSON front matter); the four leina rules (`memory-first`, `graph-consult`, `graph-fresh`, `session-summary`) ship **enabled by default** — `leina init` now bootstraps `.harness/config.json`, runs a harness sync in-process and leaves the repo governed; `deinit` reverses it via the sync lockfile.
+  - **Agent-gate enforcement, contract-scoped only**: with an active `.harness/state/current/contract.json` (and consent not disabled) the gate blocks out-of-scope edits, `git commit|push` with a red verify, and Stop with failing gates (retry cap, then honest yield). Without a contract the advisory behaviour is byte-for-byte unchanged.
+  - 5 new capabilities in the registry (22 total), exposed as MCP tools: `harness_contract_new/show/end`, `harness_verify`, `harness_rules_list` (consent-gated).
+  - `leina tui` → new **harness flow**: guided contract interview (goal/scope/criteria), recipe suggestions, rule selection with non-weakening constraints, status/verify/sync panels.
+  - Platform adapters (CLAUDE.md / AGENTS.md managed blocks, skills, Cursor/Windsurf/OpenCode hook wiring via `leina harness hook`) with the same lockfile and marker format as the standalone framework — repos already synced by `harness-framework` keep working; on Claude Code/Devin enforcement rides the leina agent-gate instead of separate hooks.
+
 ## [2.0.1] — 2026-07-09
 
 ### Fixed

@@ -19,6 +19,7 @@
   - [Memory](#memory)
   - [MCP server](#mcp-server-dual-transport)
   - [Env store](#env-store-variables-for-skills-that-call-services)
+  - [Harness](#harness-task-contracts--completion-gates)
   - [Validation & contracts](#validation--contracts)
   - [Impact / audit / events](#impact--audit--events)
   - [Visualize / multi-repo workspaces](#visualize--multi-repo-workspaces)
@@ -300,12 +301,36 @@ The bundled `authenticated-api` skill is the canonical worked example (SonarQube
 POST, and the stricter argv-free variants: `curl -K -` via stdin, or a script consuming
 `process.env`). See `assets/skills/authenticated-api/SKILL.md`.
 
+### Harness (task contracts + completion gates)
+
+The absorbed [harness framework](https://github.com/Kolimar/harness): lifecycle rules
+(intake → plan → execute → verify → deliver) plus **executable gates** so an agent's task
+converges to the same "done" on any host. Markdown rules persuade; gates block — a task is
+complete only when `leina harness verify` exits 0. Rules resolve across three layers
+(builtin < project `.harness/rules/` < user `~/.leina/harness/rules/`); the four leina
+rules (memory-first, graph-consult, graph-fresh, session-summary) ship **enabled by
+default**, so `leina init` leaves the repo governed out of the box. With an active
+contract, the agent-gate turns blocking (out-of-scope edits, commits with a red verify,
+stop with failing gates); without one, it stays advisory — nothing changes for repos that
+don't declare contracts. The `leina tui` harness flow builds a contract interactively
+(goal / scope / criteria interview, recipes, rule selection) for the feature you're
+about to start.
+
+```bash
+leina harness contract new --goal "..." --type feature --scope "src/auth/**" \
+  --criterion "login e2e passes"      # declare the contract (records git base ref)
+leina harness contract show|edit|end  # inspect / widen / archive to state/history
+leina harness verify [--json]         # run the gates: exit 0 done, 1 blocking, 2 config
+leina harness sync [--check|--force]  # project rules into CLAUDE.md/AGENTS.md/skills
+leina harness list                    # resolved rules: layer, phase, severity, gate
+```
+
 ### Validation & contracts
 
 ```bash
 leina doctor [<dir>] [--json]       # health report; --json includes repoIdentity + confidence
 leina verify [<dir>] [--json]       # same checks, exit 1 on fail (CI gate)
-leina capabilities list [--json]    # the 17 transport-agnostic capabilities + schemas
+leina capabilities list [--json]    # the 22 transport-agnostic capabilities + schemas
 ```
 
 ### Impact / audit / events
