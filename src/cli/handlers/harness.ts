@@ -465,7 +465,7 @@ function printHarnessHelp(): void {
       `  verify [--json] [--phase p1,p2] [--rule <id>]\n` +
       `                          run the gates; exit 0 = complete, 1 = blocking failure,\n` +
       `                          2 = engine/config error\n` +
-      `  sync [--check] [--force] [--platforms a,b]\n` +
+      `  sync [--check] [--force] [--platforms a,b]   (alias: compile)\n` +
       `                          regenerate platform artifacts from the canonical rules\n` +
       `                          (idempotent); --check exits 1 on drift (CI mode)\n` +
       `  list [--phase <p>] [--tag <t>] [--json]\n` +

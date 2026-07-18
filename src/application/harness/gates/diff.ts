@@ -51,12 +51,14 @@ function scopeProblems(
 ): string[] {
   const problems: string[] = [];
   if (allowed !== undefined) {
-    // Harness metadata (config, rules, lockfile) and sync-generated artifacts
-    // (AGENTS.md, CLAUDE.md, …, per the lockfile) are never part of a task's
-    // declared scope; hooks and `sync --check` police those instead.
+    // Harness metadata (config, rules, lockfile), leina's own graph/cache
+    // artifacts (.leina/ — the graph-fresh gate itself asks for a refresh that
+    // writes them) and sync-generated artifacts (AGENTS.md, CLAUDE.md, …, per
+    // the lockfile) are never part of a task's declared scope; hooks and
+    // `sync --check` police those instead.
     const generated = new Set(ctx.generatedPaths ?? []);
     const outside = changed.filter(
-      (f) => !f.startsWith(".harness/") && !generated.has(f) && !matchesAny(f, allowed),
+      (f) => !f.startsWith(".harness/") && !f.startsWith(".leina/") && !generated.has(f) && !matchesAny(f, allowed),
     );
     if (outside.length > 0) {
       problems.push(`outside allowed scope [${allowed.join(", ")}]: ${outside.join(", ")}`);

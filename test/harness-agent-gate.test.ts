@@ -181,6 +181,26 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
     assert.equal(run.result.handled, false);
   });
 
+  it("pre-edit: .harness/rules/** is agent-read-only even in guided mode", async () => {
+    const run = await gate({
+      hook_event_name: "PreToolUse",
+      tool_name: "Edit",
+      tool_input: { file_path: ".harness/rules/tests-pass.md" },
+    });
+    assert.deepEqual(run.result, { handled: true, exitCode: 2 });
+    assert.match(run.stderr, /agent-read-only/);
+  });
+
+  it("pre-edit: .harness/config.json is agent-read-only even in guided mode", async () => {
+    const run = await gate({
+      hook_event_name: "PreToolUse",
+      tool_name: "Write",
+      tool_input: { file_path: ".harness/config.json" },
+    });
+    assert.deepEqual(run.result, { handled: true, exitCode: 2 });
+    assert.match(run.stderr, /agent-read-only/);
+  });
+
   it("pre-bash: git commit with blocking failures in the report → BLOCK (exit 2)", async () => {
     await repo.write(
       ".harness/state/current/verify-report.json",
@@ -199,6 +219,38 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
     });
     assert.deepEqual(run.result, { handled: false, exitCode: 0 });
     assert.equal(run.stderr, "");
+  });
+
+  it("pre-bash: commit-lookalikes are NOT treated as git commit", async () => {
+    await repo.write(
+      ".harness/state/current/verify-report.json",
+      JSON.stringify({ summary: { blockingFailures: 3 } }),
+    );
+    for (const command of [
+      "git log --grep commit",
+      'echo "git commit"',
+      "git log | grep commit",
+      "git status && npm run push-metrics",
+    ]) {
+      const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+      assert.deepEqual(run.result, { handled: false, exitCode: 0 }, command);
+    }
+  });
+
+  it("pre-bash: real commit/push forms ARE caught, including after && and global flags", async () => {
+    await repo.write(
+      ".harness/state/current/verify-report.json",
+      JSON.stringify({ summary: { blockingFailures: 1 } }),
+    );
+    for (const command of [
+      "git add -A && git commit -m done",
+      "git push origin main",
+      "git -C . commit -m x",
+      "/usr/bin/git commit -m x",
+    ]) {
+      const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+      assert.deepEqual(run.result, { handled: true, exitCode: 2 }, command);
+    }
   });
 
   it("stop: failing gates → {decision:block} on stdout + retry counter", async () => {

@@ -196,6 +196,8 @@ describe("leina harness contract + verify (e2e)", () => {
 
 describe("leina harness sync (e2e)", () => {
   it("generates artifacts, is idempotent, and --check reports drift", async () => {
+    // Evidence-based detection: sync targets AGENTS.md only when it exists.
+    await repo.write("AGENTS.md", "");
     const first = await run(["sync"]);
     assert.equal(first.code, 0, first.stderr);
     assert.ok(await exists("AGENTS.md"), "agentsmd baseline artifact");
@@ -212,11 +214,13 @@ describe("leina harness sync (e2e)", () => {
     assert.equal(clean.code, 0);
     assert.match(clean.stderr, /artifacts up to date/);
 
-    await fs.rm(path.join(repo.root, "AGENTS.md"));
+    // Losing the block (file emptied) is drift; the file itself remains the
+    // platform evidence, so the adapter is still selected.
+    await repo.write("AGENTS.md", "");
     const drift = await run(["sync", "--check"]);
     assert.equal(drift.code, 1);
     assert.match(drift.stderr, /stale/);
-    assert.equal(await exists("AGENTS.md"), false, "--check never writes");
+    assert.equal(await read("AGENTS.md"), "", "--check never writes");
   });
 
   it("--platforms restricts the adapter set and warns on unknown ids", async () => {

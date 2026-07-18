@@ -151,14 +151,27 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
   // Task state is always writable — plan.md, checklists, contract amendments.
   if (matchesAny(rel, [".harness/state/**"])) return ALLOW;
 
-  // The harness itself: rules, config, lockfile. Editing these to get past a
-  // gate is the obvious escape hatch, so strict mode seals it.
+  // Enforcement integrity: rules, config and lockfile define the gates
+  // themselves. Weakening them to get past a gate is the obvious escape
+  // hatch, so these are agent-read-only in EVERY strictness mode — the CLI
+  // (`leina harness` / the TUI), driven by a human, is the writing path.
+  const integrity = [".harness/rules/**", ".harness/config.json", ".harness/config.local.json", ".harness/harness.lock.json"];
+  if (matchesAny(rel, integrity)) {
+    return {
+      block: true,
+      message:
+        `BLOCKED: ${rel} defines the harness gates and is agent-read-only. ` +
+        "Rules and config change through `leina harness` commands driven by a human. " +
+        "Do not modify the harness to get past a gate.",
+    };
+  }
+
+  // The rest of .harness/ (generated files, future additions): strict seals it.
   if (matchesAny(rel, [".harness/**"]) && config.strictness === "strict") {
     return {
       block: true,
       message:
-        `BLOCKED: ${rel} is harness configuration and strictness is "strict". ` +
-        'Rules and config may only be changed by a human (or with strictness "guided"). ' +
+        `BLOCKED: ${rel} is harness-managed and strictness is "strict". ` +
         "Do not modify the harness to get past a gate.",
     };
   }
@@ -199,7 +212,29 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
   return ALLOW;
 }
 
-const GIT_COMMIT_RE = /\bgit\b[\s\S]*?\b(commit|push)\b/;
+/**
+ * True git commit/push detection: per pipeline segment, `git`'s first
+ * non-flag token must BE `commit`/`push`. Avoids the false positives of a
+ * loose regex (`git log --grep commit`, `echo "git commit"`).
+ */
+function gitCommitOrPush(command: string): "commit" | "push" | undefined {
+  for (const segment of command.split(/&&|\|\||;|\||\n/)) {
+    const tokens = segment.trim().split(/\s+/);
+    const gitIdx = tokens.findIndex((t) => t === "git" || t.endsWith("/git"));
+    if (gitIdx === -1) continue;
+    for (let i = gitIdx + 1; i < tokens.length; i += 1) {
+      const t = tokens[i]!;
+      if (t === "-c" || t === "-C" || t === "--git-dir" || t === "--work-tree") {
+        i += 1; // these global flags consume a value
+        continue;
+      }
+      if (t.startsWith("-")) continue; // other global flags (incl. --key=value)
+      if (t === "commit" || t === "push") return t;
+      break; // some other subcommand — this segment is not a commit/push
+    }
+  }
+  return undefined;
+}
 
 interface PersistedSummary {
   blockingFailures?: number;
@@ -212,7 +247,8 @@ async function readVerifySummary(repoRoot: string): Promise<{ summary?: Persiste
 }
 
 export async function decidePreBash(repoRoot: string, command: string | undefined): Promise<PreDecision> {
-  if (command === undefined || !GIT_COMMIT_RE.test(command)) return ALLOW;
+  const action = command !== undefined ? gitCommitOrPush(command) : undefined;
+  if (action === undefined) return ALLOW;
 
   const { summary, present } = await readVerifySummary(repoRoot);
 
@@ -220,7 +256,7 @@ export async function decidePreBash(repoRoot: string, command: string | undefine
     return {
       block: true,
       message:
-        `BLOCKED: git ${GIT_COMMIT_RE.exec(command)?.[1]} while ${summary.blockingFailures} blocking gate(s) are failing. ` +
+        `BLOCKED: git ${action} while ${summary.blockingFailures} blocking gate(s) are failing. ` +
         "Run `leina harness verify`, fix the failing gates, and only then commit.",
     };
   }
@@ -299,14 +335,15 @@ export async function decideCursorShell(
   repoRoot: string,
   command: string | undefined,
 ): Promise<CursorShellDecision> {
-  if (command === undefined || !GIT_COMMIT_RE.test(command)) return { permission: "allow" };
+  const action = command !== undefined ? gitCommitOrPush(command) : undefined;
+  if (action === undefined) return { permission: "allow" };
 
   const { summary } = await readVerifySummary(repoRoot);
   if (summary && typeof summary.blockingFailures === "number" && summary.blockingFailures > 0) {
     return {
       permission: "deny",
       agentMessage:
-        `git ${GIT_COMMIT_RE.exec(command)?.[1]} denied: ${summary.blockingFailures} blocking harness gate(s) are failing. ` +
+        `git ${action} denied: ${summary.blockingFailures} blocking harness gate(s) are failing. ` +
         "Run `leina harness verify`, fix every failing gate using its report, and commit only when it exits 0.",
       userMessage: "harness: commit blocked while verification gates are failing",
     };
