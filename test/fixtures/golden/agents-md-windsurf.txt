@@ -118,4 +118,9 @@ SDD (spec-driven changes)
 - `memory.update` — leina memory update [--title --content --type]: In-place partial update of a live observation by id (title/content/type/anchors). Does not bump revision — use topic-key upsert (memory.add) for evolution.
 - `memory.suggestTopic` — leina memory suggest-topic [--title --type]: Suggest a normalised topic_key for a new observation and rank near-matches from existing live keys (dedupe aid before memory.add with --topic).
 - `memory.session` — leina memory session [--content --title]: Summarise and close the active session (or open a one-shot one) — the end-of-session summary that memory.context surfaces next time.
+- `harness.contract.new` — leina harness contract new [--goal --type --scope --out-of-scope --criterion --max-retries]: Declare the harness task contract (goal, scope globs, acceptance criteria) before starting a non-trivial task. Records the git base ref and seeds the criteria checklist.
+- `harness.contract.show` — leina harness contract show: State of the active harness task contract (goal, scope, criteria progress), or active=false when none.
+- `harness.contract.end` — leina harness contract end: Close the active harness contract: archives .harness/state/current/ to state/history/<timestamp>/ and returns the archive path.
+- `harness.verify` — leina harness verify [--json --phase --rule]: Run the harness gates (the completion wall). Returns the full report (per-gate status/detail, blocking failures) and the exit-code contract: 0 complete, 1 blocking failure, 2 engine/config error.
+- `harness.rules.list` — leina harness list [--phase --tag --json]: Resolved harness rules across the builtin/project/user layers: id, layer, phase, severity, enabled state and gate types.
 <!-- leina:capabilities:end -->

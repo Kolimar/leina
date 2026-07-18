@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { addMcpRegistration, removeMcpRegistration } from "../src/application/install/mcp-config.ts";
+import { jsonFrontmatterDoc } from "./helpers/harness-tmprepo.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
 
@@ -184,10 +185,10 @@ test("(mcps-1) initialize → tools/list → tools/call over stdio against a rea
 
     const tools = byId.get(2)?.result?.tools ?? [];
     const names = tools.map((t) => t.name).sort();
-    for (const expectedTool of ["graph_query", "graph_affected", "graph_build", "impact_analyze", "memory_add", "memory_search", "memory_verified", "memory_update", "memory_suggest_topic", "memory_session", "context_build", "doctor_run", "graph_visualize"]) {
+    for (const expectedTool of ["graph_query", "graph_affected", "graph_build", "impact_analyze", "memory_add", "memory_search", "memory_verified", "memory_update", "memory_suggest_topic", "memory_session", "context_build", "doctor_run", "graph_visualize", "harness_contract_new", "harness_contract_show", "harness_contract_end", "harness_verify", "harness_rules_list"]) {
       assert.ok(names.includes(expectedTool), `tools/list includes ${expectedTool} (got: ${names.join(",")})`);
     }
-    assert.equal(tools.length, 19, "17 registry tools + doctor_run + graph_visualize");
+    assert.equal(tools.length, 24, "22 registry tools + doctor_run + graph_visualize");
 
     // graph_affected auto-built the graph via the freshness gate, then answered.
     const affectedText = byId.get(3)?.result?.content?.[0]?.text ?? "";
@@ -268,12 +269,14 @@ test("(mcps-4) consent=disabled blocks tools with isError; doctor_run stays exem
       { jsonrpc: "2.0", method: "notifications/initialized" },
       { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "memory_search", arguments: { root: dir, query: "x" } } },
       { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "doctor_run", arguments: { root: dir } } },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "harness_contract_show", arguments: { root: dir } } },
     ]);
     const byId = new Map(responses.map((r) => [r.id, r]));
 
     assert.equal(byId.get(2)?.result?.isError, true, "disabled repo → tool blocked");
     assert.match(byId.get(2)?.result?.content?.[0]?.text ?? "", /disabled/, "actionable consent message");
     assert.ok(!byId.get(3)?.result?.isError, "doctor_run exempt from the consent gate");
+    assert.equal(byId.get(4)?.result?.isError, true, "harness tools are NOT consent-exempt");
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
@@ -302,6 +305,90 @@ test("(mcps-5) graph_visualize returns the path of a generated HTML file", async
     assert.ok(viz.outPath && existsSync(viz.outPath), "HTML file exists at returned path");
     const html = readFileSync(viz.outPath, "utf8");
     assert.ok(html.length > 1000 && html.includes("<html"), "self-contained HTML artifact");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(mcps-6) harness tools: parseable schemas and contract new → show → verify → list → end over stdio", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home6-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo6-"));
+  const env = sandboxEnv(home);
+  try {
+    writeFileSync(join(dir, "a.txt"), "anchor\n");
+    mkdirSync(join(dir, ".harness", "rules"), { recursive: true });
+    writeFileSync(
+      join(dir, ".harness", "rules", "trivial.md"),
+      jsonFrontmatterDoc(
+        {
+          id: "project/trivial",
+          phase: "verify",
+          severity: "blocking",
+          gate: { type: "file", path: "a.txt", exists: true },
+        },
+        "# Trivial gate",
+      ),
+    );
+
+    // Round 1: list + create. Dependent calls go in later rounds — tool calls
+    // within one session are async and carry no ordering guarantee (see mcps-3).
+    const responses = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "harness_contract_new", arguments: { root: dir, goal: "expose harness caps", scope: ["src/**"], criteria: [] } } },
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+
+    // tools/list: the five harness tools expose parseable object input schemas.
+    const tools = byId.get(2)?.result?.tools ?? [];
+    const harnessTools = tools.filter((t) => t.name.startsWith("harness_"));
+    assert.deepEqual(
+      harnessTools.map((t) => t.name).sort(),
+      ["harness_contract_end", "harness_contract_new", "harness_contract_show", "harness_rules_list", "harness_verify"],
+    );
+    for (const t of harnessTools) assert.equal(t.inputSchema?.type, "object", `${t.name} schema is an object`);
+
+    const created = JSON.parse(byId.get(3)?.result?.content?.[0]?.text ?? "{}");
+    assert.equal(created.ok, true, `contract_new failed: ${byId.get(3)?.result?.content?.[0]?.text}`);
+    assert.equal(created.contract.goal, "expose harness caps");
+
+    // Round 2: read-side tools against the created contract (mutually independent).
+    const responses2 = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "harness_contract_show", arguments: { root: dir } } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "harness_verify", arguments: { root: dir, ruleId: "project/trivial" } } },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "harness_rules_list", arguments: { root: dir } } },
+    ]);
+    const byId2 = new Map(responses2.map((r) => [r.id, r]));
+
+    const shown = JSON.parse(byId2.get(2)?.result?.content?.[0]?.text ?? "{}");
+    assert.equal(shown.active, true, `show: ${byId2.get(2)?.result?.content?.[0]?.text}`);
+    assert.deepEqual(shown.contract.scope, ["src/**"]);
+
+    const verify = JSON.parse(byId2.get(3)?.result?.content?.[0]?.text ?? "{}");
+    assert.equal(verify.exitCode, 0, `verify red: ${byId2.get(3)?.result?.content?.[0]?.text}`);
+    assert.equal(verify.report.summary.blockingFailures, 0);
+    assert.deepEqual(verify.report.results.map((r: { ruleId: string }) => r.ruleId), ["project/trivial"]);
+
+    const listed = JSON.parse(byId2.get(4)?.result?.content?.[0]?.text ?? "{}");
+    const trivial = listed.rules.find((r: { id: string }) => r.id === "project/trivial");
+    assert.ok(trivial, "project rule resolved through MCP");
+    assert.equal(trivial.layer, "project");
+    assert.deepEqual(trivial.gates, ["file"]);
+
+    // Round 3: close the contract.
+    const responses3 = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "harness_contract_end", arguments: { root: dir } } },
+    ]);
+    const byId3 = new Map(responses3.map((r) => [r.id, r]));
+    const ended = JSON.parse(byId3.get(2)?.result?.content?.[0]?.text ?? "{}");
+    assert.equal(ended.ok, true, `end: ${byId3.get(2)?.result?.content?.[0]?.text}`);
+    assert.match(String(ended.archivedTo), /history/);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });

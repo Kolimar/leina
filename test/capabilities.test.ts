@@ -26,11 +26,11 @@ function runCli(...args: string[]) {
 // Unit — registry module (REQ-CR-1/2/4, REQ-OS-3, REQ-NF-5)
 // ---------------------------------------------------------------------------
 
-test("(cap-1) registry has exactly 17 capabilities with unique IDs", () => {
-  assert.equal(capabilities.length, 17, "must have exactly 17 entries");
+test("(cap-1) registry has exactly 22 capabilities with unique IDs", () => {
+  assert.equal(capabilities.length, 22, "must have exactly 22 entries");
   const ids = capabilities.map((cc) => cc.capability.id);
   const unique = new Set(ids);
-  assert.equal(unique.size, 17, "all IDs must be distinct");
+  assert.equal(unique.size, 22, "all IDs must be distinct");
 });
 
 test("(cap-2) canonical IDs are present", () => {
@@ -45,6 +45,11 @@ test("(cap-2) canonical IDs are present", () => {
     "memory.session",
     "context.build",
     "audit.run",
+    "harness.contract.new",
+    "harness.contract.show",
+    "harness.contract.end",
+    "harness.verify",
+    "harness.rules.list",
   ];
   for (const id of expected) {
     assert.ok(ids.has(id), `capability '${id}' must be in registry`);
@@ -104,7 +109,7 @@ test("(cap-7) registry import is idempotent (same reference each import)", async
 // CLI integration — `capabilities list --json` (REQ-CR-5)
 // ---------------------------------------------------------------------------
 
-test("(cap-cli-1) capabilities list --json: 17 objects, no fn, exit 0", () => {
+test("(cap-cli-1) capabilities list --json: 22 objects, no fn, exit 0", () => {
   const res = runCli("capabilities", "list", "--json");
   assert.equal(res.status, 0, `expected exit 0; got ${res.status}\nstderr: ${res.stderr}`);
 
@@ -115,7 +120,7 @@ test("(cap-cli-1) capabilities list --json: 17 objects, no fn, exit 0", () => {
 
   assert.ok(Array.isArray(parsed), "stdout must be a JSON array");
   const arr = parsed as Record<string, unknown>[];
-  assert.equal(arr.length, 17, "array must have 17 elements");
+  assert.equal(arr.length, 22, "array must have 22 elements");
 
   for (const item of arr) {
     assert.ok("id" in item, "each item must have id");

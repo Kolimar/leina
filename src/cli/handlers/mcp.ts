@@ -14,7 +14,17 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { resolve as resolvePath } from "node:path";
-import { capabilities } from "../../application/capabilities/registry.ts";
+import {
+  capabilities,
+  harnessContractNew,
+  harnessContractShow,
+  harnessRulesList,
+} from "../../application/capabilities/registry.ts";
+import { endContract } from "../../application/harness/contract-io.ts";
+import { runVerify } from "../../application/harness/verify.ts";
+import { isPhase, type Phase } from "../../domain/harness/model.ts";
+import { ShellProcessRunner } from "../../infrastructure/harness/exec.ts";
+import { HarnessGit } from "../../infrastructure/harness/git.ts";
 import { affected, queryGraph, resolveSeed, shortestPath } from "../../application/graph/query.ts";
 import { analyzeImpact } from "../../application/graph/impact.ts";
 import { graphStatus } from "../../application/graph/manifest.ts";
@@ -38,6 +48,8 @@ const optNum = (a: ToolArgs, k: string): number | undefined =>
   typeof a[k] === "number" ? (a[k]) : undefined;
 const optStr = (a: ToolArgs, k: string): string | undefined =>
   typeof a[k] === "string" ? (a[k]) : undefined;
+const optStrArr = (a: ToolArgs, k: string): string[] | undefined =>
+  Array.isArray(a[k]) ? (a[k] as string[]) : undefined;
 
 // Root always resolves relative to the server's cwd (the host launches `leina mcp` at
 // the workspace root, per the registration entry written by init/activate).
@@ -192,6 +204,46 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
   context_build: (a) => buildActiveContext(rootOf(a)),
   audit_run: async (a) =>
     withFreshStore(rootOf(a), (s) => runAudit(s, { fromIds: Array.isArray(a.fromIds) ? (a.fromIds as string[]) : undefined })),
+  // Harness — same use-cases as `leina harness <sub>`; the driven ports
+  // (ShellProcessRunner + HarnessGit) are composed here, mirroring the CLI
+  // composition root. NOT consent-exempt: harness tools write under .harness/.
+  harness_contract_new: async (a) => {
+    const taskType = optStr(a, "taskType");
+    const scope = optStrArr(a, "scope");
+    const outOfScope = optStrArr(a, "outOfScope");
+    const criteria = optStrArr(a, "criteria");
+    const maxRetries = optNum(a, "maxRetries");
+    return harnessContractNew(
+      rootOf(a),
+      {
+        goal: str(a, "goal"),
+        ...(taskType !== undefined ? { taskType } : {}),
+        ...(scope !== undefined ? { scope } : {}),
+        ...(outOfScope !== undefined ? { outOfScope } : {}),
+        ...(criteria !== undefined ? { criteria } : {}),
+        ...(maxRetries !== undefined ? { maxRetries } : {}),
+      },
+      new HarnessGit(),
+    );
+  },
+  harness_contract_show: async (a) => harnessContractShow(rootOf(a)),
+  harness_contract_end: async (a) => endContract(rootOf(a)),
+  harness_verify: async (a) => {
+    // Long-running by design: command gates spawn real processes. Each gate is
+    // bounded by its own timeout (config verify.defaultTimeoutMs, fail-closed),
+    // so the call always returns — no extra MCP-side timeout needed.
+    const phases: Phase[] | undefined = optStrArr(a, "phases")?.map((p) => {
+      if (!isPhase(p)) throw new Error(`unknown phase "${p}"`);
+      return p;
+    });
+    const ruleId = optStr(a, "ruleId");
+    return runVerify(rootOf(a), {
+      ports: { proc: new ShellProcessRunner(), git: new HarnessGit() },
+      ...(phases !== undefined ? { phases } : {}),
+      ...(ruleId !== undefined ? { ruleId } : {}),
+    });
+  },
+  harness_rules_list: async (a) => harnessRulesList(rootOf(a)),
   doctor_run: (a) => runDoctor(readPackageVersion(), rootOf(a)),
   graph_visualize: async (a) => {
     // Heavy path: lazy-import like graph_build (pulls the html-export + wiring stack).
@@ -288,6 +340,32 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     properties: { root: { type: "string" }, fromIds: { type: "array", items: { type: "string" } } },
   },
   graph_status: { type: "object", properties: { root: { type: "string" } } },
+  // Harness: the registry schemas require `root`; over MCP it defaults to the
+  // server cwd like every other tool, so only the true inputs stay required.
+  harness_contract_new: {
+    type: "object",
+    required: ["goal"],
+    properties: {
+      root: { type: "string" },
+      goal: { type: "string", description: "one sentence: what done looks like" },
+      taskType: { type: "string", description: "configured task type (feature | bugfix | refactor | docs | chore by default)" },
+      scope: { type: "array", items: { type: "string" }, description: "globs of files the task may change" },
+      outOfScope: { type: "array", items: { type: "string" } },
+      criteria: { type: "array", items: { type: "string" }, description: "acceptance criteria (seed the checklist)" },
+      maxRetries: { type: "number" },
+    },
+  },
+  harness_contract_show: { type: "object", properties: { root: { type: "string" } } },
+  harness_contract_end: { type: "object", properties: { root: { type: "string" } } },
+  harness_verify: {
+    type: "object",
+    properties: {
+      root: { type: "string" },
+      phases: { type: "array", items: { type: "string" }, description: "intake | plan | execute | verify | deliver (default: verify,deliver)" },
+      ruleId: { type: "string", description: "restrict the run to a single rule id" },
+    },
+  },
+  harness_rules_list: { type: "object", properties: { root: { type: "string" } } },
 };
 
 function listTools(): { name: string; description: string; inputSchema: object }[] {

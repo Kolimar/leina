@@ -77,6 +77,78 @@ export const auditRunOutputSchema: JsonSchema = {
 };
 
 // ---------------------------------------------------------------------------
+// Harness capability output schemas (harness.* — the task-contract engine).
+// ---------------------------------------------------------------------------
+
+/** Output schema for `harness.contract.new` — result of declaring a task contract. */
+export const harnessContractNewOutputSchema: JsonSchema = {
+  type: "object",
+  required: ["ok"],
+  properties: {
+    ok: { type: "boolean" },
+    contract: {
+      type: "object",
+      required: ["goal", "scope", "outOfScope", "criteria", "maxRetries"],
+    },
+    error: { type: "string" },
+  },
+};
+
+/** Output schema for `harness.contract.show` — the active contract, if any. */
+export const harnessContractShowOutputSchema: JsonSchema = {
+  type: "object",
+  required: ["active"],
+  properties: {
+    active: { type: "boolean" },
+    contract: { type: "object" },
+    error: { type: "string" },
+  },
+};
+
+/** Output schema for `harness.contract.end` — archive result (history path on success). */
+export const harnessContractEndOutputSchema: JsonSchema = {
+  type: "object",
+  required: ["ok"],
+  properties: {
+    ok: { type: "boolean" },
+    archivedTo: { type: "string" },
+    error: { type: "string" },
+  },
+};
+
+/** Output schema for `harness.verify` — the full verify outcome (report + exit code). */
+export const harnessVerifyOutputSchema: JsonSchema = {
+  type: "object",
+  required: ["report", "loadErrors", "warnings", "exitCode"],
+  properties: {
+    report: {
+      type: "object",
+      required: ["schemaVersion", "phases", "results", "summary"],
+      properties: {
+        results: { type: "array" },
+        summary: {
+          type: "object",
+          required: ["total", "passed", "failed", "blockingFailures"],
+        },
+      },
+    },
+    loadErrors: { type: "array" },
+    warnings: { type: "array" },
+    exitCode: { type: "number" },
+  },
+};
+
+/** Output schema for `harness.rules.list` — resolved rules projection. */
+export const harnessRulesListOutputSchema: JsonSchema = {
+  type: "object",
+  required: ["rules"],
+  properties: {
+    rules: { type: "array" },
+    errors: { type: "array" },
+  },
+};
+
+// ---------------------------------------------------------------------------
 // validateAgainstSchema — minimal runtime validator (no external dependencies).
 //
 // Semantics:

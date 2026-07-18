@@ -569,8 +569,19 @@ test("(I1-1) init LIGHT (blanket activo): solo consent + gitignore; AGENTS.md y 
     // Gitignore written (I1-1)
     assert.ok(existsSync(join(dir, ".gitignore")), ".gitignore written");
 
-    // AGENTS.md NOT written (I1-1: LIGHT no escribe AGENTS.md)
-    assert.ok(!existsSync(join(dir, "AGENTS.md")), "AGENTS.md NOT written in LIGHT mode");
+    // LIGHT no escribe el bloque de protocolo leina en AGENTS.md. Desde la
+    // absorción del harness, init (LIGHT y FULL) también ejecuta el bootstrap
+    // harness, cuyo adapter baseline (agentsmd) SÍ crea AGENTS.md — pero solo
+    // con el bloque gestionado del harness, nunca con el protocolo leina.
+    const agentsLight = existsSync(join(dir, "AGENTS.md"))
+      ? readFileSync(join(dir, "AGENTS.md"), "utf8")
+      : "";
+    assert.ok(
+      !agentsLight.includes("leina:protocol:start"),
+      "leina protocol block NOT written in LIGHT mode",
+    );
+    assert.ok(agentsLight.includes("harness:begin"), "harness bootstrap block present (LIGHT too)");
+    assert.ok(existsSync(join(dir, ".harness", "config.json")), ".harness/config.json seeded");
 
     // .devin/ NOT created (I1-1: LIGHT no escribe hooks ni config local)
     assert.ok(!existsSync(join(dir, ".devin")), ".devin/ NOT created in LIGHT mode");
@@ -706,7 +717,7 @@ test("(i-R5-profile-windsurf-caps) --profile windsurf writes ## Capabilities sec
     assert.ok(content.includes("## Capabilities (leina)"), "capabilities heading present");
     // One line per registry capability
     const capLines = content.split("\n").filter((l) => l.startsWith("- `"));
-    assert.equal(capLines.length, 17, "17 capability lines present");
+    assert.equal(capLines.length, 22, "22 capability lines present (17 + 5 harness)");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -752,10 +763,13 @@ test("(i-err-1) a failing step does not abort init: remaining steps run, ✖ rep
     );
 
     assert.equal(r.status, 1, "exit code 1 on partial failure");
-    // The failing steps are reported, each with ✖
+    // The failing steps are reported, each with ✖. The `.devin` FILE also trips
+    // the harness bootstrap sync (the windsurf adapter detects `.devin` and
+    // fails to write .devin/rules/harness-core.md) — a third, equally real ✖.
     assert.match(r.stdout, /✖ \.devin\/config\.json:/);
     assert.match(r.stdout, /✖ \.devin\/hooks\.v1\.json:/);
-    assert.match(r.stdout, /finished with 2 error\(s\)/);
+    assert.match(r.stdout, /✖ harness sync:/);
+    assert.match(r.stdout, /finished with 3 error\(s\)/);
     assert.match(r.stdout, /re-run 'leina init'/);
     // Best-effort: the independent steps were still applied
     assert.ok(existsSync(join(dir, "AGENTS.md")), "AGENTS.md still written");

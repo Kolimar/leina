@@ -26,7 +26,14 @@ import {
   memorySearchOutputSchema,
   contextBuildOutputSchema,
   auditRunOutputSchema,
+  harnessContractNewOutputSchema,
+  harnessContractShowOutputSchema,
+  harnessContractEndOutputSchema,
+  harnessVerifyOutputSchema,
+  harnessRulesListOutputSchema,
 } from "../../domain/contracts/schemas.ts";
+import { gatesOf, type TaskContract } from "../../domain/harness/model.ts";
+import { type GitPort } from "../../domain/harness/ports.ts";
 import { affected, queryGraph, resolveSeed, shortestPath } from "../graph/query.ts";
 import { analyzeImpact } from "../graph/impact.ts";
 import { buildGraph } from "../graph/build.ts";
@@ -35,6 +42,125 @@ import { graphStatus } from "../graph/manifest.ts";
 import { searchMemory } from "../memory/query.ts";
 import { buildActiveContext } from "../context/active-context.ts";
 import { runAudit } from "../audit/run.ts";
+import { endContract, loadContract, saveContract, writeChecklist } from "../harness/contract-io.ts";
+import { loadConfig } from "../harness/config-io.ts";
+import { loadResolvedRules } from "../harness/resolver.ts";
+import { runVerify } from "../harness/verify.ts";
+
+// ---------------------------------------------------------------------------
+// Harness use-cases — thin JSON-friendly wrappers over application/harness/*.
+// They exist here (not in cli/handlers/harness.ts) so BOTH transports — the CLI
+// group and the MCP executors — share one behaviour, and so the registry keeps
+// REQ-CR-3 (zero cli/ imports). Effects go through ports: the git port is
+// injected by the transport (D1), never composed here.
+// ---------------------------------------------------------------------------
+
+export interface HarnessContractNewInput {
+  goal: string;
+  taskType?: string;
+  scope?: string[];
+  outOfScope?: string[];
+  criteria?: string[];
+  maxRetries?: number;
+}
+
+export type HarnessContractNewResult =
+  | { ok: true; contract: TaskContract }
+  | { ok: false; error: string };
+
+/** Declare the task contract (mirrors `leina harness contract new`). */
+export async function harnessContractNew(
+  repoRoot: string,
+  input: HarnessContractNewInput,
+  git?: GitPort,
+): Promise<HarnessContractNewResult> {
+  const existing = await loadContract(repoRoot);
+  if (existing.error) return { ok: false, error: existing.error };
+  if (existing.contract) {
+    return {
+      ok: false,
+      error: "a contract is already active — finish it with `leina harness contract end` first",
+    };
+  }
+  if (input.goal.trim().length === 0) {
+    return { ok: false, error: "goal is required (one sentence: what done looks like)" };
+  }
+
+  const { config } = await loadConfig(repoRoot);
+  if (input.taskType !== undefined && !config.taskTypes.includes(input.taskType)) {
+    return {
+      ok: false,
+      error: `unknown task type "${input.taskType}" — configured types: ${config.taskTypes.join(", ")}`,
+    };
+  }
+
+  const maxRetries = input.maxRetries ?? 3;
+  if (!Number.isInteger(maxRetries) || maxRetries < 1) {
+    return { ok: false, error: "maxRetries must be a positive integer" };
+  }
+
+  const baseRef = git && (await git.isRepo(repoRoot)) ? await git.currentHead(repoRoot) : undefined;
+  const created: TaskContract = {
+    goal: input.goal,
+    ...(input.taskType !== undefined ? { taskType: input.taskType } : {}),
+    scope: input.scope ?? [],
+    outOfScope: input.outOfScope ?? [],
+    criteria: (input.criteria ?? []).map((text) => ({ text, done: false })),
+    maxRetries,
+    ...(baseRef !== undefined ? { baseRef } : {}),
+    createdAt: new Date().toISOString(),
+  };
+  await saveContract(repoRoot, created);
+  await writeChecklist(repoRoot, created);
+  return { ok: true, contract: created };
+}
+
+export interface HarnessContractShowResult {
+  active: boolean;
+  contract?: TaskContract;
+  error?: string;
+}
+
+/** State of the active contract, if any (mirrors `leina harness contract show`). */
+export async function harnessContractShow(repoRoot: string): Promise<HarnessContractShowResult> {
+  const { contract, error } = await loadContract(repoRoot);
+  return {
+    active: contract !== undefined,
+    ...(contract !== undefined ? { contract } : {}),
+    ...(error !== undefined ? { error } : {}),
+  };
+}
+
+export interface HarnessRuleProjection {
+  id: string;
+  layer: string;
+  phase: string;
+  severity: string;
+  enabled: boolean;
+  gates: string[];
+  tags: string[];
+  summary: string;
+}
+
+/** Resolved rules projection (mirrors `leina harness list --json`). */
+export async function harnessRulesList(
+  repoRoot: string,
+): Promise<{ rules: HarnessRuleProjection[]; errors: string[] }> {
+  const resolution = await loadResolvedRules(repoRoot);
+  return {
+    rules: resolution.rules.map((r) => ({
+      id: r.id,
+      layer: r.layer,
+      phase: r.phase,
+      severity: r.severity,
+      enabled: r.enabled,
+      gates: gatesOf(r).map((g) => g.type),
+      tags: r.tags,
+      summary: r.summary ?? "",
+    })),
+    errors: resolution.errors,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Input schemas — minimal descriptors; v1 does not validate inputs at runtime.
@@ -178,6 +304,30 @@ const memorySessionInputSchema = {
 };
 
 const listOutputSchema = { type: "object" as const };
+
+const harnessContractNewInputSchema = {
+  type: "object" as const,
+  required: ["root", "goal"],
+  properties: {
+    root: { type: "string" as const },
+    goal: { type: "string" as const },
+    taskType: { type: "string" as const },
+    scope: { type: "array" as const },
+    outOfScope: { type: "array" as const },
+    criteria: { type: "array" as const },
+    maxRetries: { type: "number" as const },
+  },
+};
+
+const harnessVerifyInputSchema = {
+  type: "object" as const,
+  required: ["root"],
+  properties: {
+    root: { type: "string" as const },
+    phases: { type: "array" as const },
+    ruleId: { type: "string" as const },
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Registry — CommandContracts for every transport-exposed capability.
@@ -433,5 +583,75 @@ export const capabilities: readonly CommandContract[] = [
     },
     cli: { command: "memory session", flags: ["--content", "--title"] },
     mcp: { tool: "memory_session" },
+  },
+  {
+    capability: {
+      id: "harness.contract.new",
+      description: "Declare the harness task contract (goal, scope globs, acceptance criteria) before starting a non-trivial task. Records the git base ref and seeds the criteria checklist.",
+      inputSchema: harnessContractNewInputSchema,
+      outputSchema: harnessContractNewOutputSchema,
+      transports: ["cli", "mcp"],
+      schemaVersion: 1,
+      // D1: the git port (baseRef capture) is injected by the transport.
+      fn: harnessContractNew as (...args: unknown[]) => unknown,
+    },
+    cli: {
+      command: "harness contract new",
+      flags: ["--goal", "--type", "--scope", "--out-of-scope", "--criterion", "--max-retries"],
+    },
+    mcp: { tool: "harness_contract_new" },
+  },
+  {
+    capability: {
+      id: "harness.contract.show",
+      description: "State of the active harness task contract (goal, scope, criteria progress), or active=false when none.",
+      inputSchema: rootOnlyInputSchema,
+      outputSchema: harnessContractShowOutputSchema,
+      transports: ["cli", "mcp"],
+      schemaVersion: 1,
+      fn: harnessContractShow as (...args: unknown[]) => unknown,
+    },
+    cli: { command: "harness contract show" },
+    mcp: { tool: "harness_contract_show" },
+  },
+  {
+    capability: {
+      id: "harness.contract.end",
+      description: "Close the active harness contract: archives .harness/state/current/ to state/history/<timestamp>/ and returns the archive path.",
+      inputSchema: rootOnlyInputSchema,
+      outputSchema: harnessContractEndOutputSchema,
+      transports: ["cli", "mcp"],
+      schemaVersion: 1,
+      fn: endContract as (...args: unknown[]) => unknown,
+    },
+    cli: { command: "harness contract end" },
+    mcp: { tool: "harness_contract_end" },
+  },
+  {
+    capability: {
+      id: "harness.verify",
+      description: "Run the harness gates (the completion wall). Returns the full report (per-gate status/detail, blocking failures) and the exit-code contract: 0 complete, 1 blocking failure, 2 engine/config error.",
+      inputSchema: harnessVerifyInputSchema,
+      outputSchema: harnessVerifyOutputSchema,
+      transports: ["cli", "mcp"],
+      schemaVersion: 1,
+      // D1: runVerify takes (repoRoot, { ports, ... }) — the transport wires proc+git.
+      fn: runVerify as (...args: unknown[]) => unknown,
+    },
+    cli: { command: "harness verify", flags: ["--json", "--phase", "--rule"] },
+    mcp: { tool: "harness_verify" },
+  },
+  {
+    capability: {
+      id: "harness.rules.list",
+      description: "Resolved harness rules across the builtin/project/user layers: id, layer, phase, severity, enabled state and gate types.",
+      inputSchema: rootOnlyInputSchema,
+      outputSchema: harnessRulesListOutputSchema,
+      transports: ["cli", "mcp"],
+      schemaVersion: 1,
+      fn: harnessRulesList as (...args: unknown[]) => unknown,
+    },
+    cli: { command: "harness list", flags: ["--phase", "--tag", "--json"] },
+    mcp: { tool: "harness_rules_list" },
   },
 ] as const;
