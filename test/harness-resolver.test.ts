@@ -1,0 +1,252 @@
+// harness-resolver.test.ts — layered rule loading (builtin < project < user)
+// and the enforceability invariant: user-local layers cannot weaken a
+// project/builtin blocking rule. Fixtures are built in fresh tmpdirs; the
+// user layer is isolated via $LEINA_HOME.
+//
+// Run: node --no-warnings --experimental-strip-types --test test/harness-resolver.test.ts
+
+import { afterEach, beforeEach, describe, it } from "node:test";
+import assert from "node:assert/strict";
+import path from "node:path";
+import { loadResolvedRules, filterRules, rulesMissingGates } from "../src/application/harness/resolver.ts";
+import { loadConfig } from "../src/application/harness/config-io.ts";
+import { builtinRulesDir } from "../src/application/harness/loader.ts";
+import type { Rule } from "../src/domain/harness/model.ts";
+import {
+  isolateLeinaHome,
+  jsonFrontmatterDoc,
+  makeTmpRepo,
+  type TmpRepo,
+} from "./helpers/harness-tmprepo.ts";
+
+let repo: TmpRepo;
+let restoreHome: () => void;
+
+beforeEach(async () => {
+  repo = await makeTmpRepo(false);
+  // Point the user layer inside the tmp repo so the developer's real
+  // ~/.leina/harness rules cannot leak in.
+  restoreHome = isolateLeinaHome(path.join(repo.root, "leina-home"));
+});
+
+afterEach(async () => {
+  restoreHome();
+  await repo.cleanup();
+});
+
+const PROJECT_RULE = jsonFrontmatterDoc(
+  {
+    id: "project/no-console-log",
+    phase: "verify",
+    severity: "blocking",
+    gate: { type: "diff-content", forbidAdded: "console\\.log" },
+  },
+  "# No console.log",
+);
+
+describe("loadResolvedRules", () => {
+  it("loads builtin, project and user rules", async () => {
+    await repo.write(".harness/rules/no-console-log.md", PROJECT_RULE);
+    await repo.write(
+      "leina-home/harness/rules/prefer-tabs.md",
+      jsonFrontmatterDoc({ id: "user/prefer-tabs", phase: "execute", severity: "advisory" }, "# Tabs"),
+    );
+
+    const res = await loadResolvedRules(repo.root);
+    const ids = res.rules.map((r) => r.id);
+    assert.ok(ids.includes("harness/tests-pass"), "builtin layer (assets/harness/rules)");
+    assert.ok(ids.includes("project/no-console-log"), "project layer");
+    assert.ok(ids.includes("user/prefer-tabs"), "user layer addition");
+    assert.deepEqual(res.errors, []);
+  });
+
+  it("applies project config overrides to builtin rules", async () => {
+    await repo.write(
+      ".harness/config.json",
+      JSON.stringify({ rules: { "harness/lint-clean": { severity: "blocking" } } }),
+    );
+    const res = await loadResolvedRules(repo.root);
+    const lint = res.rules.find((r) => r.id === "harness/lint-clean");
+    assert.equal(lint?.severity, "blocking");
+  });
+
+  it("ignores a user rule file that weakens a project blocking rule", async () => {
+    await repo.write(".harness/rules/no-console-log.md", PROJECT_RULE);
+    await repo.write(
+      "leina-home/harness/rules/weaken-attempt.md",
+      jsonFrontmatterDoc(
+        { id: "project/no-console-log", phase: "verify", severity: "advisory" },
+        "# Downgrade attempt",
+      ),
+    );
+
+    const res = await loadResolvedRules(repo.root);
+    const rule = res.rules.find((r) => r.id === "project/no-console-log");
+    assert.equal(rule?.severity, "blocking");
+    assert.equal(rule?.layer, "project");
+    assert.ok(res.warnings.some((w) => w.includes("weaken")));
+  });
+
+  it("a user rule file may replace a non-blocking project rule", async () => {
+    await repo.write(
+      ".harness/rules/advisory.md",
+      jsonFrontmatterDoc({ id: "project/style", phase: "execute", severity: "advisory" }, "# v1"),
+    );
+    await repo.write(
+      "leina-home/harness/rules/advisory.md",
+      jsonFrontmatterDoc({ id: "project/style", phase: "execute", severity: "advisory", version: 2 }, "# v2"),
+    );
+    const res = await loadResolvedRules(repo.root);
+    const rule = res.rules.find((r) => r.id === "project/style");
+    assert.equal(rule?.layer, "user");
+    assert.equal(rule?.version, 2);
+  });
+
+  it("reports duplicate rule ids within one layer", async () => {
+    await repo.write(".harness/rules/a.md", PROJECT_RULE);
+    await repo.write(".harness/rules/b.md", PROJECT_RULE);
+    const res = await loadResolvedRules(repo.root);
+    assert.ok(res.errors.some((e) => e.includes('duplicate rule id "project/no-console-log"')));
+  });
+
+  it("reports invalid rule files as errors", async () => {
+    await repo.write(
+      ".harness/rules/bad.md",
+      jsonFrontmatterDoc({ id: "nonamespace" }, "# Broken"),
+    );
+    const res = await loadResolvedRules(repo.root);
+    assert.ok(res.errors.some((e) => e.includes("bad.md")));
+  });
+});
+
+describe("enforceability invariant across layers", () => {
+  it("config.local.json cannot disable a builtin blocking rule", async () => {
+    await repo.write(
+      ".harness/config.local.json",
+      JSON.stringify({ rules: { "harness/tests-pass": { enabled: false } } }),
+    );
+    const res = await loadResolvedRules(repo.root);
+    const rule = res.rules.find((r) => r.id === "harness/tests-pass");
+    assert.equal(rule?.enabled, true);
+    assert.ok(res.warnings.some((w) => w.includes("harness/tests-pass")));
+  });
+
+  it("project config.json CAN disable a builtin blocking rule", async () => {
+    await repo.write(
+      ".harness/config.json",
+      JSON.stringify({ rules: { "harness/tests-pass": { enabled: false } } }),
+    );
+    const res = await loadResolvedRules(repo.root);
+    const rule = res.rules.find((r) => r.id === "harness/tests-pass");
+    assert.equal(rule?.enabled, false);
+    assert.deepEqual(res.warnings, []);
+  });
+
+  it("config.local.json may still tune the gate of a blocking rule", async () => {
+    await repo.write(
+      ".harness/config.local.json",
+      JSON.stringify({
+        rules: { "harness/tests-pass": { gate: { type: "command", run: "npm run test:fast" } } },
+      }),
+    );
+    const res = await loadResolvedRules(repo.root);
+    const rule = res.rules.find((r) => r.id === "harness/tests-pass");
+    assert.equal(rule?.enabled, true);
+    assert.equal((rule?.gate as { run?: string }).run, "npm run test:fast");
+  });
+
+  it("user-layer config.json is treated as local (cannot weaken)", async () => {
+    await repo.write(
+      "leina-home/harness/config.json",
+      JSON.stringify({ rules: { "harness/no-secrets": { enabled: false } } }),
+    );
+    const res = await loadResolvedRules(repo.root);
+    const rule = res.rules.find((r) => r.id === "harness/no-secrets");
+    assert.equal(rule?.enabled, true);
+    assert.ok(res.warnings.some((w) => w.includes("harness/no-secrets")));
+  });
+});
+
+describe("loadConfig layering", () => {
+  it("merges config layers with local field-level rule merge", async () => {
+    await repo.write(
+      ".harness/config.json",
+      JSON.stringify({
+        defaultBranch: "trunk",
+        rules: { "project/x": { severity: "blocking" } },
+      }),
+    );
+    await repo.write(
+      ".harness/config.local.json",
+      JSON.stringify({ rules: { "project/x": { gate: { type: "command", run: "true" } } } }),
+    );
+    const loaded = await loadConfig(repo.root);
+    assert.equal(loaded.config.defaultBranch, "trunk");
+    // Field-level merge: the local gate does not wipe the project severity.
+    assert.equal(loaded.config.rules["project/x"]?.severity, "blocking");
+    assert.ok(loaded.config.rules["project/x"]?.gate);
+    // Only the gate came from a local layer.
+    assert.deepEqual(Object.keys(loaded.localRuleOverrides["project/x"] ?? {}), ["gate"]);
+  });
+
+  it("reports malformed JSON without crashing", async () => {
+    await repo.write(".harness/config.json", "{ nope");
+    const loaded = await loadConfig(repo.root);
+    assert.ok(loaded.errors.some((e) => e.includes("invalid JSON")));
+    assert.equal(loaded.config.defaultBranch, "main");
+  });
+});
+
+describe("filterRules", () => {
+  const mk = (over: Partial<Rule>): Rule => ({
+    id: "project/x",
+    version: 1,
+    phase: "verify",
+    severity: "blocking",
+    scope: {},
+    enabled: true,
+    tags: [],
+    body: "",
+    sourcePath: "/x.md",
+    layer: "project",
+    ...over,
+  });
+
+  it("filters by phase", () => {
+    const rules = [mk({ id: "project/a", phase: "plan" }), mk({ id: "project/b", phase: "verify" })];
+    assert.deepEqual(filterRules(rules, { phases: ["verify"] }).map((r) => r.id), ["project/b"]);
+  });
+
+  it("drops disabled rules", () => {
+    assert.deepEqual(filterRules([mk({ enabled: false })]), []);
+  });
+
+  it("filters by scope paths against changed files", () => {
+    const rules = [mk({ scope: { paths: ["src/**"] } })];
+    assert.deepEqual(filterRules(rules, { changedFiles: ["docs/readme.md"] }), []);
+    assert.equal(filterRules(rules, { changedFiles: ["src/a.ts"] }).length, 1);
+  });
+
+  it("filters by task type only when the rule declares taskTypes", () => {
+    const scoped = mk({ scope: { taskTypes: ["feature"] } });
+    const open = mk({ id: "project/open" });
+    assert.deepEqual(filterRules([scoped, open], { taskType: "docs" }).map((r) => r.id), ["project/open"]);
+    assert.equal(filterRules([scoped, open], { taskType: "feature" }).length, 2);
+  });
+
+  it("flags blocking verify rules without gates", () => {
+    const missing = mk({ id: "project/gateless" });
+    const ok = mk({ id: "project/gated", gate: { type: "command", run: "true", expectExitCode: 0 } });
+    assert.deepEqual(rulesMissingGates([missing, ok]).map((r) => r.id), ["project/gateless"]);
+  });
+});
+
+describe("builtin rules dir", () => {
+  it("resolves to the bundled assets and parses every shipped rule", async () => {
+    assert.ok(builtinRulesDir().endsWith(`assets${path.sep}harness${path.sep}rules${path.sep}`));
+    const res = await loadResolvedRules(repo.root);
+    // Every bundled rule must parse with the hand-rolled validators.
+    assert.deepEqual(res.errors, []);
+    assert.ok(res.rules.filter((r) => r.layer === "builtin").length >= 10);
+  });
+});
