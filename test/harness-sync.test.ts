@@ -228,6 +228,28 @@ describe("applyFileSets — orphan cleanup", () => {
     assert.ok(!content.includes("harness:begin"));
   });
 
+  it("an orphaned managed block hand-edited INSIDE conflicts instead of vanishing", async () => {
+    await repo.write("AGENTS.md", "# User heading\n");
+    await applyFileSets(repo.root, sets(block("AGENTS.md", "ephemeral rules")), { sourceHash: HASH });
+    const tampered = (await read("AGENTS.md")).replace("ephemeral rules", "ephemeral rules + MY NOTES");
+    await repo.write("AGENTS.md", tampered);
+
+    const outcome = await applyFileSets(repo.root, [{ adapter: "test", fileSet: { files: [], warnings: [] } }], {
+      sourceHash: HASH,
+    });
+    const item = outcome.items.find((i) => i.path === "AGENTS.md");
+    assert.equal(item?.action, "conflict");
+    assert.ok((await read("AGENTS.md")).includes("MY NOTES"), "hand-edited block left in place");
+
+    const forced = await applyFileSets(repo.root, [{ adapter: "test", fileSet: { files: [], warnings: [] } }], {
+      sourceHash: HASH,
+      force: true,
+    });
+    const forcedItem = forced.items.find((i) => i.path === "AGENTS.md");
+    assert.equal(forcedItem?.detail, "removed orphaned block");
+    assert.ok(!(await read("AGENTS.md")).includes("MY NOTES"));
+  });
+
   it("a conflicted-but-still-desired artifact is NOT treated as an orphan", async () => {
     await applyFileSets(repo.root, sets(owned("gen/a.md", "v1\n")), { sourceHash: HASH });
     await repo.write("gen/a.md", "HAND EDIT\n");

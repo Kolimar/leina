@@ -13,7 +13,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { harnessDir } from "../config-io.ts";
 import { readJsonIfExists, readTextIfExists } from "../io.ts";
-import { removeManagedBlock, sha256, upsertManagedBlock } from "./managed-block.ts";
+import { blockHandEdited, removeManagedBlock, sha256, upsertManagedBlock } from "./managed-block.ts";
 import { mergeCursorHooks, mergeOpencodeInstructions, type JsonMergeResult } from "./json-merge.ts";
 import { type FileSet, type GeneratedFile, type WriteKind } from "./types.ts";
 
@@ -188,7 +188,8 @@ function applyOwned(
 /**
  * Orphan cleanup: artifacts recorded in the previous lockfile that no adapter
  * generates anymore (rule or platform removed). Owned files are deleted when
- * untouched; managed blocks are stripped from their host file. json-merge
+ * untouched; managed blocks are stripped from their host file when their
+ * interior is untouched (hand-edits conflict, like owned files). json-merge
  * cleanup is inherent: the next merge strips stale entries. (A json-merge
  * artifact whose platform disappeared entirely — e.g. the origin's
  * .claude/settings.json hooks — is left for the owner to clean; stale
@@ -200,8 +201,11 @@ async function cleanupOrphans(
   desiredKeys: Set<string>,
   keyOf: (p: string, adapter: string, blockId: string | undefined) => string,
   options: ApplyOptions,
-): Promise<ApplyItem[]> {
+): Promise<{ items: ApplyItem[]; retained: LockfileArtifact[] }> {
   const items: ApplyItem[] = [];
+  // Conflicted orphans stay in the lockfile — dropping them would strand the
+  // artifact forever (a later --force run would no longer know about it).
+  const retained: LockfileArtifact[] = [];
   for (const stale of previous.artifacts) {
     if (desiredKeys.has(keyOf(stale.path, stale.adapter, stale.blockId))) continue;
     const absolute = path.join(repoRoot, stale.path);
@@ -219,6 +223,7 @@ async function cleanupOrphans(
           detail: "removed (orphaned artifact)",
         });
       } else {
+        retained.push(stale);
         items.push({
           path: stale.path,
           adapter: stale.adapter,
@@ -228,7 +233,21 @@ async function cleanupOrphans(
         });
       }
     } else if (stale.kind === "managed-block") {
-      const { content, removed } = removeManagedBlock(existing, stale.blockId ?? "core");
+      const blockId = stale.blockId ?? "core";
+      // Same courtesy as owned artifacts: a block whose interior was
+      // hand-edited is not silently discarded.
+      if (blockHandEdited(existing, blockId) && !options.force) {
+        retained.push(stale);
+        items.push({
+          path: stale.path,
+          adapter: stale.adapter,
+          kind: "managed-block",
+          action: "conflict",
+          detail: "orphaned block was hand-edited inside — remove manually or rerun with --force",
+        });
+        continue;
+      }
+      const { content, removed } = removeManagedBlock(existing, blockId);
       if (removed) {
         if (!options.check) await fs.writeFile(absolute, content, "utf8");
         items.push({
@@ -241,7 +260,7 @@ async function cleanupOrphans(
       }
     }
   }
-  return items;
+  return { items, retained };
 }
 
 export async function applyFileSets(
@@ -297,7 +316,9 @@ export async function applyFileSets(
   }
 
   if (previous) {
-    items.push(...(await cleanupOrphans(repoRoot, previous, desiredKeys, keyOf, options)));
+    const cleanup = await cleanupOrphans(repoRoot, previous, desiredKeys, keyOf, options);
+    items.push(...cleanup.items);
+    newArtifacts.push(...cleanup.retained);
   }
 
   const driftCount = items.filter((i) => i.action !== "unchanged").length;

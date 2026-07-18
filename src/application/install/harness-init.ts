@@ -13,16 +13,18 @@
 // deinitHarness (sync — `leina deinit` and its TUI caller are synchronous):
 //   Removes ONLY sync-generated artifacts, driven by the committed lockfile —
 //   the same orphan semantics as the writer's cleanup (owned files deleted
-//   when untouched, managed blocks stripped, json-merge left inert). The
-//   user's `.harness/rules/` and `.harness/state/` are never touched; the
-//   minimal `{}` config seeded by init is removed only while still pristine.
+//   when untouched, managed blocks stripped when their interior is untouched,
+//   json-merge harness entries stripped so nothing dangles at deleted files).
+//   The user's `.harness/rules/` and `.harness/state/` are never touched; the
+//   config seeded by init is removed only while still pristine.
 
 import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { runSync } from "../harness/sync.ts";
 import { HARNESS_DIR } from "../harness/config-io.ts";
 import { lockfilePath, parseLockfile, type Lockfile, type LockfileArtifact } from "../harness/adapters/writer.ts";
-import { removeManagedBlock, sha256 } from "../harness/adapters/managed-block.ts";
+import { blockHandEdited, removeManagedBlock, sha256 } from "../harness/adapters/managed-block.ts";
+import { stripCursorHooks, stripOpencodeInstructions } from "../harness/adapters/json-merge.ts";
 
 /** Content init seeds into .harness/config.json — builtin rules govern by default. */
 export const HARNESS_MINIMAL_CONFIG = "{}\n";
@@ -179,7 +181,12 @@ function removeArtifact(
       return;
     }
     if (artifact.kind === "managed-block") {
-      const { content, removed: stripped } = removeManagedBlock(existing, artifact.blockId ?? "core");
+      const blockId = artifact.blockId ?? "core";
+      if (blockHandEdited(existing, blockId)) {
+        failures.push(`${artifact.path}: harness block was hand-edited inside — left in place, remove manually`);
+        return;
+      }
+      const { content, removed: stripped } = removeManagedBlock(existing, blockId);
       if (!stripped) return;
       if (content.trim() === "") {
         rmSync(absolute);
@@ -188,12 +195,67 @@ function removeArtifact(
         writeFileSync(absolute, content);
         removed.push(`${artifact.path} (harness block removed)`);
       }
+      return;
     }
-    // json-merge artifacts: the next merge strips stale entries and stale
-    // `leina harness hook` wiring is inert once nothing answers it (same
-    // policy as the sync writer's orphan cleanup).
+    if (artifact.kind === "json-merge") {
+      // After deinit there is no "next merge" to strip stale entries, so the
+      // harness-managed ones (hook wiring, instruction paths that now point at
+      // deleted files) are stripped here; user entries stay verbatim.
+      stripJsonMergeArtifact(project, artifact, existing, removed, failures);
+    }
   } catch (err) {
     failures.push(`${artifact.path}: ${errMsg(err)}`);
+  }
+}
+
+/** The empty hooks skeleton the cursor strategy leaves when it created the file. */
+function isEmptyCursorHooksSkeleton(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    const keys = Object.keys(parsed).filter((k) => k !== "version");
+    return (
+      keys.length === 1 &&
+      keys[0] === "hooks" &&
+      typeof parsed.hooks === "object" &&
+      parsed.hooks !== null &&
+      Object.keys(parsed.hooks).length === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function stripJsonMergeArtifact(
+  project: string,
+  artifact: LockfileArtifact,
+  existing: string,
+  removed: string[],
+  failures: string[],
+): void {
+  const strip =
+    artifact.adapter === "cursor"
+      ? stripCursorHooks
+      : artifact.adapter === "opencode"
+        ? stripOpencodeInstructions
+        : undefined;
+  if (!strip) return; // unknown strategy — leave the file alone
+  const result = strip(existing);
+  if (result.error !== undefined) {
+    failures.push(`${artifact.path}: ${result.error} — harness entries left in place`);
+    return;
+  }
+  if (!result.changed) return;
+  const absolute = join(project, artifact.path);
+  // opencode.json stays even when reduced to its $schema — the file itself is
+  // the platform marker other tools detect; only the cursor hooks skeleton
+  // (harness-born wiring) is removed outright.
+  if (artifact.adapter === "cursor" && isEmptyCursorHooksSkeleton(result.content)) {
+    rmSync(absolute);
+    pruneEmptyParents(project, absolute);
+    removed.push(`${artifact.path} (file removed — held only harness entries)`);
+  } else {
+    writeFileSync(absolute, result.content);
+    removed.push(`${artifact.path} (harness entries removed)`);
   }
 }
 

@@ -82,6 +82,33 @@ export function mergeCursorHooks(
 }
 
 /**
+ * Deinit inverse of mergeCursorHooks: drop every harness-managed entry, keep
+ * the user's. (A merge with no desired additions is exactly that strip.)
+ */
+export function stripCursorHooks(existingJson: string): JsonMergeResult {
+  return mergeCursorHooks(existingJson, {});
+}
+
+/**
+ * Deinit inverse of mergeOpencodeInstructions: drop the harness-generated
+ * instruction entries (they point at files deinit just deleted).
+ */
+export function stripOpencodeInstructions(existingJson: string): JsonMergeResult {
+  const parsed = parseObjectRoot(existingJson, "opencode.json");
+  if ("failure" in parsed) return parsed.failure;
+  if (!("root" in parsed)) return { content: existingJson, changed: false };
+  const root = parsed.root;
+
+  const existing = Array.isArray(root.instructions) ? (root.instructions as unknown[]) : [];
+  const kept = existing.filter((e) => !(typeof e === "string" && e.includes(".harness/generated/")));
+  if (kept.length > 0) root.instructions = kept;
+  else delete root.instructions;
+
+  const content = `${JSON.stringify(root, null, 2)}\n`;
+  return { content, changed: content !== existingJson };
+}
+
+/**
  * opencode.json merge: guarantee the harness-generated rules file is listed in
  * the `instructions` array (set semantics), removing stale harness entries.
  */

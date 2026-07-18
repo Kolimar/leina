@@ -90,6 +90,17 @@ export function upsertManagedBlock(
   return { content: updated, action: updated === existing ? "unchanged" : "updated" };
 }
 
+/** True when the block's inner content no longer matches its recorded hash. */
+export function blockHandEdited(existing: string, blockId: string): boolean {
+  const begin = existing.match(BEGIN_RE(blockId));
+  const endM = endMarker(blockId);
+  const end = existing.indexOf(endM);
+  if (begin?.index === undefined || end === -1 || end < begin.index) return false;
+  const innerStart = begin.index + begin[0].length;
+  const currentInner = existing.slice(innerStart, end).replace(/^\n/, "").replace(/\n$/, "");
+  return sha256(currentInner) !== begin[1];
+}
+
 /** Remove a managed block entirely (rule/adapter removed). */
 export function removeManagedBlock(
   existing: string,

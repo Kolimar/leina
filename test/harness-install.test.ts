@@ -14,6 +14,7 @@ import {
   deinitHarness,
   HARNESS_MINIMAL_CONFIG,
 } from "../src/application/install/harness-init.ts";
+import { runSync } from "../src/application/harness/sync.ts";
 import { GITIGNORE_BODY } from "../src/application/install/gitignore.ts";
 import { makeTmpRepo, isolateLeinaHome, type TmpRepo } from "./helpers/harness-tmprepo.ts";
 
@@ -153,6 +154,55 @@ describe("deinitHarness (leina deinit inverse)", () => {
     assert.ok(await exists(".harness/rules/mine.md"));
     assert.ok(await exists(".harness/state/current/plan.md"));
     assert.ok(await exists(".harness/config.json"), "configured config is the user's");
+  });
+
+  it("strips harness entries from opencode.json but keeps the user's own", async () => {
+    await repo.write("opencode.json", JSON.stringify({ instructions: ["docs/style.md"] }, null, 2));
+    await runSync(repo.root, { platforms: ["opencode"] });
+    assert.match(await read("opencode.json"), /\.harness\/generated\/opencode-rules\.md/);
+
+    const result = deinitHarness(repo.root);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+    const config = JSON.parse(await read("opencode.json"));
+    assert.deepEqual(config.instructions, ["docs/style.md"], "user entry kept, harness entry gone");
+    assert.equal(await exists(".harness/generated/opencode-rules.md"), false);
+  });
+
+  it("strips harness hook wiring from .cursor/hooks.json and keeps user hooks", async () => {
+    await repo.write(
+      ".cursor/hooks.json",
+      JSON.stringify({ version: 1, hooks: { beforeShellExecution: [{ command: "my-linter" }] } }, null, 2),
+    );
+    await runSync(repo.root, { platforms: ["cursor"] });
+    assert.match(await read(".cursor/hooks.json"), /harness hook|leina/);
+
+    const result = deinitHarness(repo.root);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+    const hooks = JSON.parse(await read(".cursor/hooks.json"));
+    assert.deepEqual(hooks.hooks.beforeShellExecution, [{ command: "my-linter" }]);
+    const raw = await read(".cursor/hooks.json");
+    assert.ok(!raw.includes("harness hook"), "no dangling harness commands");
+  });
+
+  it("removes a harness-born .cursor/hooks.json entirely (empty skeleton)", async () => {
+    await repo.write(".cursor/rules/.keep", "");
+    await runSync(repo.root, { platforms: ["cursor"] });
+    assert.ok(await exists(".cursor/hooks.json"));
+
+    const result = deinitHarness(repo.root);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+    assert.equal(await exists(".cursor/hooks.json"), false, "held only harness entries");
+  });
+
+  it("refuses to strip a managed block whose interior was hand-edited", async () => {
+    await repo.write("AGENTS.md", "# Mine\n");
+    await bootstrapHarness(repo.root);
+    const tampered = (await read("AGENTS.md")).replace("<!-- harness:end", "EDITED-INSIDE\n<!-- harness:end");
+    await repo.write("AGENTS.md", tampered);
+
+    const result = deinitHarness(repo.root);
+    assert.ok(result.failures.some((f) => f.includes("AGENTS.md") && f.includes("hand-edited")));
+    assert.ok((await read("AGENTS.md")).includes("EDITED-INSIDE"), "left in place");
   });
 
   it("never deletes a hand-edited owned artifact — reports it instead", async () => {
