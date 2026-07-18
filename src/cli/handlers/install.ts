@@ -590,11 +590,11 @@ export async function handleInit(rest: string[]): Promise<void> {
   if (doClaudeHooks) writeClaudeHooksStep(project, cliBase, written, failures);
 
   // Harness bootstrap (FULL and LIGHT): seed .harness/config.json if absent and
-  // run the in-process sync (same engine as `leina harness sync`) so the
-  // CLAUDE.md/AGENTS.md blocks + skills exist for the hosts detected in the
-  // repo. Runs AFTER the host wiring above so platform detection sees the
-  // freshly written .claude/ files. Best-effort like every other init step.
-  const harness = await bootstrapHarness(project);
+  // run the in-process sync (same engine as `leina harness sync`) targeting the
+  // hosts the user chose with --hosts (plus AGENTS.md only when the repo
+  // already carries one) — never auto-elected. Best-effort like every other
+  // init step.
+  const harness = await bootstrapHarness(project, hosts);
   written.push(...harness.written);
   failures.push(...harness.failures);
 

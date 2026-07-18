@@ -27,6 +27,29 @@ import { removeManagedBlock, sha256 } from "../harness/adapters/managed-block.ts
 /** Content init seeds into .harness/config.json — builtin rules govern by default. */
 export const HARNESS_MINIMAL_CONFIG = "{}\n";
 
+/**
+ * Host ids from `leina init --hosts` → harness platform adapters. The windsurf
+ * adapter is the Devin/Windsurf pair (byte-identical rule mirror).
+ */
+const HOST_TO_PLATFORM: Record<string, string> = {
+  claude: "claude-code",
+  devin: "windsurf",
+};
+
+/**
+ * The platforms the bootstrap may target: the hosts the user named on the init
+ * command line, plus agentsmd only when the repo already carries an AGENTS.md.
+ * Never inferred from anything else — the harness inherits init's stance that
+ * leina does not choose an AI host for the user.
+ */
+function bootstrapPlatforms(project: string, hosts: readonly string[]): string[] {
+  const platforms = hosts.map((h) => HOST_TO_PLATFORM[h]).filter((p): p is string => p !== undefined);
+  if (existsSync(join(project, "AGENTS.md")) && !platforms.includes("agentsmd")) {
+    platforms.push("agentsmd");
+  }
+  return platforms;
+}
+
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -37,23 +60,38 @@ export interface HarnessBootstrapResult {
 }
 
 /** Idempotent harness bootstrap for `leina init` (FULL and LIGHT). */
-export async function bootstrapHarness(project: string): Promise<HarnessBootstrapResult> {
+export async function bootstrapHarness(
+  project: string,
+  hosts: readonly string[] = [],
+): Promise<HarnessBootstrapResult> {
   const written: string[] = [];
   const failures: string[] = [];
+  const platforms = bootstrapPlatforms(project, hosts);
 
   const configPath = join(project, HARNESS_DIR, "config.json");
+  let seededThisRun = false;
   try {
     if (!existsSync(configPath)) {
       mkdirSync(dirname(configPath), { recursive: true });
-      writeFileSync(configPath, HARNESS_MINIMAL_CONFIG);
-      written.push(".harness/config.json (created — builtin rules govern by default)");
+      const seed =
+        platforms.length > 0 ? `${JSON.stringify({ platforms }, null, 2)}\n` : HARNESS_MINIMAL_CONFIG;
+      writeFileSync(configPath, seed);
+      seededThisRun = true;
+      written.push(
+        platforms.length > 0
+          ? `.harness/config.json (created — platforms: ${platforms.join(", ")})`
+          : ".harness/config.json (created — builtin rules govern by default)",
+      );
     }
   } catch (err) {
     failures.push(`.harness/config.json: ${errMsg(err)}`);
   }
 
   try {
-    const result = await runSync(project, {});
+    // Explicit platforms when the user (re-)named hosts on this invocation; a
+    // pre-existing config keeps its own platforms unless hosts were given.
+    const explicit = platforms.length > 0 && (seededThisRun || hosts.length > 0);
+    const result = await runSync(project, explicit ? { platforms } : {});
     for (const e of result.errors) failures.push(`harness sync: ${e}`);
     if (result.outcome) {
       const changed = result.outcome.items.filter((i) => i.action === "created" || i.action === "updated");
@@ -78,6 +116,19 @@ export async function bootstrapHarness(project: string): Promise<HarnessBootstra
 export interface HarnessDeinitResult {
   removed: string[];
   failures: string[];
+}
+
+/** True for the exact shapes bootstrapHarness seeds: `{}` or `{ "platforms": [...] }`. */
+function isPristineBootstrapConfig(raw: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+    const keys = Object.keys(parsed);
+    if (keys.length === 0) return true;
+    return keys.length === 1 && keys[0] === "platforms" && Array.isArray((parsed as { platforms: unknown }).platforms);
+  } catch {
+    return false;
+  }
 }
 
 function readLockfileSync(project: string): Lockfile | undefined {
@@ -162,11 +213,12 @@ export function deinitHarness(project: string): HarnessDeinitResult {
     }
   }
 
-  // The minimal `{}` config seeded by init is ours to remove — but only while
-  // pristine; once the user configured anything, the file is theirs.
+  // The config seeded by init is ours to remove — but only while pristine
+  // (empty, or platforms-only as bootstrapHarness writes it); once the user
+  // configured anything else, the file is theirs.
   const configPath = join(project, HARNESS_DIR, "config.json");
   try {
-    if (existsSync(configPath) && readFileSync(configPath, "utf8").trim() === "{}") {
+    if (existsSync(configPath) && isPristineBootstrapConfig(readFileSync(configPath, "utf8"))) {
       rmSync(configPath);
       removed.push(".harness/config.json (pristine bootstrap — removed)");
     }

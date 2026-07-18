@@ -5,7 +5,7 @@
 // both surfaces produce byte-identical artifacts.
 
 import { buildBundle } from "./adapters/bundle.ts";
-import { adapterById, selectAdapters } from "./adapters/registry.ts";
+import { adaptersByIds, selectAdapters } from "./adapters/registry.ts";
 import { applyFileSets, type AdapterFileSet, type ApplyOutcome } from "./adapters/writer.ts";
 import { type PlatformAdapter } from "./adapters/types.ts";
 
@@ -36,12 +36,9 @@ export async function runSync(repoRoot: string, options: SyncOptions = {}): Prom
 
   let adapters: PlatformAdapter[];
   if (options.platforms !== undefined && options.platforms.length > 0) {
-    adapters = [];
-    for (const id of options.platforms) {
-      const adapter = adapterById(id);
-      if (adapter) adapters.push(adapter);
-      else allWarnings.push(`no adapter implemented for platform "${id}" yet — skipping`);
-    }
+    const explicit = adaptersByIds(options.platforms);
+    adapters = explicit.adapters;
+    allWarnings.push(...explicit.warnings);
   } else {
     const selected = await selectAdapters(bundle.config, { repoRoot });
     adapters = selected.adapters;

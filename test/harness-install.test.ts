@@ -42,27 +42,47 @@ async function exists(rel: string): Promise<boolean> {
 }
 
 describe("bootstrapHarness (leina init step)", () => {
-  it("seeds the minimal config and generates the sync artifacts", async () => {
+  it("seeds the minimal config and writes NO platform artifacts without hosts or evidence", async () => {
     const result = await bootstrapHarness(repo.root);
     assert.deepEqual(result.failures, [], result.failures.join("; "));
     assert.ok(result.written.some((w) => w.includes(".harness/config.json")));
     assert.ok(result.written.some((w) => w.startsWith("harness sync:")));
 
     assert.equal(await read(".harness/config.json"), HARNESS_MINIMAL_CONFIG);
-    assert.ok(await exists(".harness/harness.lock.json"));
-    assert.match(await read("AGENTS.md"), /harness:begin/, "agentsmd baseline block");
+    assert.equal(await exists("AGENTS.md"), false, "no host auto-elected in an empty repo");
+    assert.equal(await exists("CLAUDE.md"), false);
+  });
+
+  it("targets the hosts chosen with --hosts and persists them as config.platforms", async () => {
+    const result = await bootstrapHarness(repo.root, ["claude"]);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+
+    const config = JSON.parse(await read(".harness/config.json"));
+    assert.deepEqual(config, { platforms: ["claude-code"] });
+    assert.match(await read("CLAUDE.md"), /harness:begin/);
+    assert.ok(await exists(".claude/skills/harness-workflow/SKILL.md"));
+    assert.equal(await exists("AGENTS.md"), false, "agentsmd only when the repo already carries one");
+  });
+
+  it("includes agentsmd only when the repo already carries an AGENTS.md", async () => {
+    await repo.write("AGENTS.md", "# My project\n");
+    const result = await bootstrapHarness(repo.root, ["claude"]);
+    assert.deepEqual(result.failures, []);
+    const config = JSON.parse(await read(".harness/config.json"));
+    assert.deepEqual(config, { platforms: ["claude-code", "agentsmd"] });
+    assert.match(await read("AGENTS.md"), /harness:begin/);
   });
 
   it("is idempotent: a second run changes nothing and reports up-to-date", async () => {
-    await bootstrapHarness(repo.root);
-    const agentsBefore = await read("AGENTS.md");
+    await bootstrapHarness(repo.root, ["claude"]);
+    const claudeBefore = await read("CLAUDE.md");
     const lockBefore = await read(".harness/harness.lock.json");
 
-    const second = await bootstrapHarness(repo.root);
+    const second = await bootstrapHarness(repo.root, ["claude"]);
     assert.deepEqual(second.failures, []);
     assert.ok(second.written.some((w) => w.includes("artifacts up to date")), second.written.join("; "));
     assert.ok(!second.written.some((w) => w.includes(".harness/config.json")), "config not re-reported");
-    assert.equal(await read("AGENTS.md"), agentsBefore);
+    assert.equal(await read("CLAUDE.md"), claudeBefore);
     assert.equal(await read(".harness/harness.lock.json"), lockBefore);
   });
 
@@ -89,18 +109,18 @@ describe("bootstrapHarness (leina init step)", () => {
 
 describe("deinitHarness (leina deinit inverse)", () => {
   it("round-trips cleanly: artifacts, lockfile and pristine config are removed", async () => {
-    await bootstrapHarness(repo.root);
+    await bootstrapHarness(repo.root, ["claude"]);
     const result = deinitHarness(repo.root);
     assert.deepEqual(result.failures, [], result.failures.join("; "));
 
-    assert.equal(await exists("AGENTS.md"), false, "file contained only the harness block");
+    assert.equal(await exists("CLAUDE.md"), false, "file contained only the harness block");
     assert.equal(await exists(".harness/harness.lock.json"), false);
-    assert.equal(await exists(".harness/config.json"), false, "pristine {} config removed");
+    assert.equal(await exists(".harness/config.json"), false, "pristine platforms-only config removed");
     assert.equal(await exists(".harness"), false, "empty .harness/ pruned");
   });
 
   it("is idempotent: a second deinit is a silent no-op", async () => {
-    await bootstrapHarness(repo.root);
+    await bootstrapHarness(repo.root, ["claude"]);
     deinitHarness(repo.root);
     const second = deinitHarness(repo.root);
     assert.deepEqual(second.removed, []);

@@ -9,6 +9,8 @@
 // harness managed block (`<!-- harness:begin id=… -->`), so both blocks update
 // independently without ever touching each other.
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { renderInstructionBlock } from "./digest.ts";
 import {
   type AdapterRepoContext,
@@ -28,8 +30,10 @@ export const agentsmdAdapter: PlatformAdapter = {
   },
   verifySupport: "instructions-only",
 
-  detect(): Promise<boolean> {
-    return Promise.resolve(true); // always applicable
+  detect(ctx: AdapterRepoContext): Promise<boolean> {
+    // Evidence-based like every other adapter: leina never elects a target the
+    // repo shows no trace of. An AGENTS.md consumer leaves the file itself.
+    return Promise.resolve(existsSync(join(ctx.repoRoot, "AGENTS.md")));
   },
 
   generate(bundle: RuleBundle, _ctx: AdapterRepoContext): Promise<FileSet> {

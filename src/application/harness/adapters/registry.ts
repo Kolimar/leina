@@ -40,6 +40,18 @@ export async function detectAdapters(ctx: AdapterRepoContext): Promise<PlatformA
   return detected;
 }
 
+/** Resolve explicit platform ids; unknown ids become warnings, never errors. */
+export function adaptersByIds(ids: readonly string[]): { adapters: PlatformAdapter[]; warnings: string[] } {
+  const adapters: PlatformAdapter[] = [];
+  const warnings: string[] = [];
+  for (const id of ids) {
+    const adapter = adapterById(id);
+    if (adapter) adapters.push(adapter);
+    else warnings.push(`no adapter implemented for platform "${id}" yet — skipping`);
+  }
+  return { adapters, warnings };
+}
+
 /**
  * The sync target set, mirroring the origin CLI's selection: explicit
  * `config.platforms` when declared (unknown ids become warnings), otherwise
@@ -52,12 +64,5 @@ export async function selectAdapters(
   if (config.platforms.length === 0) {
     return { adapters: await detectAdapters(ctx), warnings: [] };
   }
-  const adapters: PlatformAdapter[] = [];
-  const warnings: string[] = [];
-  for (const id of config.platforms) {
-    const adapter = adapterById(id);
-    if (adapter) adapters.push(adapter);
-    else warnings.push(`no adapter implemented for platform "${id}" yet — skipping`);
-  }
-  return { adapters, warnings };
+  return adaptersByIds(config.platforms);
 }

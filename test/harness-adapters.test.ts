@@ -304,7 +304,10 @@ describe("agentsmd adapter", () => {
     assert.equal(file.kind, "managed-block");
     assert.equal(file.blockId, "harness-core");
     assert.ok(file.content.includes("Task contract template"));
-    assert.ok(await agentsmdAdapter.detect(CTX), "always applicable");
+  });
+
+  it("detects only repos that already carry an AGENTS.md (vendor-neutral)", async () => {
+    assert.equal(await agentsmdAdapter.detect(CTX), false);
   });
 });
 
@@ -448,12 +451,13 @@ describe("registry", () => {
     assert.equal(adapterById("nope"), undefined);
   });
 
-  it("detects only agentsmd in an empty repo", async () => {
+  it("detects nothing in an empty repo (no platform is ever auto-elected)", async () => {
     const detected = await detectAdapters({ repoRoot: repo.root });
-    assert.deepEqual(detected.map((a) => a.id), ["agentsmd"]);
+    assert.deepEqual(detected.map((a) => a.id), []);
   });
 
   it("detects each platform from its filesystem evidence", async () => {
+    await repo.write("AGENTS.md", "# notes\n");
     await repo.write("CLAUDE.md", "# notes\n");
     await repo.write(".cursor/rules/.keep", "");
     await repo.write(".devin/rules/.keep", "");
