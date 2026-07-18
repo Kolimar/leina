@@ -9,8 +9,8 @@
 // the names-not-values contract (see handlers/env.ts).
 
 import * as p from "@clack/prompts";
-import { writeFileSync } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { readPackageVersion } from "../../version.ts";
 import { runDoctor } from "../doctor.ts";
 import { fail, readIfExists } from "../io.ts";
@@ -51,6 +51,22 @@ import {
   handleSetup,
   hasHookWiring,
 } from "./install.ts";
+import { createContract, findHarnessRepoRoot, makeHarnessPorts } from "./harness.ts";
+import { endContract, loadContract, stateDir } from "../../application/harness/contract-io.ts";
+import { harnessDir, loadConfig } from "../../application/harness/config-io.ts";
+import { loadResolvedRules } from "../../application/harness/resolver.ts";
+import { loadRecipes } from "../../application/harness/recipes.ts";
+import { runVerify } from "../../application/harness/verify.ts";
+import { runSync } from "../../application/harness/sync.ts";
+import { type VerifyReport } from "../../application/harness/gates/report.ts";
+import {
+  computeEnabledOverrides,
+  contractSummary,
+  mergeRuleOverridesIntoConfig,
+  recipeSuggestions,
+  splitAdjustableRules,
+  verifyReportLines,
+} from "../../application/harness/tui-support.ts";
 
 
 function loadCatalog(): Catalog | null {
@@ -328,6 +344,302 @@ async function envFlow(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Harness — armar arnés para la tarea en curso (contrato + reglas + gates).
+// Misma filosofía que el resto del TUI: capa fina que re-despacha a las mismas
+// funciones de application/harness y handlers/harness.ts que usa el CLI.
+// ---------------------------------------------------------------------------
+
+async function harnessFlow(project: string): Promise<void> {
+  const root = findHarnessRepoRoot(project);
+  for (;;) {
+    const action = await p.select({
+      message: `Harness — ${root}`,
+      options: [
+        { value: "arm", label: "armar arnés para una feature", hint: "entrevista guiada → contrato + reglas" },
+        { value: "status", label: "ver estado del arnés", hint: "contrato activo + último verify" },
+        { value: "verify", label: "verificar ahora", hint: "corre los gates (leina harness verify)" },
+        { value: "sync", label: "sincronizar plataformas (sync)", hint: "regenera artefactos desde las reglas" },
+        { value: "back", label: "volver" },
+      ],
+    });
+    if (bail(action) || action === "back") return;
+    if (action === "arm") await harnessArmFlow(root);
+    else if (action === "status") await harnessStatusFlow(root);
+    else if (action === "verify") await harnessVerifyFlow(root);
+    else if (action === "sync") await harnessSyncFlow(root);
+  }
+}
+
+/** Globs/criterios uno a uno hasta línea vacía; sugerencias de receta confirmables. */
+async function collectRepeatable(
+  message: string,
+  placeholder: string,
+  suggested: string[],
+  min: number,
+): Promise<string[] | null> {
+  const items: string[] = [];
+  if (suggested.length > 0) {
+    const kept = await p.multiselect({
+      message: `${message} — sugeridos por la receta (confirma o descarta)`,
+      options: suggested.map((v) => ({ value: v, label: v })),
+      initialValues: suggested,
+      required: false,
+    });
+    if (bail(kept)) return null;
+    items.push(...(kept as string[]));
+  }
+  for (;;) {
+    const value = await p.text({
+      message: `${message} (línea vacía para terminar${min > 0 ? `; mínimo ${min}` : ""})`,
+      placeholder,
+    });
+    if (bail(value)) return null;
+    const text = ((value as string | undefined) ?? "").trim();
+    if (text.length === 0) {
+      if (items.length >= min) return items;
+      p.log.warn(`hace falta al menos ${min} entrada(s)`);
+      continue;
+    }
+    if (!items.includes(text)) items.push(text);
+  }
+}
+
+// a. Contrato activo: nunca pisarlo sin confirmación explícita.
+// true = se puede continuar armando uno nuevo; false = volver al menú.
+async function confirmNoActiveContract(root: string): Promise<boolean> {
+  const { contract: active, error } = await loadContract(root);
+  if (error) {
+    p.log.error(error);
+    return false;
+  }
+  if (!active) return true;
+
+  p.note(contractSummary(active), "contrato activo");
+  const decision = await p.select({
+    message: "Ya hay un contrato activo — ¿qué hacemos?",
+    options: [
+      { value: "keep", label: "continuar con él", hint: "no se toca nada" },
+      { value: "end", label: "cerrarlo y archivar", hint: "contract end; después se arma uno nuevo" },
+      { value: "cancel", label: "cancelar" },
+    ],
+  });
+  if (bail(decision) || decision === "cancel") return false;
+  if (decision === "keep") {
+    p.log.info("sigue trabajando dentro del scope; cierra con `leina harness verify` + `leina harness contract end`");
+    return false;
+  }
+  const ended = await endContract(root);
+  if (!ended.ok) {
+    p.log.error(ended.error);
+    return false;
+  }
+  p.log.success(`contrato archivado en ${ended.archivedTo}`);
+  return true;
+}
+
+interface HarnessInterview {
+  goal: string;
+  taskType: string;
+  scope: string[];
+  outOfScope: string[];
+  criteria: string[];
+}
+
+// b+c. Entrevista guiada (harness/contract-interview hecha interfaz) con
+// recetas del taskType que precargan scope/criterios sugeridos.
+async function harnessInterview(root: string): Promise<HarnessInterview | null> {
+  const goal = await p.text({
+    message: "Goal — una frase: ¿qué significa «hecho»?",
+    placeholder: "p.ej. Añadir listado de usuarios con paginación",
+    validate: (v) => (v !== undefined && v.trim().length > 0 ? undefined : "el goal es obligatorio"),
+  });
+  if (bail(goal)) return null;
+
+  const { config } = await loadConfig(root);
+  const taskType = await p.select({
+    message: "Tipo de tarea",
+    options: config.taskTypes.map((t) => ({ value: t, label: t })),
+  });
+  if (bail(taskType)) return null;
+
+  let suggestedScope: string[] = [];
+  let suggestedCriteria: string[] = [];
+  const { recipes } = await loadRecipes(root);
+  const matching = recipes.filter((r) => r.taskType === taskType);
+  if (matching.length > 0) {
+    const recipeName = await p.select({
+      message: "¿Aplicar una receta? (precarga scope y criterios sugeridos)",
+      options: [
+        { value: "", label: "ninguna" },
+        ...matching.map((r) => ({ value: r.name, label: r.name, hint: r.description })),
+      ],
+    });
+    if (bail(recipeName)) return null;
+    const recipe = matching.find((r) => r.name === recipeName);
+    if (recipe) {
+      const suggestions = recipeSuggestions(recipe.body);
+      suggestedScope = suggestions.scope;
+      suggestedCriteria = suggestions.criteria;
+      p.log.info(`receta «${recipe.name}» — sigue sus pasos: ${recipe.sourcePath}`);
+    }
+  }
+
+  const scope = await collectRepeatable("Scope — glob de archivos que la tarea puede tocar", "p.ej. src/auth/**", suggestedScope, 0);
+  if (scope === null) return null;
+  const outOfScope = await collectRepeatable("Fuera de scope — glob explícitamente prohibido (opcional)", "p.ej. docs/**", [], 0);
+  if (outOfScope === null) return null;
+  const criteria = await collectRepeatable("Criterio de aceptación — observable y verificable", "p.ej. el endpoint devuelve 200 con la forma esperada", suggestedCriteria, 1);
+  if (criteria === null) return null;
+
+  return { goal: goal as string, taskType: taskType as string, scope, outOfScope, criteria };
+}
+
+// d. Reglas: las blocking activas son fijas (la capa local no puede
+// debilitarlas); el resto es ajustable y se persiste como override de
+// `enabled` en .harness/config.json (capa proyecto). Devuelve los ids de las
+// reglas que quedan activas, o null si el usuario cancela / el config está roto.
+async function selectHarnessRules(root: string): Promise<string[] | null> {
+  const resolution = await loadResolvedRules(root);
+  for (const e of resolution.errors) p.log.error(e);
+  const { fixed, adjustable } = splitAdjustableRules(resolution.rules);
+  const activeRuleIds = fixed.map((r) => r.id);
+  if (fixed.length > 0) {
+    p.note(
+      fixed.map((r) => `● ${r.id} (${r.phase} · blocking)`).join("\n"),
+      "reglas fijas — blocking activas, no descartables",
+    );
+  }
+  if (adjustable.length === 0) return activeRuleIds;
+
+  const chosen = await p.multiselect({
+    message: "Reglas ajustables — activa/desactiva para este repo",
+    options: adjustable.map((r) => ({
+      value: r.id,
+      label: r.id,
+      hint: `${r.phase} · ${r.severity}${r.enabled ? "" : " · off"}${r.summary ? ` — ${r.summary}` : ""}`,
+    })),
+    initialValues: adjustable.filter((r) => r.enabled).map((r) => r.id),
+    required: false,
+  });
+  if (bail(chosen)) return null;
+  const selected = chosen as string[];
+
+  const overrides = computeEnabledOverrides(adjustable, selected);
+  if (Object.keys(overrides).length > 0) {
+    const configPath = join(harnessDir(root), "config.json");
+    const next = mergeRuleOverridesIntoConfig(readIfExists(configPath), overrides);
+    if (next === null) {
+      p.log.error(`${configPath}: JSON malformado — no se toca; arréglalo y reintenta`);
+      return null;
+    }
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, next);
+    p.log.success(`overrides de reglas guardados en ${configPath}`);
+  }
+  return [...activeRuleIds, ...selected];
+}
+
+// El flujo estrella: contrato activo → entrevista → reglas → resumen → contrato.
+async function harnessArmFlow(root: string): Promise<void> {
+  if (!(await confirmNoActiveContract(root))) return;
+
+  const interview = await harnessInterview(root);
+  if (interview === null) return;
+
+  const activeRuleIds = await selectHarnessRules(root);
+  if (activeRuleIds === null) return;
+
+  // e. Resumen → confirmación → misma ruta de creación que `contract new`.
+  const summaryLines = [
+    `goal: ${interview.goal}`,
+    `tipo: ${interview.taskType}`,
+    `scope: ${interview.scope.length > 0 ? interview.scope.join(", ") : "(vacío — el gate de diff no restringe nada)"}`,
+    ...(interview.outOfScope.length > 0 ? [`fuera de scope: ${interview.outOfScope.join(", ")}`] : []),
+    "criterios:",
+    ...interview.criteria.map((c) => `  [ ] ${c}`),
+    "",
+    `reglas activas (${activeRuleIds.length}):`,
+    ...activeRuleIds.sort().map((id) => `  · ${id}`),
+  ];
+  p.note(summaryLines.join("\n"), "resumen del arnés");
+  const sure = await p.confirm({ message: "¿Crear el contrato con este arnés?", initialValue: true });
+  if (bail(sure) || sure !== true) return;
+
+  const created = await createContract(root, {
+    goal: interview.goal,
+    taskType: interview.taskType,
+    scope: interview.scope,
+    outOfScope: interview.outOfScope,
+    criteria: interview.criteria,
+  });
+  if (!created.ok) {
+    p.log.error(created.error);
+    return;
+  }
+  p.log.success("contrato creado");
+  p.note(
+    "siguiente paso: trabaja dentro del scope y cierra con `leina harness verify`\n(y `leina harness contract end` cuando esté en verde)",
+    "harness",
+  );
+}
+
+async function harnessStatusFlow(root: string): Promise<void> {
+  const { contract, error } = await loadContract(root);
+  if (error) p.log.error(error);
+  p.note(contract ? contractSummary(contract) : "(ninguno)", "contrato activo");
+
+  const raw = readIfExists(join(stateDir(root), "verify-report.json"));
+  if (raw === null) {
+    p.log.info("sin verify-report.json — aún no se ha ejecutado `leina harness verify`");
+    return;
+  }
+  try {
+    const report = JSON.parse(raw) as VerifyReport;
+    p.note(verifyReportLines(report).join("\n"), "último verify");
+  } catch {
+    p.log.error("verify-report.json malformado — se regenera con `leina harness verify`");
+  }
+}
+
+async function harnessVerifyFlow(root: string): Promise<void> {
+  const spin = p.spinner();
+  spin.start("ejecutando gates (harness verify)");
+  const outcome = await runVerify(root, { ports: makeHarnessPorts() });
+  spin.stop(
+    outcome.exitCode === 0
+      ? "verify en verde — todos los gates bloqueantes pasan"
+      : outcome.exitCode === 1
+        ? "verify en rojo — hay gates bloqueantes fallando"
+        : "verify no pudo ejecutarse (error de configuración)",
+  );
+  for (const w of outcome.warnings) p.log.warn(w);
+  for (const e of outcome.loadErrors) p.log.error(e);
+  if (outcome.loadErrors.length === 0) p.note(verifyReportLines(outcome.report).join("\n"), "reporte por gate");
+  // El exit code no mata el TUI: aquí solo se muestra el resultado.
+}
+
+async function harnessSyncFlow(root: string): Promise<void> {
+  const spin = p.spinner();
+  spin.start("sincronizando plataformas (harness sync)");
+  const result = await runSync(root, {});
+  spin.stop(result.exitCode === 0 ? "sync completado" : "sync con conflictos o errores");
+  for (const w of result.warnings) p.log.warn(w);
+  for (const e of result.errors) p.log.error(e);
+  if (result.outcome) {
+    const written = result.outcome.items.filter((i) => i.action === "created" || i.action === "updated").length;
+    const skipped = result.outcome.items.filter((i) => i.action === "unchanged").length;
+    p.note(
+      [
+        ...result.outcome.items.map((i) => `${i.action.padEnd(9)} ${i.path} [${i.adapter}/${i.kind}]`),
+        "",
+        `${written} escrito(s) · ${skipped} sin cambios · ${result.outcome.conflictCount} conflicto(s)/error(es)`,
+      ].join("\n"),
+      "harness sync",
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Uninstall
 // ---------------------------------------------------------------------------
 
@@ -380,6 +692,7 @@ export async function handleTui(rest: string[]): Promise<void> {
         { value: "status", label: "status — doctor health summary" },
         { value: "install", label: activated ? "update install — change asset selection" : "install — choose assets and activate" },
         { value: "project", label: "this project — init / deinit" },
+        { value: "harness", label: "harness — armar arnés para la tarea en curso", hint: "contrato + reglas + gates" },
         { value: "serve", label: "graph serve — live read-only graph explorer", hint: "foreground; Ctrl+C returns here" },
         { value: "repair", label: "repair — re-run idempotent writers for broken state" },
         { value: "env", label: "env vars — credentials for skills (masked)" },
@@ -401,6 +714,7 @@ export async function handleTui(rest: string[]): Promise<void> {
     if (action === "status") showStatus(project);
     else if (action === "install") await installFlow(catalog);
     else if (action === "project") await projectFlow(project);
+    else if (action === "harness") await harnessFlow(project);
     else if (action === "serve") await serveFlow(project);
     else if (action === "repair") {
       console.log("");
