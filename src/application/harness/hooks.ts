@@ -155,6 +155,9 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
   // themselves. Weakening them to get past a gate is the obvious escape
   // hatch, so these are agent-read-only in EVERY strictness mode — the CLI
   // (`leina harness` / the TUI), driven by a human, is the writing path.
+  // Coverage honesty: this seals the Edit/Write tool path; the Bash path is
+  // guarded best-effort by decidePreBash (writesIntegrityPaths). Together
+  // they raise the bar against accidents — they are not a sandbox.
   const integrity = [".harness/rules/**", ".harness/config.json", ".harness/config.local.json", ".harness/harness.lock.json"];
   if (matchesAny(rel, integrity)) {
     return {
@@ -212,28 +215,144 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
   return ALLOW;
 }
 
+interface ShellToken {
+  text: string;
+  /** Any character of this token came from inside quotes. */
+  quoted: boolean;
+}
+
 /**
- * True git commit/push detection: per pipeline segment, `git`'s first
- * non-flag token must BE `commit`/`push`. Avoids the false positives of a
- * loose regex (`git log --grep commit`, `echo "git commit"`).
+ * Minimal quote-aware split: segments on UNQUOTED `&&`/`||`/`;`/`|`/newline,
+ * tokens on unquoted whitespace. Not a shell parser — no expansion, no
+ * subshell tracking — just enough structure for the guards below.
  */
-function gitCommitOrPush(command: string): "commit" | "push" | undefined {
-  for (const segment of command.split(/&&|\|\||;|\||\n/)) {
-    const tokens = segment.trim().split(/\s+/);
-    const gitIdx = tokens.findIndex((t) => t === "git" || t.endsWith("/git"));
+function shellSegments(command: string): ShellToken[][] {
+  const segments: ShellToken[][] = [];
+  let tokens: ShellToken[] = [];
+  let current = "";
+  let quoted = false;
+  let mode: '"' | "'" | undefined;
+
+  const pushToken = () => {
+    if (current.length > 0 || quoted) tokens.push({ text: current, quoted });
+    current = "";
+    quoted = false;
+  };
+  const pushSegment = () => {
+    pushToken();
+    if (tokens.length > 0) segments.push(tokens);
+    tokens = [];
+  };
+
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i]!;
+    if (mode === "'") {
+      if (ch === "'") mode = undefined;
+      else current += ch;
+      continue;
+    }
+    if (mode === '"') {
+      if (ch === '"') mode = undefined;
+      else if (ch === "\\" && i + 1 < command.length) current += command[(i += 1)];
+      else current += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      mode = ch;
+      quoted = true;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < command.length) {
+      current += command[(i += 1)];
+      continue;
+    }
+    if (ch === "&" && command[i + 1] === "&") {
+      pushSegment();
+      i += 1;
+      continue;
+    }
+    if (ch === "|") {
+      pushSegment();
+      if (command[i + 1] === "|") i += 1;
+      continue;
+    }
+    if (ch === ";" || ch === "\n") {
+      pushSegment();
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      pushToken();
+      continue;
+    }
+    current += ch;
+  }
+  pushSegment();
+  return segments;
+}
+
+const SHELL_WRAPPERS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+const OUTPUT_ONLY = new Set(["echo", "printf"]);
+
+function basenameOf(program: string): string {
+  const slash = program.lastIndexOf("/");
+  return slash === -1 ? program : program.slice(slash + 1);
+}
+
+/**
+ * Best-effort git commit/push detection: per pipeline segment, an UNQUOTED
+ * `git` program token whose first non-flag argument is `commit`/`push`
+ * (quoted or not — the shell would still run it). Recurses into `sh -c '…'`
+ * payloads; skips `echo`/`printf` segments (their arguments are data).
+ *
+ * This is NOT a shell parser: variable expansion (`git $x`), command
+ * substitution and exotic nesting evade it. The harness is a guardrail
+ * against accidents, not a sandbox against an adversarial agent — see
+ * docs/concepts/07-harness.md.
+ */
+function gitCommitOrPush(command: string, depth = 0): "commit" | "push" | undefined {
+  if (depth > 3) return undefined;
+  for (const tokens of shellSegments(command)) {
+    const first = tokens[0];
+    if (first !== undefined && !first.quoted && OUTPUT_ONLY.has(basenameOf(first.text))) continue;
+    if (first !== undefined && !first.quoted && SHELL_WRAPPERS.has(basenameOf(first.text))) {
+      const payload = tokens.slice(1).find((t) => t.quoted);
+      if (payload) {
+        const inner = gitCommitOrPush(payload.text, depth + 1);
+        if (inner !== undefined) return inner;
+      }
+    }
+    const gitIdx = tokens.findIndex((t) => !t.quoted && (t.text === "git" || t.text.endsWith("/git")));
     if (gitIdx === -1) continue;
     for (let i = gitIdx + 1; i < tokens.length; i += 1) {
       const t = tokens[i]!;
-      if (t === "-c" || t === "-C" || t === "--git-dir" || t === "--work-tree") {
+      if (!t.quoted && (t.text === "-c" || t.text === "-C" || t.text === "--git-dir" || t.text === "--work-tree")) {
         i += 1; // these global flags consume a value
         continue;
       }
-      if (t.startsWith("-")) continue; // other global flags (incl. --key=value)
-      if (t === "commit" || t === "push") return t;
+      if (!t.quoted && t.text.startsWith("-")) continue; // other global flags
+      if (t.text === "commit" || t.text === "push") return t.text;
       break; // some other subcommand — this segment is not a commit/push
     }
   }
   return undefined;
+}
+
+/**
+ * Enforcement-integrity paths (see decidePreEdit) reached through the shell:
+ * the same escape hatch through another door. Blocks commands that BOTH
+ * mention an integrity path (anything under .harness/ except state/) AND look
+ * like a write — a redirection or a mutating program anywhere in the command.
+ * Read-only mentions (cat, grep, diff …) stay allowed. Best-effort by the
+ * same honesty rule as gitCommitOrPush: this raises the bar for accidents,
+ * it does not make the files unwritable for a determined agent.
+ */
+const INTEGRITY_PATH_RE = /\.harness(?!\/state\b)(?:\/[\w./-]*)?/;
+const WRITE_HINT_RE = /(?:>|\b(?:tee|sed|mv|cp|rm|dd|truncate|ln|install|rsync|chmod|chown|sponge)\b)/;
+
+function writesIntegrityPaths(command: string): string | undefined {
+  const match = INTEGRITY_PATH_RE.exec(command);
+  if (match === null) return undefined;
+  return WRITE_HINT_RE.test(command) ? match[0] : undefined;
 }
 
 interface PersistedSummary {
@@ -247,7 +366,20 @@ async function readVerifySummary(repoRoot: string): Promise<{ summary?: Persiste
 }
 
 export async function decidePreBash(repoRoot: string, command: string | undefined): Promise<PreDecision> {
-  const action = command !== undefined ? gitCommitOrPush(command) : undefined;
+  if (command === undefined) return ALLOW;
+
+  const integrityHit = writesIntegrityPaths(command);
+  if (integrityHit !== undefined) {
+    return {
+      block: true,
+      message:
+        `BLOCKED: this command appears to write to ${integrityHit} — harness rules, config and ` +
+        "lockfile are agent-read-only (they define the gates). Change them through " +
+        "`leina harness` commands driven by a human. Task state under .harness/state/ stays writable.",
+    };
+  }
+
+  const action = gitCommitOrPush(command);
   if (action === undefined) return ALLOW;
 
   const { summary, present } = await readVerifySummary(repoRoot);
@@ -335,7 +467,20 @@ export async function decideCursorShell(
   repoRoot: string,
   command: string | undefined,
 ): Promise<CursorShellDecision> {
-  const action = command !== undefined ? gitCommitOrPush(command) : undefined;
+  if (command === undefined) return { permission: "allow" };
+
+  const integrityHit = writesIntegrityPaths(command);
+  if (integrityHit !== undefined) {
+    return {
+      permission: "deny",
+      agentMessage:
+        `write to ${integrityHit} denied: harness rules/config are agent-read-only. ` +
+        "Change them through `leina harness` commands driven by a human.",
+      userMessage: "harness: blocked a shell write to harness rules/config",
+    };
+  }
+
+  const action = gitCommitOrPush(command);
   if (action === undefined) return { permission: "allow" };
 
   const { summary } = await readVerifySummary(repoRoot);

@@ -229,6 +229,8 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
     for (const command of [
       "git log --grep commit",
       'echo "git commit"',
+      "echo please run git commit when done",
+      "printf 'git push here'",
       "git log | grep commit",
       "git status && npm run push-metrics",
     ]) {
@@ -237,7 +239,7 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
     }
   });
 
-  it("pre-bash: real commit/push forms ARE caught, including after && and global flags", async () => {
+  it("pre-bash: real commit/push forms ARE caught — chains, global flags, quoting, sh -c", async () => {
     await repo.write(
       ".harness/state/current/verify-report.json",
       JSON.stringify({ summary: { blockingFailures: 1 } }),
@@ -247,9 +249,38 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
       "git push origin main",
       "git -C . commit -m x",
       "/usr/bin/git commit -m x",
+      'git "commit" -m x',
+      "sh -c 'git commit -m x'",
+      'bash -c "git push origin main"',
     ]) {
       const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
       assert.deepEqual(run.result, { handled: true, exitCode: 2 }, command);
+    }
+  });
+
+  it("pre-bash: shell writes to harness rules/config/lockfile are blocked in guided mode", async () => {
+    for (const command of [
+      "echo hacked > .harness/rules/tests-pass.md",
+      "sed -i s/blocking/advisory/ .harness/config.json",
+      "rm -rf .harness",
+      "cp /tmp/x .harness/harness.lock.json",
+      "tee .harness/rules/new.md",
+    ]) {
+      const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+      assert.deepEqual(run.result, { handled: true, exitCode: 2 }, command);
+      assert.match(run.stderr, /agent-read-only/, command);
+    }
+  });
+
+  it("pre-bash: read-only mentions and state writes stay allowed", async () => {
+    for (const command of [
+      "cat .harness/config.json",
+      "grep -r blocking .harness/rules",
+      "echo done > .harness/state/current/plan.md",
+      "ls .harness/state/history",
+    ]) {
+      const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+      assert.deepEqual(run.result, { handled: false, exitCode: 0 }, command);
     }
   });
 
