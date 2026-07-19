@@ -424,7 +424,10 @@ rules para Windsurf/Devin, un plugin de OpenCode. La detección es **basada en e
 selecciona, o el repo ya trae sus archivos — leina nunca elige un host por vos). Un lockfile
 (`.harness/harness.lock.json`) hashea cada artifact: los archivos editados a mano entran en
 **conflicto** en vez de ser pisados (`--force` lo overridea). `--check` calcula el drift sin
-escribir — exit 1 si hay drift (modo CI).
+escribir — exit 1 si hay drift (modo CI). Un artifact **huérfano** editado a mano (su rule o
+plataforma fue eliminada) sigue en conflicto en cada corrida, incluido `--check`, hasta que
+un humano lo resuelva: borrá el archivo/los marcadores para conservar tus ediciones, o
+`--force` para descartarlas.
 
 ### `harness list [--phase <p>] [--tag <t>] [--json]`
 Rules resueltas con capa de origen, phase, severity, tipos de gate y estado de habilitación.

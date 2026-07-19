@@ -6,7 +6,7 @@
 // All methods are fail-soft: any git error maps to undefined/null/empty per
 // the port contract — the gates decide how to degrade (skip vs error).
 
-import { readFileSync, statSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { safeGitOutput } from "../install/safe-exec.ts";
 import { type GitDiffOptions, type GitPort } from "../../domain/harness/ports.ts";
@@ -16,6 +16,9 @@ const GIT_OPTS = { timeout: 30_000, maxBuffer: 32 * 1024 * 1024 } as const;
 
 /** Untracked files above this size are left out of the synthetic diff. */
 const UNTRACKED_MAX_BYTES = 4 * 1024 * 1024;
+/** Aggregate budget for the whole untracked scan — mirrors GIT_OPTS.maxBuffer. */
+const UNTRACKED_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
+const UNTRACKED_MAX_FILES = 2000;
 
 function run(repoRoot: string, args: string[]): string | null {
   return safeGitOutput(args, repoRoot, GIT_OPTS);
@@ -63,37 +66,64 @@ export class HarnessGit implements GitPort {
     if (options.paths && options.paths.length > 0) args.push("--", ...options.paths);
     const tracked = run(repoRoot, args);
     if (tracked === null) return null;
-    // `git diff` never shows untracked content, so a brand-new file would sail
+    if (options.cached) return tracked; // --cached means "the index" — untracked is not part of it
+    // `git diff` never shows untracked content, so a brand-new file would slip
     // past content gates (no-secrets!) until staged. Append each untracked
     // text file as a synthetic new-file diff — same shape content gates parse.
-    return tracked + untrackedAsAddedLines(repoRoot, options.paths);
+    return tracked + (await untrackedAsAddedLines(repoRoot, options.paths));
   }
 }
 
-function untrackedAsAddedLines(repoRoot: string, paths?: string[]): string {
+/**
+ * Async on purpose (this runs inside the engine's parallel gate pool) and
+ * budgeted: per-file and aggregate byte/file caps keep a pathological repo
+ * (huge un-ignored build output) from freezing verify or ballooning memory.
+ * Skips are never fully silent — a truncation notice rides along as a `\`
+ * marker line, which diff parsers ignore but a human reading the raw diff
+ * (or the gate's output) can see.
+ */
+async function untrackedAsAddedLines(repoRoot: string, paths?: string[]): Promise<string> {
   const lsArgs = ["ls-files", "--others", "--exclude-standard"];
   if (paths && paths.length > 0) lsArgs.push("--", ...paths);
   const out = run(repoRoot, lsArgs);
   if (out === null) return "";
 
   const chunks: string[] = [];
+  const skipped: string[] = [];
+  let totalBytes = 0;
+  let files = 0;
   for (const raw of out.split("\n")) {
     const rel = raw.trim();
     if (rel.length === 0) continue;
+    if (files >= UNTRACKED_MAX_FILES || totalBytes >= UNTRACKED_MAX_TOTAL_BYTES) {
+      skipped.push(`${rel} (scan budget exhausted)`);
+      continue;
+    }
     let content: string;
     try {
       const absolute = join(repoRoot, rel);
-      if (statSync(absolute).size > UNTRACKED_MAX_BYTES) continue;
-      content = readFileSync(absolute, "utf8");
+      const info = await stat(absolute);
+      if (info.size > UNTRACKED_MAX_BYTES) {
+        skipped.push(`${rel} (larger than ${UNTRACKED_MAX_BYTES} bytes)`);
+        continue;
+      }
+      content = await readFile(absolute, "utf8");
     } catch {
       continue; // unreadable — leave it to the tracked diff once staged
     }
     if (content.includes("\0")) continue; // binary
+    files += 1;
+    totalBytes += content.length;
     const lines = content.split("\n");
     if (lines.at(-1) === "") lines.pop();
     chunks.push(
       `diff --git a/${rel} b/${rel}\nnew file mode 100644\n--- /dev/null\n+++ b/${rel}\n` +
         `@@ -0,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join("\n")}\n`,
+    );
+  }
+  if (skipped.length > 0) {
+    chunks.push(
+      `\\ harness: ${skipped.length} untracked file(s) NOT scanned by content gates — stage them (git add) for a full check: ${skipped.slice(0, 5).join(", ")}${skipped.length > 5 ? ", …" : ""}\n`,
     );
   }
   return chunks.length > 0 ? `\n${chunks.join("")}` : "";

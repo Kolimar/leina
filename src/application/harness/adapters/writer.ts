@@ -195,6 +195,19 @@ function applyOwned(
  * .claude/settings.json hooks — is left for the owner to clean; stale
  * `harness hook` wiring is inert once the hook CLI answers it.)
  */
+/** Best-effort: prune now-empty parents left by a removed artifact. */
+async function pruneEmptyDirs(repoRoot: string, removedFile: string): Promise<void> {
+  let dir = path.dirname(removedFile);
+  while (dir !== repoRoot && dir.startsWith(repoRoot)) {
+    try {
+      await fs.rmdir(dir); // fails on non-empty — that's the stop condition
+    } catch {
+      return;
+    }
+    dir = path.dirname(dir);
+  }
+}
+
 async function cleanupOrphans(
   repoRoot: string,
   previous: Lockfile,
@@ -214,7 +227,10 @@ async function cleanupOrphans(
 
     if (stale.kind === "owned") {
       if (sha256(existing) === stale.contentHash || options.force) {
-        if (!options.check) await fs.rm(absolute);
+        if (!options.check) {
+          await fs.rm(absolute);
+          await pruneEmptyDirs(repoRoot, absolute);
+        }
         items.push({
           path: stale.path,
           adapter: stale.adapter,
@@ -229,7 +245,9 @@ async function cleanupOrphans(
           adapter: stale.adapter,
           kind: "owned",
           action: "conflict",
-          detail: "orphaned artifact was hand-edited — delete manually or rerun with --force",
+          detail:
+            "orphaned artifact was hand-edited — this stays a conflict on every run (including --check) " +
+            "until you delete the file to keep nothing, or rerun with --force to discard your edits",
         });
       }
     } else if (stale.kind === "managed-block") {
@@ -243,13 +261,24 @@ async function cleanupOrphans(
           adapter: stale.adapter,
           kind: "managed-block",
           action: "conflict",
-          detail: "orphaned block was hand-edited inside — remove manually or rerun with --force",
+          detail:
+            "orphaned block was hand-edited inside — this stays a conflict on every run (including --check) " +
+            "until you delete the block markers to keep your text, or rerun with --force to discard it",
         });
         continue;
       }
       const { content, removed } = removeManagedBlock(existing, blockId);
       if (removed) {
-        if (!options.check) await fs.writeFile(absolute, content, "utf8");
+        if (!options.check) {
+          // A file that held nothing but the harness block is a husk once the
+          // block is gone — remove it rather than leaving a 1-byte shell.
+          if (content.trim() === "") {
+            await fs.rm(absolute);
+            await pruneEmptyDirs(repoRoot, absolute);
+          } else {
+            await fs.writeFile(absolute, content, "utf8");
+          }
+        }
         items.push({
           path: stale.path,
           adapter: stale.adapter,

@@ -413,7 +413,9 @@ only when `config.platforms` names it, `--platforms` selects it, or the repo alr
 carries its files — leina never elects a host for you). A lockfile
 (`.harness/harness.lock.json`) hashes every artifact: hand-edited files **conflict**
 instead of being clobbered (`--force` overrides). `--check` computes drift without
-writing — exit 1 on drift (CI mode).
+writing — exit 1 on drift (CI mode). A hand-edited **orphaned** artifact (its rule or
+platform was removed) keeps conflicting on every run, including `--check`, until a human
+resolves it: delete the file/markers to keep the edits, or `--force` to discard them.
 
 ### `harness list [--phase <p>] [--tag <t>] [--json]`
 Resolved rules with source layer, phase, severity, gate types and enabled state.

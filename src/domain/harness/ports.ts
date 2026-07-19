@@ -67,10 +67,11 @@ export interface GitPort {
    */
   changedFiles(repoRoot: string, base?: string): Promise<string[] | null>;
   /**
-   * Raw `git diff --unified=0` output for content-level gates, with untracked
-   * text files appended as synthetic new-file diffs (content gates must see a
-   * secret before it is ever staged).
-   * Returns null when the diff cannot be produced (e.g. not a repository).
+   * Raw `git diff --unified=0` output for content-level gates. Working-tree
+   * diffs (cached: false) also append untracked text files as synthetic
+   * new-file diffs, within per-file and aggregate size budgets (content gates
+   * must see a secret before it is ever staged); `cached: true` is strictly
+   * the index. Returns null when the diff cannot be produced (not a repo).
    */
   diffUnified(repoRoot: string, options?: GitDiffOptions): Promise<string | null>;
 }

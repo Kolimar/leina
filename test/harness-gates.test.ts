@@ -294,6 +294,18 @@ describe("diff-content gate", () => {
     }
   });
 
+  it("cached diff is strictly the index — untracked content is NOT appended", async () => {
+    await repo.write("src/loose.ts", 'const apiKey = "sk_live_cached_check_x";\n');
+    try {
+      const workingTree = await ports.git.diffUnified(repo.root, {});
+      assert.ok(workingTree?.includes("sk_live_cached_check_x"), "working-tree diff sees untracked");
+      const index = await ports.git.diffUnified(repo.root, { cached: true });
+      assert.ok(!index?.includes("sk_live_cached_check_x"), "--cached does not");
+    } finally {
+      repo.git("clean", "-fq", "--", "src/loose.ts");
+    }
+  });
+
   it("respects path filters", async () => {
     await repo.write("docs/todo.md", "TODO: later\n");
     repo.git("add", "docs/todo.md");

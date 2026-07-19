@@ -101,11 +101,21 @@ and then it **yields honestly**: "allowing stop so a human can look", never a fa
 The pre-bash hook refuses `git commit` / `git push` while blocking gates are failing, and
 the pre-edit hook keeps the agent inside the contract scope.
 
-**Integrity boundary:** `.harness/rules/`, `.harness/config.json` and the lockfile are
-agent-read-only in *every* strictness mode — editing the gates to get past a gate is the
-obvious escape hatch, so the writing path for rules and config is the `leina harness`
-CLI/TUI, driven by a human. Task state (`.harness/state/` — plan, checklist, contract)
-stays agent-writable: that is the surface the workflow needs.
+**Integrity boundary — and the threat model, stated honestly:** `.harness/rules/`,
+`.harness/config.json` and the lockfile are agent-read-only: the pre-edit hook seals the
+Edit/Write tool path in *every* strictness mode, and the pre-bash hook blocks the common
+shell write forms (redirections, `sed -i`, `rm`, `tee`, …) against those paths. Task
+state (`.harness/state/` — plan, checklist, contract) stays agent-writable: that is the
+surface the workflow needs.
+
+Be clear about what this is: the harness is a **guardrail against accidents and drift,
+not a sandbox against an adversarial agent**. A model determined to cheat can still
+reach the files through channels no hook can fully parse (variable expansion, exotic
+quoting, a script it writes and runs). The guarantees that do **not** depend on agent
+cooperation are the ones anchored outside the conversation: `verify`'s exit code, the
+lockfile hashes, and `sync --check` in CI. If you need hard isolation, run the agent in
+a sandbox — the harness will still be the thing that tells you *whether the work is
+done*, which no sandbox does.
 
 ## One rule set, many hosts
 

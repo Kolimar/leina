@@ -228,6 +228,16 @@ describe("applyFileSets — orphan cleanup", () => {
     assert.ok(!content.includes("harness:begin"));
   });
 
+  it("removes the husk file when an orphaned block WAS the whole file", async () => {
+    await applyFileSets(repo.root, sets(block("CLAUDE.md", "ephemeral rules")), { sourceHash: HASH });
+    const outcome = await applyFileSets(repo.root, [{ adapter: "test", fileSet: { files: [], warnings: [] } }], {
+      sourceHash: HASH,
+    });
+    const item = outcome.items.find((i) => i.path === "CLAUDE.md");
+    assert.equal(item?.detail, "removed orphaned block");
+    assert.equal(await exists("CLAUDE.md"), false, "no 1-byte husk left behind");
+  });
+
   it("an orphaned managed block hand-edited INSIDE conflicts instead of vanishing", async () => {
     await repo.write("AGENTS.md", "# User heading\n");
     await applyFileSets(repo.root, sets(block("AGENTS.md", "ephemeral rules")), { sourceHash: HASH });

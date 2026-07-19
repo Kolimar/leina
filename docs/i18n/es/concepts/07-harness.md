@@ -101,12 +101,22 @@ las fallas vuelven como la siguiente instrucción del agente (block), hasta `max
 falso. El hook pre-bash rechaza `git commit` / `git push` mientras haya gates blocking
 fallando, y el hook pre-edit mantiene al agente dentro del scope del contract.
 
-**Frontera de integridad:** `.harness/rules/`, `.harness/config.json` y el lockfile son de
-solo lectura para el agente en *todos* los modos de strictness — editar los gates para pasar
-un gate es la vía de escape obvia, así que el camino de escritura para rules y config es la
-CLI/TUI de `leina harness`, manejada por un humano. El estado de la tarea
-(`.harness/state/` — plan, checklist, contract) sigue siendo escribible por el agente: esa es
-la superficie que el flujo de trabajo necesita.
+**Frontera de integridad — y el modelo de amenaza, dicho con honestidad:**
+`.harness/rules/`, `.harness/config.json` y el lockfile son de solo lectura para el agente:
+el hook pre-edit sella el camino de las tools Edit/Write en *todos* los modos de strictness,
+y el hook pre-bash bloquea las formas de escritura comunes por shell (redirecciones,
+`sed -i`, `rm`, `tee`, …) contra esas rutas. El estado de la tarea (`.harness/state/` —
+plan, checklist, contract) sigue siendo escribible por el agente: esa es la superficie que
+el flujo de trabajo necesita.
+
+Seamos claros sobre qué es esto: el harness es un **guardarraíl contra accidentes y
+deriva, no un sandbox contra un agente adversario**. Un modelo decidido a hacer trampa
+todavía puede llegar a los archivos por canales que ningún hook puede parsear del todo
+(expansión de variables, quoting exótico, un script que él mismo escribe y ejecuta). Las
+garantías que **no** dependen de la cooperación del agente son las ancladas fuera de la
+conversación: el exit code de `verify`, los hashes del lockfile y `sync --check` en CI.
+Si necesitás aislamiento duro, corré el agente en un sandbox — el harness seguirá siendo
+lo que te dice *si el trabajo está terminado*, cosa que ningún sandbox hace.
 
 ## Un solo set de rules, muchos hosts
 
