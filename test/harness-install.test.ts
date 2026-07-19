@@ -109,15 +109,48 @@ describe("bootstrapHarness (leina init step)", () => {
 });
 
 describe("deinitHarness (leina deinit inverse)", () => {
-  it("round-trips cleanly: artifacts, lockfile and pristine config are removed", async () => {
+  it("round-trips cleanly: artifacts and lockfile removed; the platforms config (host choice) stays", async () => {
     await bootstrapHarness(repo.root, ["claude"]);
     const result = deinitHarness(repo.root);
     assert.deepEqual(result.failures, [], result.failures.join("; "));
 
     assert.equal(await exists("CLAUDE.md"), false, "file contained only the harness block");
     assert.equal(await exists(".harness/harness.lock.json"), false);
-    assert.equal(await exists(".harness/config.json"), false, "pristine platforms-only config removed");
+    assert.ok(await exists(".harness/config.json"), "platforms config records the user's host choice — kept");
+    assert.deepEqual(JSON.parse(await read(".harness/config.json")), { platforms: ["claude-code"] });
+  });
+
+  it("round-trips to nothing when the seed was the empty {} (no hosts)", async () => {
+    await bootstrapHarness(repo.root);
+    const result = deinitHarness(repo.root);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+    assert.equal(await exists(".harness/config.json"), false, "pristine {} seed removed");
     assert.equal(await exists(".harness"), false, "empty .harness/ pruned");
+  });
+
+  it("re-init with different hosts UNION-merges config.platforms — the next sync keeps both", async () => {
+    await repo.write(".harness/config.json", JSON.stringify({ platforms: ["cursor"] }, null, 2));
+    await repo.write(".cursor/rules/.keep", "");
+    const result = await bootstrapHarness(repo.root, ["claude"]);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+
+    const config = JSON.parse(await read(".harness/config.json"));
+    assert.deepEqual(config.platforms, ["cursor", "claude-code"], "union, user's entry first");
+    assert.ok(await exists("CLAUDE.md"));
+    assert.ok(await exists(".cursor/rules/harness-core.mdc"), "existing platform still synced");
+
+    // The regression this guards: a plain follow-up sync must NOT orphan-remove
+    // what init just wrote (init/sync ping-pong).
+    const followUp = await runSync(repo.root, {});
+    assert.equal(followUp.exitCode, 0);
+    assert.ok(await exists("CLAUDE.md"), "claude artifacts survive the next sync");
+    assert.ok(await exists(".cursor/rules/harness-core.mdc"));
+  });
+
+  it("reports a host with no harness adapter instead of silently dropping it", async () => {
+    const result = await bootstrapHarness(repo.root, ["claude", "no-such-host"]);
+    assert.ok(result.failures.some((f) => f.includes('host "no-such-host"')));
+    assert.match(await read("CLAUDE.md"), /harness:begin/, "mapped host still wired");
   });
 
   it("is idempotent: a second deinit is a silent no-op", async () => {

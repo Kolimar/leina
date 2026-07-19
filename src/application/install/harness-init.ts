@@ -42,10 +42,20 @@ const HOST_TO_PLATFORM: Record<string, string> = {
  * The platforms the bootstrap may target: the hosts the user named on the init
  * command line, plus agentsmd only when the repo already carries an AGENTS.md.
  * Never inferred from anything else — the harness inherits init's stance that
- * leina does not choose an AI host for the user.
+ * leina does not choose an AI host for the user. A host with no harness
+ * adapter is reported, never silently dropped.
  */
-function bootstrapPlatforms(project: string, hosts: readonly string[]): string[] {
-  const platforms = hosts.map((h) => HOST_TO_PLATFORM[h]).filter((p): p is string => p !== undefined);
+function bootstrapPlatforms(
+  project: string,
+  hosts: readonly string[],
+  warnings: string[],
+): string[] {
+  const platforms: string[] = [];
+  for (const host of hosts) {
+    const platform = HOST_TO_PLATFORM[host];
+    if (platform !== undefined) platforms.push(platform);
+    else warnings.push(`host "${host}" has no harness platform adapter — harness artifacts skipped for it`);
+  }
   if (existsSync(join(project, "AGENTS.md")) && !platforms.includes("agentsmd")) {
     platforms.push("agentsmd");
   }
@@ -61,6 +71,58 @@ export interface HarnessBootstrapResult {
   failures: string[];
 }
 
+/**
+ * Persist the chosen platforms INTO the config (create or union-merge) so the
+ * config stays the single source of truth: running sync with explicit
+ * platforms that the config does not record would make the very next plain
+ * `harness sync` tear those artifacts back out as orphans (init/sync
+ * ping-pong). Union, never replacement — the user's own platform list is
+ * intent we extend, not state we own. Returns false when the config exists
+ * but could not be honored (malformed / not an object): nothing is written.
+ */
+function persistPlatforms(
+  configPath: string,
+  platforms: readonly string[],
+  written: string[],
+  failures: string[],
+): boolean {
+  if (!existsSync(configPath)) {
+    mkdirSync(dirname(configPath), { recursive: true });
+    const seed =
+      platforms.length > 0 ? `${JSON.stringify({ platforms }, null, 2)}\n` : HARNESS_MINIMAL_CONFIG;
+    writeFileSync(configPath, seed);
+    written.push(
+      platforms.length > 0
+        ? `.harness/config.json (created — platforms: ${platforms.join(", ")})`
+        : ".harness/config.json (created — builtin rules govern by default)",
+    );
+    return true;
+  }
+  if (platforms.length === 0) return true; // nothing to merge — existing config governs
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch (err) {
+    failures.push(`.harness/config.json: invalid JSON — platforms not merged (${errMsg(err)})`);
+    return false;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    failures.push(".harness/config.json: not a JSON object — platforms not merged");
+    return false;
+  }
+  const config = parsed as Record<string, unknown>;
+  const existing = Array.isArray(config.platforms)
+    ? (config.platforms as unknown[]).filter((p): p is string => typeof p === "string")
+    : [];
+  const merged = [...existing, ...platforms.filter((p) => !existing.includes(p))];
+  if (merged.length === existing.length) return true; // already recorded
+  config.platforms = merged;
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  written.push(`.harness/config.json (platforms merged: ${merged.join(", ")})`);
+  return true;
+}
+
 /** Idempotent harness bootstrap for `leina init` (FULL and LIGHT). */
 export async function bootstrapHarness(
   project: string,
@@ -68,32 +130,20 @@ export async function bootstrapHarness(
 ): Promise<HarnessBootstrapResult> {
   const written: string[] = [];
   const failures: string[] = [];
-  const platforms = bootstrapPlatforms(project, hosts);
+  const platforms = bootstrapPlatforms(project, hosts, failures);
 
   const configPath = join(project, HARNESS_DIR, "config.json");
-  let seededThisRun = false;
   try {
-    if (!existsSync(configPath)) {
-      mkdirSync(dirname(configPath), { recursive: true });
-      const seed =
-        platforms.length > 0 ? `${JSON.stringify({ platforms }, null, 2)}\n` : HARNESS_MINIMAL_CONFIG;
-      writeFileSync(configPath, seed);
-      seededThisRun = true;
-      written.push(
-        platforms.length > 0
-          ? `.harness/config.json (created — platforms: ${platforms.join(", ")})`
-          : ".harness/config.json (created — builtin rules govern by default)",
-      );
-    }
+    persistPlatforms(configPath, platforms, written, failures);
   } catch (err) {
     failures.push(`.harness/config.json: ${errMsg(err)}`);
   }
 
   try {
-    // Explicit platforms when the user (re-)named hosts on this invocation; a
-    // pre-existing config keeps its own platforms unless hosts were given.
-    const explicit = platforms.length > 0 && (seededThisRun || hosts.length > 0);
-    const result = await runSync(project, explicit ? { platforms } : {});
+    // The config (just seeded or merged) is the single source of truth — the
+    // sync never receives explicit platforms here, so what init writes and
+    // what the next `harness sync` maintains cannot diverge.
+    const result = await runSync(project, {});
     for (const e of result.errors) failures.push(`harness sync: ${e}`);
     if (result.outcome) {
       const changed = result.outcome.items.filter((i) => i.action === "created" || i.action === "updated");
@@ -120,14 +170,20 @@ export interface HarnessDeinitResult {
   failures: string[];
 }
 
-/** True for the exact shapes bootstrapHarness seeds: `{}` or `{ "platforms": [...] }`. */
+/**
+ * True only for the empty `{}` seed. A config carrying `platforms` encodes the
+ * user's host choice (possibly hand-curated since) — deinit must never guess
+ * that a non-empty config is disposable, so anything beyond `{}` stays.
+ */
 function isPristineBootstrapConfig(raw: string): boolean {
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return false;
-    const keys = Object.keys(parsed);
-    if (keys.length === 0) return true;
-    return keys.length === 1 && keys[0] === "platforms" && Array.isArray((parsed as { platforms: unknown }).platforms);
+    return (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      Object.keys(parsed).length === 0
+    );
   } catch {
     return false;
   }
@@ -275,9 +331,9 @@ export function deinitHarness(project: string): HarnessDeinitResult {
     }
   }
 
-  // The config seeded by init is ours to remove — but only while pristine
-  // (empty, or platforms-only as bootstrapHarness writes it); once the user
-  // configured anything else, the file is theirs.
+  // The config seeded by init is ours to remove — but only the empty `{}`
+  // seed; a config recording platforms (or anything else) is the user's
+  // host choice and stays.
   const configPath = join(project, HARNESS_DIR, "config.json");
   try {
     if (existsSync(configPath) && isPristineBootstrapConfig(readFileSync(configPath, "utf8"))) {

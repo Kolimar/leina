@@ -595,6 +595,9 @@ export async function handleInit(rest: string[]): Promise<void> {
   // already carries one) — never auto-elected. A LIGHT init (blanket active:
   // "don't wire repos") passes no hosts, so only pre-existing platform
   // evidence is refreshed. Best-effort like every other init step.
+  if (mode === "light" && hosts.length > 0) {
+    written.push(`harness: LIGHT init does not wire new platforms — --hosts (${hosts.join(", ")}) not applied to the harness`);
+  }
   const harness = await bootstrapHarness(project, mode === "full" ? hosts : []);
   written.push(...harness.written);
   failures.push(...harness.failures);
