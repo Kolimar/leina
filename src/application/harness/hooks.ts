@@ -140,7 +140,33 @@ function repoRelative(repoRoot: string, filePath: string): string {
   return path.relative(repoRoot, abs).replaceAll("\\", "/");
 }
 
+/**
+ * Freshness signal for the commit guard: every edit the harness ALLOWS
+ * touches this marker BEFORE the edit lands, so a verify report written
+ * earlier than the marker is provably older than the working tree. This is
+ * what catches the Edit/Write tool path (including brand-new files) that the
+ * git mtime signals miss until `git add` runs. Best-effort — a failed touch
+ * must never turn into a blocked edit.
+ */
+async function touchLastEdit(repoRoot: string): Promise<void> {
+  try {
+    await fs.mkdir(stateDir(repoRoot), { recursive: true });
+    await fs.writeFile(path.join(stateDir(repoRoot), "last-edit"), `${new Date().toISOString()}\n`, "utf8");
+  } catch {
+    // best-effort marker
+  }
+}
+
 export async function decidePreEdit(repoRoot: string, filePath: string | undefined): Promise<PreDecision> {
+  const decision = await decidePreEditInner(repoRoot, filePath);
+  if (!decision.block && filePath !== undefined && filePath.length > 0) {
+    const rel = repoRelative(repoRoot, filePath);
+    if (!rel.startsWith("..")) await touchLastEdit(repoRoot);
+  }
+  return decision;
+}
+
+async function decidePreEditInner(repoRoot: string, filePath: string | undefined): Promise<PreDecision> {
   if (filePath === undefined || filePath.length === 0) return ALLOW;
 
   const rel = repoRelative(repoRoot, filePath);
@@ -370,10 +396,82 @@ interface PersistedSummary {
   blockingFailures?: number;
 }
 
-async function readVerifySummary(repoRoot: string): Promise<{ summary?: PersistedSummary; present: boolean }> {
-  const report = await readJsonIfExists(path.join(stateDir(repoRoot), "verify-report.json"));
-  const summary = (report.value as { summary?: PersistedSummary } | undefined)?.summary;
-  return { ...(summary !== undefined ? { summary } : {}), present: report.value !== undefined };
+interface VerifySummaryRead {
+  /** Only set when the report is present AND fresh — a stale report yields nothing. */
+  summary?: PersistedSummary;
+  /** Report file exists and is fresher than every staleness signal. */
+  present: boolean;
+  /** Report file exists but the working tree moved on after it was written. */
+  stale: boolean;
+}
+
+async function mtimeOf(p: string): Promise<number | undefined> {
+  try {
+    return (await fs.stat(p)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Hot-path bound: stat at most this many report-recorded files per commit guard check. */
+const STALENESS_FILE_STAT_CAP = 500;
+
+/**
+ * Read the persisted verify report FOR THE COMMIT GUARD, treating it as
+ * absent when it is STALE. Without this, guided mode would honor a green
+ * report from before the agent introduced a failure (or a red report from
+ * before the fix) — "commit only when the gates pass" must not trust
+ * yesterday's verdict.
+ *
+ * Freshness criterion (documented, best-effort): the report's mtime must be
+ * >= the newest of
+ *   - .git/index, .git/HEAD, .git/logs/HEAD
+ *                                       (stage / commit / checkout after verify —
+ *                                        the reflog moves on every commit),
+ *   - state/last-edit                   (marker touched by every allowed
+ *                                        Edit/Write — covers new files too),
+ *   - state/edit-log.jsonl              (Cursor afterFileEdit log),
+ *   - the files the report itself recorded as changed (post-verify re-edits;
+ *     capped at STALENESS_FILE_STAT_CAP, missing files are no-signal since
+ *     deletions legitimately appear in a diff).
+ * Known gap: a brand-new file written through the SHELL and committed in a
+ * single `git add && git commit` command evades every signal above (the
+ * guard fires before `git add` updates the index). The harness is a
+ * guardrail against accidents, not a sandbox — see docs/concepts/07-harness.md.
+ */
+async function readVerifySummary(repoRoot: string): Promise<VerifySummaryRead> {
+  const reportPath = path.join(stateDir(repoRoot), "verify-report.json");
+  const report = await readJsonIfExists(reportPath);
+  if (report.value === undefined) return { present: false, stale: false };
+  const value = report.value as { summary?: PersistedSummary; changedFiles?: unknown };
+
+  const reportMtime = await mtimeOf(reportPath);
+  if (reportMtime !== undefined) {
+    const recorded = Array.isArray(value.changedFiles)
+      ? value.changedFiles
+          .filter((f): f is string => typeof f === "string")
+          .slice(0, STALENESS_FILE_STAT_CAP)
+          .map((f) => path.join(repoRoot, f))
+      : [];
+    const signals = await Promise.all(
+      [
+        path.join(repoRoot, ".git", "index"),
+        path.join(repoRoot, ".git", "HEAD"),
+        path.join(repoRoot, ".git", "logs", "HEAD"),
+        path.join(stateDir(repoRoot), "last-edit"),
+        path.join(stateDir(repoRoot), "edit-log.jsonl"),
+        ...recorded,
+      ].map(mtimeOf),
+    );
+    const newest = Math.max(0, ...signals.filter((s): s is number => s !== undefined));
+    if (newest > reportMtime) return { present: false, stale: true };
+  }
+
+  return {
+    ...(value.summary !== undefined ? { summary: value.summary } : {}),
+    present: true,
+    stale: false,
+  };
 }
 
 export async function decidePreBash(repoRoot: string, command: string | undefined): Promise<PreDecision> {
@@ -393,7 +491,9 @@ export async function decidePreBash(repoRoot: string, command: string | undefine
   const action = gitCommitOrPush(command);
   if (action === undefined) return ALLOW;
 
-  const { summary, present } = await readVerifySummary(repoRoot);
+  // A STALE report reads as absent: guided mode stops trusting an outdated
+  // green (or blocking on an outdated red); strict mode demands a re-verify.
+  const { summary, present, stale } = await readVerifySummary(repoRoot);
 
   if (summary && typeof summary.blockingFailures === "number" && summary.blockingFailures > 0) {
     return {
@@ -408,9 +508,11 @@ export async function decidePreBash(repoRoot: string, command: string | undefine
   if (!present && config.strictness === "strict") {
     return {
       block: true,
-      message:
-        'BLOCKED: no verify report found and strictness is "strict". ' +
-        "Run `leina harness verify` before committing.",
+      message: stale
+        ? "BLOCKED: the verify report is stale — the working tree changed after it was written. " +
+          "Run `leina harness verify` again before committing."
+        : 'BLOCKED: no verify report found and strictness is "strict". ' +
+          "Run `leina harness verify` before committing.",
     };
   }
   return ALLOW;
@@ -507,6 +609,8 @@ export async function decideCursorShell(
   const action = gitCommitOrPush(command);
   if (action === undefined) return { permission: "allow" };
 
+  // readVerifySummary yields no summary for a STALE report — same "treat as
+  // absent" rule as decidePreBash, so an outdated verdict never decides.
   const { summary } = await readVerifySummary(repoRoot);
   if (summary && typeof summary.blockingFailures === "number" && summary.blockingFailures > 0) {
     return {

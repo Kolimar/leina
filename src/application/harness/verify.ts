@@ -105,7 +105,7 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
   const results = await runGates(rules, ctx, resolution.config.verify.parallelism, policy);
   const report = buildReport(phases, startedAt, results);
 
-  await persistReport(repoRoot, report);
+  await persistReport(repoRoot, report, changed);
 
   return {
     report,
@@ -135,11 +135,15 @@ async function readGeneratedPaths(repoRoot: string): Promise<string[]> {
   return paths;
 }
 
-async function persistReport(repoRoot: string, report: VerifyReport): Promise<void> {
+async function persistReport(repoRoot: string, report: VerifyReport, changedFiles: string[]): Promise<void> {
   try {
     const dir = stateDir(repoRoot);
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(path.join(dir, "verify-report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+    // The persisted document carries `changedFiles` on top of the report so
+    // the commit guard (hooks.ts readVerifySummary) can stat those files and
+    // detect a report gone STALE — edited working tree after a green verify.
+    const persisted = { ...report, changedFiles };
+    await fs.writeFile(path.join(dir, "verify-report.json"), `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
   } catch {
     // Persisting the report is best-effort; the exit code is the contract.
   }
