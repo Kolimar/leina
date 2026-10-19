@@ -56,6 +56,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   - `query` ranks by relevance (EN/ES stopwords, identifier splitting, IDF weighting), excludes test/mock/fixture nodes unless `--include-tests`, lists every node and edge with `file:line`, returns at most 25 nodes by default and omits `contains`/`method` edges; `--json` is `{seeds, nodes, edges, testsExcluded}`.
 - **MCP**
   - `graph_query`, `graph_affected`, `graph_path` and `impact_analyze` answer in compact JSON: nodes `{id, label, kind, at}`, edges `{source, target, relation, at}`; `graph_affected.dependents` and `graph_path` (`{path: {nodes, edges}}`) changed shape. The `memory_*` tools answer in compact JSON too.
+  - Graph and memory tools act on the project their root belongs to (nearest leina project, else the git toplevel), like the CLI's `<dir>`: a server launched in a subdirectory uses the repository's graph, memory and consent flag instead of building a second graph there.
   - `memory_context` returns ranked, active-only previews (default limit 20; `full: true` for whole bodies).
   - `root` is confined to the server workspace after resolving symlinks; roots outside it are rejected unless allow-listed with `LEINA_MCP_ALLOW_ROOTS`. `graph_visualize`'s `out` is confined the same way and must end in `.html`. Numeric arguments are integers clamped to fixed bounds; `root` is optional on every tool.
 - **Memory**
@@ -67,6 +68,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   - `merge-projects` moves topic history too; `memory import`/`sync` validate every line, clamp timestamps, skip other projects' ids and do not resurrect compacted snapshots; `memory get`/`update` only see the current project's ids.
 - **Build and freshness**
   - `leina refresh` always re-extracts every file instead of reusing the extraction cache.
+  - A graph that fell back to tree-sitter for lack of a compiler sidecar goes stale once one is built, installed or configured, so the next read uses it; `leina scip install` and the degraded note remind to `leina refresh` after installing a SCIP indexer.
   - Sources are discovered through `git ls-files` (tracked + untracked-not-ignored), with a walker fallback outside git; hidden directories (except CI config dirs), nested repositories, submodules and gitignored files are no longer indexed.
   - The manifest (v3) records the leina version, the extractor schema and config-file hashes: upgrading leina or editing `tsconfig*.json`/`jsconfig.json`/`package.json` makes the graph stale.
   - Node ids: declarations whose names collide case-insensitively get a `:<tag>` suffix (non-colliding ids are unchanged); static and instance members are separate nodes; calls in a top-level initializer belong to that variable.
@@ -100,6 +102,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - `sidecar verify` / `scip verify` were broken in a published install (their fixtures were not shipped; the C#/Java ones were empty).
 - `leina build <missing dir>` created the directory, built an empty graph and registered it.
 - Concurrent reads of a stale graph each ran a full rebuild (one process per reader).
+- On a multi-repo workspace root, `query`/`affected`/`path` rebuilt it as one repo — indexing none of its members — and overwrote the merged graph with an empty one, and so did `build`/`refresh` (MCP `graph_build` too). They now build the stale members and merge them, and `status` lists the members; a git repository is never treated as one.
 - A graph built by an older leina still read as fresh after an upgrade.
 - Worktrees under `.claude/worktrees/` and gitignored output were indexed, duplicating symbols.
 - `memory save`/`update` accepted invalid types, which then broke `memory export` → `import`; `memory search` folded flag values into the query.
@@ -114,7 +117,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - `env set`/`unset` match keys the parser accepts (`KEY =value`) and collapse duplicates.
 - Harness: commit detection and the integrity guard handle `&`, subshells and backticks; Cursor's shell hook makes the same decision as pre-bash; the OpenCode plugin blocks only on exit status 2; `.harness/state/` ignores itself; `hookCommand` must be a leina launch form; the TUI writes rule overrides only after the contract is confirmed; deinit preserves user JSON verbatim and writes atomically.
 - The root and `memory` help showed `memory <dir> <sub>`; the dispatcher reads `memory <sub> <dir>`. Unknown commands and memory sub-commands printed help and exited 0; other usage problems exited 1.
-- Flag values were read as the project or the symbol: `visualize --out x.html`, `audit --from id`, `init --hosts devin <dir>` and `workspace memory search` picked the wrong word. `impact analyze` ignored its depth, `workspace build/status` ignored `--single`/`--workspace`, invalid `--format`/`--max-pack-kb`/`--type`/`--scope`/`--status` values were accepted, and `stats` created an empty graph.db.
+- Flag values were read as the project or the symbol: `visualize --out x.html`, `audit --from id`, `init --hosts devin <dir>` and `workspace memory search` picked the wrong word. `tui` took any first word as its directory, `impact analyze` ignored its depth, `workspace build/status` ignored `--single`/`--workspace`, invalid `--format`/`--max-pack-kb`/`--type`/`--scope`/`--status` values were accepted, and `stats` created an empty graph.db.
 - Tests no longer write into the developer's real `~/.leina` nor leave `.leina/` in `test/fixtures` (fixtures are built from temp copies); the 51 `test/use-cases` tests and the fake-agent-runner test, which `npm test` never ran, run again.
 
 ### Performance

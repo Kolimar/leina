@@ -56,6 +56,7 @@ y este proyecto sigue [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
   - `query` ordena por relevancia (stopwords EN/ES, separación de identificadores, ponderación IDF), excluye nodos de test/mock/fixture salvo con `--include-tests`, lista cada nodo y arista con `archivo:línea`, devuelve como mucho 25 nodos por defecto y omite las aristas `contains`/`method`; `--json` es `{seeds, nodes, edges, testsExcluded}`.
 - **MCP**
   - `graph_query`, `graph_affected`, `graph_path` e `impact_analyze` responden en JSON compacto: nodos `{id, label, kind, at}`, aristas `{source, target, relation, at}`; `graph_affected.dependents` y `graph_path` (`{path: {nodes, edges}}`) cambiaron de forma. Las tools `memory_*` también responden en JSON compacto.
+  - Las tools de grafo y memoria actúan sobre el proyecto al que pertenece su root (el proyecto leina más cercano hacia arriba, si no el toplevel de git), igual que el `<dir>` de la CLI: un server lanzado en un subdirectorio usa el grafo, la memoria y el flag de consentimiento del repositorio en lugar de construir un segundo grafo ahí.
   - `memory_context` devuelve previews ordenadas y solo de notas activas (límite por defecto 20; `full: true` para los cuerpos completos).
   - `root` queda confinado al workspace del server después de resolver symlinks; los roots de afuera se rechazan salvo que estén permitidos con `LEINA_MCP_ALLOW_ROOTS`. El `out` de `graph_visualize` se confina igual y tiene que terminar en `.html`. Los argumentos numéricos son enteros acotados a límites fijos; `root` es opcional en todas las tools.
 - **Memoria**
@@ -67,6 +68,7 @@ y este proyecto sigue [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
   - `merge-projects` también mueve el historial de topics; `memory import`/`sync` validan cada línea, recortan timestamps, omiten ids de otros proyectos y no resucitan snapshots compactados; `memory get`/`update` solo ven los ids del proyecto actual.
 - **Build y freshness**
   - `leina refresh` siempre re-extrae todos los archivos en lugar de reutilizar la caché de extracción.
+  - Un grafo que cayó a tree-sitter por falta de sidecar de compilador queda stale en cuanto uno se construye, se instala o se configura, así que la próxima lectura lo usa; `leina scip install` y el aviso de precisión reducida recuerdan correr `leina refresh` después de instalar un indexer SCIP.
   - Las fuentes se descubren con `git ls-files` (trackeados + no trackeados que no están ignorados), con un walker de respaldo fuera de git; ya no se indexan los directorios ocultos (salvo los de configuración de CI), los repositorios anidados, los submódulos ni los archivos ignorados por git.
   - El manifest (v3) registra la versión de leina, el esquema del extractor y los hashes de los archivos de configuración: actualizar leina o editar `tsconfig*.json`/`jsconfig.json`/`package.json` deja el grafo stale.
   - Ids de nodo: las declaraciones cuyos nombres colisionan sin distinguir mayúsculas llevan un sufijo `:<tag>` (los ids sin colisión no cambian); los miembros static y de instancia son nodos distintos; las llamadas en un inicializador de nivel superior pertenecen a esa variable.
@@ -100,6 +102,7 @@ y este proyecto sigue [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 - `sidecar verify` / `scip verify` estaban rotos en una instalación publicada (sus fixtures no se distribuían; las de C#/Java estaban vacías).
 - `leina build <dir inexistente>` creaba el directorio, construía un grafo vacío y lo registraba.
 - Las lecturas concurrentes de un grafo stale corrían cada una un rebuild completo (un proceso por lector).
+- En la raíz de un workspace multi-repo, `query`/`affected`/`path` la reconstruían como un solo repo — sin indexar ninguno de sus miembros — y pisaban el grafo fusionado con uno vacío; lo mismo hacían `build`/`refresh` (y `graph_build` por MCP). Ahora construyen los miembros stale y los fusionan, y `status` lista los miembros; un repositorio git nunca se trata como workspace.
 - Un grafo construido por un leina anterior seguía leyéndose como fresco después de actualizar.
 - Se indexaban los worktrees bajo `.claude/worktrees/` y la salida ignorada por git, duplicando símbolos.
 - `memory save`/`update` aceptaban tipos inválidos, que después rompían `memory export` → `import`; `memory search` mezclaba los valores de los flags en la consulta.
@@ -114,7 +117,7 @@ y este proyecto sigue [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 - `env set`/`unset` matchean las claves que acepta el parser (`KEY =valor`) y colapsan duplicados.
 - Harness: la detección de commits y el guard de integridad manejan `&`, subshells y backticks; el hook de shell de Cursor toma la misma decisión que pre-bash; el plugin de OpenCode bloquea solo con exit status 2; `.harness/state/` se ignora solo; `hookCommand` tiene que ser una forma de lanzar leina; la TUI escribe los overrides de rules recién cuando se confirma el contract; deinit preserva el JSON del usuario tal cual y escribe de forma atómica.
 - La ayuda raíz y la de `memory` mostraban `memory <dir> <sub>`; el dispatcher lee `memory <sub> <dir>`. Los comandos y subcomandos de memory desconocidos imprimían la ayuda y salían con 0; otros problemas de uso salían con 1.
-- Los valores de flags se leían como el proyecto o el símbolo: `visualize --out x.html`, `audit --from id`, `init --hosts devin <dir>` y `workspace memory search` tomaban la palabra equivocada. `impact analyze` ignoraba su profundidad, `workspace build/status` ignoraban `--single`/`--workspace`, se aceptaban valores inválidos de `--format`/`--max-pack-kb`/`--type`/`--scope`/`--status`, y `stats` creaba un graph.db vacío.
+- Los valores de flags se leían como el proyecto o el símbolo: `visualize --out x.html`, `audit --from id`, `init --hosts devin <dir>` y `workspace memory search` tomaban la palabra equivocada. `tui` tomaba cualquier primera palabra como su directorio, `impact analyze` ignoraba su profundidad, `workspace build/status` ignoraban `--single`/`--workspace`, se aceptaban valores inválidos de `--format`/`--max-pack-kb`/`--type`/`--scope`/`--status`, y `stats` creaba un graph.db vacío.
 - Los tests ya no escriben en el `~/.leina` real del desarrollador ni dejan `.leina/` en `test/fixtures` (los fixtures se construyen desde copias temporales); los 51 tests de `test/use-cases` y el del fake-agent-runner, que `npm test` nunca corría, vuelven a correr.
 
 ### Rendimiento

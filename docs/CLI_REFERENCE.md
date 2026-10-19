@@ -271,6 +271,13 @@ directory; never resolved upwards; it must exist). `--single` / `--workspace` ov
 detection for `build`, `status`, `detect` and `visualize`. A workspace is stale when **any**
 member repo is stale.
 
+The per-project commands treat a workspace root the same way: `query`, `affected`, `path`,
+`build` and `refresh` on it build the stale members and merge them, and `status` lists the
+members. Built as one repo it would index none of them (nested repositories are skipped) and
+overwrite the merged graph. Only a directory outside any git repository is routed like this; a
+git repository is always its own project (`leina workspace …` treats one as a workspace on
+request).
+
 ### `workspace build [<dir>] [--json] [--single|--workspace]`
 Build every member repo's graph and the merged workspace store. With `--json` also exports
 `<dir>/.leina/workspace-graph.json` (node-link dump of the merged graph). Prints merged
@@ -575,6 +582,11 @@ call edges best-effort); the sidecar adds compiler-grade precision.
   `leina sidecar build <lang>` (toolchain present) or `leina sidecar install <lang>` (toolchain
   missing) and exits `0`. A prebuilt sidecar is verified even without dotnet/JDK on `PATH`.
 
+A graph that fell back to tree-sitter for lack of a sidecar goes stale once one is built,
+installed or configured, so the next read re-extracts with it. A SCIP indexer installed on
+`PATH` is not detected that way (that would mean spawning it on every read): run
+`leina refresh` after installing one.
+
 All extractors (ts-morph, the two sidecars, tree-sitter, and the YAML-infra extractor) implement
 a common extractor contract and each extraction returns a versioned result
 (`schemaVersion: 1`, with diagnostics, duration, and errors).
@@ -728,7 +740,10 @@ not escape; a root that cannot be resolved safely (dangling link, loop, no acces
 rejected. To allow other roots on purpose, launch the server with
 `LEINA_MCP_ALLOW_ROOTS=/abs/path[:/abs/path...]` (`:`/`;` per platform, or `,` separated);
 listed paths and their subdirectories are accepted, resolved the same way. The tools return
-the resolved real path.
+the resolved real path. Graph and memory tools then act on the project that root belongs to —
+the nearest enclosing leina project, else the git toplevel, like the CLI's `<dir>` — so a server
+launched in a subdirectory uses the repository's graph, memory and consent flag; the harness
+tools act on its harness root.
 
 **Numeric arguments** are integers, truncated and clamped to fixed bounds (`depth` 1–20,
 `maxNodes` 1–200, `limit` 1–100, `sessionLimit` 1–50); a non-numeric value falls back to

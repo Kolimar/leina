@@ -293,6 +293,13 @@ directorio actual; nunca se resuelve hacia arriba; tiene que existir). Los flags
 `--workspace` invalidan la detección en `build`, `status`, `detect` y `visualize`.
 Un workspace está stale cuando **cualquier** repo miembro está stale.
 
+Los comandos por proyecto tratan igual a la raíz de un workspace: `query`, `affected`, `path`,
+`build` y `refresh` sobre ella construyen los miembros stale y los fusionan, y `status` lista los
+miembros. Construida como un solo repo no indexaría ninguno (los repositorios anidados se omiten)
+y pisaría el grafo fusionado. Solo se enruta así un directorio que está fuera de todo
+repositorio git; un repositorio git siempre es su propio proyecto (`leina workspace …` lo trata
+como workspace cuando se le pide).
+
 ### `workspace build [<dir>] [--json] [--single|--workspace]`
 Construye el grafo de cada repo miembro y el store de workspace fusionado. Con `--json`
 también exporta `<dir>/.leina/workspace-graph.json` (dump node-link del grafo fusionado).
@@ -616,6 +623,11 @@ opcionales de compilador bajo demanda. Sin sidecar, Java/C# igual se extraen ví
   o `leina sidecar install <lang>` (falta el toolchain) y sale con `0`. Un sidecar precompilado se
   verifica aunque no haya dotnet/JDK en el `PATH`.
 
+Un grafo que cayó a tree-sitter por falta de sidecar queda stale en cuanto uno se construye,
+se instala o se configura, así que la próxima lectura re-extrae con él. Un indexer SCIP instalado
+en el `PATH` no se detecta así (habría que ejecutarlo en cada lectura): corré `leina refresh`
+después de instalarlo.
+
 El extractor YAML-infra (servicios de docker-compose, jobs de CI, archivos de configuración
 genéricos) parsea con tree-sitter, usando la gramática mantenida `tree-sitter-yaml` incluida en
 `assets/wasm/`. Un archivo que tree-sitter no puede parsear limpio — YAML con plantillas como los
@@ -772,7 +784,10 @@ escapa; un root que no se puede resolver de forma segura (link colgante, loop, s
 rechaza. Para permitir otros roots a propósito, lanzá el server con
 `LEINA_MCP_ALLOW_ROOTS=/ruta/abs[:/ruta/abs...]` (`:`/`;` según la plataforma, o `,`); las rutas
 listadas y sus subdirectorios se aceptan, resueltas de la misma forma. Las tools devuelven la
-ruta real resuelta.
+ruta real resuelta. Después, las tools de grafo y de memoria actúan sobre el proyecto al que
+pertenece ese root — el proyecto leina más cercano hacia arriba, si no el toplevel de git, igual
+que el `<dir>` de la CLI —, así que un server lanzado en un subdirectorio usa el grafo, la memoria
+y el flag de consentimiento del repositorio; las tools del harness actúan sobre su raíz de harness.
 
 **Los argumentos numéricos** son enteros, truncados y acotados a límites fijos (`depth` 1–20,
 `maxNodes` 1–200, `limit` 1–100, `sessionLimit` 1–50); un valor no numérico usa el default de
