@@ -56,8 +56,9 @@ test("(cap-2) canonical IDs are present", () => {
   }
 });
 
-// memory.add / memory.get moved to v2 when they grew the batch form (items[] / ids[]).
-const SCHEMA_V2 = new Set(["memory.add", "memory.get", "memory.context"]);
+// memory.add / memory.get moved to v2 when they grew the batch form (items[] / ids[]);
+// memory.update when it grew the lifecycle (status / resolution).
+const SCHEMA_V2 = new Set(["memory.add", "memory.get", "memory.context", "memory.update"]);
 
 test("(cap-3) each capability has the expected schemaVersion", () => {
   for (const cc of capabilities) {

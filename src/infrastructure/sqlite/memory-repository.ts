@@ -22,7 +22,13 @@ import type {
   ExportedObservation,
   ImportReport,
 } from "../../domain/memory/model.ts";
-import { parseObservationType, parseScope } from "../../domain/memory/model.ts";
+import {
+  InvalidMemoryValueError,
+  parseObservationStatus,
+  parseObservationType,
+  parseScope,
+  type ObservationStatus,
+} from "../../domain/memory/model.ts";
 import type { BatchResult } from "../../domain/shared/batch.ts";
 import type { MemoryRepository } from "../../domain/memory/ports.ts";
 
@@ -56,6 +62,9 @@ interface ObsRow {
   updated_at: number;
   revision: number;
   superseded_by: string | null;
+  status: string;
+  status_changed_at: number | null;
+  resolution: string | null;
 }
 
 interface SessionRow {
@@ -77,6 +86,7 @@ interface SearchRow {
   scope: string;
   snippet: string;
   score: number;
+  status: string;
 }
 
 // Tolerate the leading "#" presentation prefix that search/context render in
@@ -87,6 +97,57 @@ interface SearchRow {
 // by search/get/context into get(), update() and updateBatch() alike.
 function stripIdPrefix(id: string): string {
   return id.startsWith("#") ? id.slice(1) : id;
+}
+
+// Merge ordering of one observation version (import / sync): see isNewer in importObservations.
+interface RowVersion {
+  revision: number;
+  updatedAt: number;
+  statusChangedAt?: number;
+}
+
+interface VersionRow {
+  revision: number;
+  updated_at: number;
+  status_changed_at: number | null;
+}
+
+function versionOf(r: VersionRow): RowVersion {
+  return { revision: r.revision, updatedAt: r.updated_at, statusChangedAt: r.status_changed_at ?? undefined };
+}
+
+type SqlParam = null | number | bigint | string | Uint8Array;
+
+// SET fragments for the lifecycle part of an update. A status change stamps
+// status_changed_at; going back to `active` clears the resolution unless a new one is
+// given. A resolution is only meaningful on a resolved/obsolete note, so pairing one with
+// an active result is rejected rather than silently stored.
+function statusSets(existing: ObsRow, fields: UpdateFields, ts: number): { sets: string[]; params: SqlParam[] } {
+  const sets: string[] = [];
+  const params: SqlParam[] = [];
+  const next = fields.status === undefined ? (existing.status as ObservationStatus) : parseObservationStatus(fields.status);
+  if (fields.resolution !== undefined && next === "active") {
+    throw new InvalidMemoryValueError("a resolution note needs status resolved or obsolete");
+  }
+  if (fields.status !== undefined && next !== existing.status) {
+    sets.push("status=?", "status_changed_at=?");
+    params.push(next, ts);
+    if (next === "active" && fields.resolution === undefined) sets.push("resolution=NULL");
+  }
+  if (fields.resolution !== undefined) {
+    sets.push("resolution=?");
+    params.push(fields.resolution);
+  }
+  return { sets, params };
+}
+
+// True when an update carries only lifecycle fields: such an update must not bump
+// updated_at, or resolving a note would push it to the top of every recency ordering.
+function isStatusOnly(fields: UpdateFields): boolean {
+  const lifecycle = fields.status !== undefined || fields.resolution !== undefined;
+  const content =
+    fields.title !== undefined || fields.content !== undefined || fields.type !== undefined || fields.anchors !== undefined;
+  return lifecycle && !content;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,10 +165,13 @@ function rowToObs(r: ObsRow): Observation {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     revision: r.revision,
+    status: r.status as ObservationStatus,
   };
   if (r.topic_key) o.topicKey = r.topic_key;
   if (r.session_id) o.sessionId = r.session_id;
   if (r.superseded_by) o.supersededBy = r.superseded_by;
+  if (r.status_changed_at !== null) o.statusChangedAt = r.status_changed_at;
+  if (r.resolution !== null) o.resolution = r.resolution;
   return o;
 }
 
@@ -328,21 +392,21 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   // the incoming row must carry.
   private resolveTopicConflict(
     item: ExportedObservation,
-    isNewer: (a: { revision: number; updatedAt: number }, b: { revision: number; updatedAt: number }) => boolean,
+    isNewer: (a: RowVersion, b: RowVersion) => boolean,
     report: ImportReport,
   ): string | null {
     const inherited = item.supersededBy ?? null;
     if (item.topicKey === undefined || inherited !== null) return inherited;
     const local = this.db
       .prepare(
-        `SELECT id, revision, updated_at FROM observations
+        `SELECT id, revision, updated_at, status_changed_at FROM observations
            WHERE project_key=? AND scope=? AND topic_key=? AND superseded_by IS NULL`,
       )
       .get(this.projectKey, item.scope, item.topicKey) as unknown as
-      { id: string; revision: number; updated_at: number } | undefined;
+      (VersionRow & { id: string }) | undefined;
     if (local === undefined) return null;
     report.topicConflicts++;
-    if (isNewer(item, { revision: local.revision, updatedAt: local.updated_at })) {
+    if (isNewer(item, versionOf(local))) {
       this.db.prepare(`UPDATE observations SET superseded_by=? WHERE id=?`).run(item.id, local.id);
       return null;
     }
@@ -373,12 +437,14 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   // follows updatedAt; anchors are clamped the same way.
   private static clampTimestamps(item: ExportedObservation, now: number): ExportedObservation {
     const updatedAt = Math.min(item.updatedAt, now);
-    return {
+    const clamped: ExportedObservation = {
       ...item,
       updatedAt,
       createdAt: Math.min(item.createdAt, updatedAt),
       anchors: item.anchors.map((a) => ({ ...a, createdAt: Math.min(a.createdAt, now) })),
     };
+    if (item.statusChangedAt !== undefined) clamped.statusChangedAt = Math.min(item.statusChangedAt, now);
+    return clamped;
   }
 
   importObservations(items: ExportedObservation[]): ImportReport {
@@ -386,14 +452,15 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     const insertStmt = this.db.prepare(
       `INSERT INTO observations
          (id, project_key, scope, type, title, content, topic_key, session_id,
-          created_at, updated_at, revision, superseded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          created_at, updated_at, revision, superseded_by, status, status_changed_at, resolution)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     // Scoped to this project: the guard below already skips foreign ids, and the
     // project_key predicate keeps the write confined even if that guard ever regresses.
     const updateStmt = this.db.prepare(
       `UPDATE observations SET scope=?, type=?, title=?, content=?, topic_key=?, session_id=?,
-          created_at=?, updated_at=?, revision=?, superseded_by=? WHERE id=? AND project_key=?`,
+          created_at=?, updated_at=?, revision=?, superseded_by=?,
+          status=?, status_changed_at=?, resolution=? WHERE id=? AND project_key=?`,
     );
     // Ids are globally unique across the shared memory.db, so the lookup is by id alone and
     // the owner decides: a row owned by ANOTHER project is never updated (a snapshot shipped
@@ -401,7 +468,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     // SessionStart then injects) and never re-inserted (the id is taken) — it is skipped
     // and reported.
     const ownerStmt = this.db.prepare(
-      `SELECT project_key, revision, updated_at FROM observations WHERE id = ?`,
+      `SELECT project_key, revision, updated_at, status_changed_at FROM observations WHERE id = ?`,
     );
     const anchorInsert = this.db.prepare(
       `INSERT OR REPLACE INTO memory_anchors
@@ -416,9 +483,14 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       }
     };
 
-    // Newer wins, deterministically: higher revision, then later updatedAt.
-    const isNewer = (a: { revision: number; updatedAt: number }, b: { revision: number; updatedAt: number }): boolean =>
-      a.revision > b.revision || (a.revision === b.revision && a.updatedAt > b.updatedAt);
+    // Newer wins, deterministically: higher revision, then later updatedAt, then the later
+    // status change — a resolve/reopen touches neither of the first two, and must still
+    // travel through `memory sync` to the teammates who import it.
+    const isNewer = (a: RowVersion, b: RowVersion): boolean =>
+      a.revision > b.revision ||
+      (a.revision === b.revision &&
+        (a.updatedAt > b.updatedAt ||
+          (a.updatedAt === b.updatedAt && (a.statusChangedAt ?? 0) > (b.statusChangedAt ?? 0))));
 
     const incomingRevision = new Map<string, number>();
     for (const i of items) incomingRevision.set(i.id, Math.max(incomingRevision.get(i.id) ?? 0, i.revision));
@@ -435,20 +507,21 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       for (const raw of ordered) {
         const item = SQLiteMemoryRepository.clampTimestamps(raw, now);
         const owner = ownerStmt.get(item.id) as unknown as
-          { project_key: string; revision: number; updated_at: number } | undefined;
+          (VersionRow & { project_key: string }) | undefined;
         if (owner !== undefined && owner.project_key !== this.projectKey) {
           report.skippedForeign++;
           continue;
         }
         if (owner) {
-          if (!isNewer(item, { revision: owner.revision, updatedAt: owner.updated_at })) {
+          if (!isNewer(item, versionOf(owner))) {
             report.skippedOlder++;
             continue;
           }
           updateStmt.run(
             item.scope, item.type, item.title, item.content, item.topicKey ?? null,
             item.sessionId ?? null, item.createdAt, item.updatedAt, item.revision,
-            item.supersededBy ?? null, item.id, this.projectKey,
+            item.supersededBy ?? null, item.status, item.statusChangedAt ?? null,
+            item.resolution ?? null, item.id, this.projectKey,
           );
           writeAnchors(item.id, item.anchors);
           report.updated++;
@@ -467,7 +540,8 @@ export class SQLiteMemoryRepository implements MemoryRepository {
         insertStmt.run(
           item.id, this.projectKey, item.scope, item.type, item.title, item.content,
           item.topicKey ?? null, item.sessionId ?? null, item.createdAt, item.updatedAt,
-          item.revision, supersededBy,
+          item.revision, supersededBy, item.status, item.statusChangedAt ?? null,
+          item.resolution ?? null,
         );
         writeAnchors(item.id, item.anchors);
         report.inserted++;
@@ -549,8 +623,8 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       .prepare(
         `INSERT INTO observations
            (id, project_key, scope, type, title, content, topic_key, session_id,
-            created_at, updated_at, revision, superseded_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            created_at, updated_at, revision, superseded_by, status, status_changed_at, resolution)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         snapId,
@@ -565,14 +639,21 @@ export class SQLiteMemoryRepository implements MemoryRepository {
         old.updated_at,
         old.revision,
         existingId,
+        old.status,
+        old.status_changed_at,
+        old.resolution,
       );
 
-    // Update the live row in place — id stable, revision++.
+    // Update the live row in place — id stable, revision++. New content on a topic is
+    // current knowledge again: a resolved/obsolete topic re-saved comes back `active`
+    // (its snapshot above keeps the old status and resolution).
+    const reactivated = old.status !== "active";
     this.db
       .prepare(
         `UPDATE observations
            SET title=?, content=?, type=?, updated_at=?, session_id=?,
-               revision=revision+1
+               revision=revision+1, status='active', resolution=NULL,
+               status_changed_at=CASE WHEN ? THEN ? ELSE status_changed_at END
          WHERE id=?`,
       )
       .run(
@@ -581,6 +662,8 @@ export class SQLiteMemoryRepository implements MemoryRepository {
         input.type,
         ts,
         resolvedSessionId,
+        reactivated ? 1 : 0,
+        ts,
         existingId,
       );
 
@@ -686,9 +769,11 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     }
 
     // Build SET clause dynamically — only mutate provided fields.
-    type SqlParam = null | number | bigint | string | Uint8Array;
-    const sets: string[] = ["updated_at=?"];
-    const params: SqlParam[] = [ts];
+    const lifecycle = statusSets(existing, fields, ts);
+    const sets: string[] = isStatusOnly(fields) ? [] : ["updated_at=?"];
+    const params: SqlParam[] = isStatusOnly(fields) ? [] : [ts];
+    sets.push(...lifecycle.sets);
+    params.push(...lifecycle.params);
 
     if (fields.title !== undefined) {
       sets.push("title=?");
@@ -704,9 +789,11 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     }
 
     params.push(id, this.projectKey); // WHERE id=? AND project_key=?
-    this.db
-      .prepare(`UPDATE observations SET ${sets.join(", ")} WHERE id=? AND project_key=?`)
-      .run(...params);
+    if (sets.length > 0) {
+      this.db
+        .prepare(`UPDATE observations SET ${sets.join(", ")} WHERE id=? AND project_key=?`)
+        .run(...params);
+    }
 
     // Re-resolve anchors whenever the caller provides them — an anchors-only
     // update (re-anchoring a memory without touching its text) must not no-op.
@@ -967,7 +1054,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     const normalizedQuery = query.trim().toLowerCase();
     const topicForm = normalizedQuery.replaceAll(/\s+/g, "_");
     const sql = `
-      SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope,
+      SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope, o.status,
              snippet(obs_fts, 1, '[', ']', ' … ', 12) AS snippet,
              bm25(obs_fts, 5.0, 1.0) AS score
         FROM obs_fts
@@ -977,7 +1064,8 @@ export class SQLiteMemoryRepository implements MemoryRepository {
          AND o.superseded_by IS NULL
          AND (? IS NULL OR o.scope = ?)
          AND (? IS NULL OR o.type = ?)
-       ORDER BY CASE
+       ORDER BY o.status <> 'active',
+           CASE
              WHEN lower(coalesce(o.topic_key, '')) = ? THEN 0
              WHEN instr(lower(o.title), ?) > 0 THEN 1
              WHEN instr(lower(o.content), ?) > 0 THEN 2
@@ -1017,6 +1105,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       score: r.score,
       updatedAt: r.updated_at,
       scope: r.scope as Scope,
+      status: r.status as ObservationStatus,
     }));
   }
 
@@ -1036,13 +1125,13 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       // Empty query: return the most recently updated live observations (no text filter).
       const rows = this.db
         .prepare(
-          `SELECT id, title, type, topic_key, updated_at, scope, content
+          `SELECT id, title, type, topic_key, updated_at, scope, content, status
              FROM observations
             WHERE project_key = ?
               AND superseded_by IS NULL
               AND (? IS NULL OR scope = ?)
               AND (? IS NULL OR type = ?)
-            ORDER BY updated_at DESC
+            ORDER BY status <> 'active', updated_at DESC, id DESC
             LIMIT ?`,
         )
         .all(this.projectKey, scope, scope, type, type, limit) as unknown as ObsRow[];
@@ -1055,6 +1144,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
         score: 0,
         updatedAt: r.updated_at,
         scope: r.scope as Scope,
+        status: r.status as ObservationStatus,
       }));
     }
 
@@ -1079,14 +1169,14 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     const runLike = (patterns: string[]): ObsRow[] => {
       const clauses = patterns.map(() => "(lower(o.title) LIKE ? OR lower(o.content) LIKE ?)").join(" OR ");
       const sql = `
-        SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope, o.content
+        SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope, o.content, o.status
           FROM observations o
          WHERE o.project_key = ?
            AND o.superseded_by IS NULL
            AND (? IS NULL OR o.scope = ?)
            AND (? IS NULL OR o.type = ?)
            AND (${clauses})
-         ORDER BY ${rankExpr}, o.updated_at DESC
+         ORDER BY o.status <> 'active', ${rankExpr}, o.updated_at DESC
          LIMIT ?
       `;
       return this.db
@@ -1134,6 +1224,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
         score,
         updatedAt: r.updated_at,
         scope: r.scope as Scope,
+        status: r.status as ObservationStatus,
       };
     });
   }
@@ -1153,12 +1244,16 @@ export class SQLiteMemoryRepository implements MemoryRepository {
 
   // ---- recentContext --------------------------------------------------------
 
+  // Context is orientation for the NEXT piece of work, so only `active` notes take part unless
+  // the caller asks for the rest. Ties on updated_at (a batch saved in one millisecond) break
+  // on id, so the order never depends on the SQLite build.
   recentContext(
-    opts?: { scope?: Scope; limit?: number; sessionLimit?: number },
+    opts?: { scope?: Scope; limit?: number; sessionLimit?: number; includeInactive?: boolean },
   ): { sessions: Session[]; observations: Observation[] } {
     const scope = opts?.scope ?? null;
     const limit = opts?.limit ?? 20;
     const sessionLimit = opts?.sessionLimit ?? 5;
+    const activeOnly = opts?.includeInactive === true ? 0 : 1;
 
     const sessionRows = this.db
       .prepare(
@@ -1176,10 +1271,11 @@ export class SQLiteMemoryRepository implements MemoryRepository {
           WHERE project_key=?
             AND superseded_by IS NULL
             AND (? IS NULL OR scope=?)
-          ORDER BY updated_at DESC
+            AND (? = 0 OR status = 'active')
+          ORDER BY updated_at DESC, id DESC
           LIMIT ?`,
       )
-      .all(this.projectKey, scope, scope, limit) as unknown as ObsRow[];
+      .all(this.projectKey, scope, scope, activeOnly, limit) as unknown as ObsRow[];
 
     return {
       sessions: sessionRows.map(rowToSession),

@@ -67,6 +67,9 @@ MEMORY (always-on injection + global DB, keyed by project — advisory, never bl
   evolve an existing entry in place.
 - Run `leina memory get <dir> <id>` to read a single observation in full, and
   `leina memory update <dir> <id> [--title] [--content] [--type]` to correct one in place.
+- When a saved note is done or no longer true (a shipped backlog item, a landed fix), run
+  `leina memory resolve <dir> <id> [--note "..."]` (`--obsolete` when it no longer applies;
+  `memory reopen` undoes it). Resolved notes leave the injection; search still finds them.
 - Run `leina memory session-start <dir>` to open a fresh session id, and
   `leina memory suggest-topic <dir> --title "..."` to get a normalized topic_key.
 - Run `leina memory session <dir> --content "<summary>"` at the END of a session.

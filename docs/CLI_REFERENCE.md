@@ -257,9 +257,26 @@ graph on save).
 **Batch:** `memory save <dir> --batch [--atomic]` reads a JSON array of
 `{title, content, type?, topicKey?, scope?, anchors?}` from stdin.
 
-### `memory update <dir> <id> [--title ..] [--content ..] [--type ..] [--anchors a,b]`
-Update an observation in place by id, bumping its revision. **Batch:**
-`--batch [--atomic]` reads a JSON array of `{id, title?, content?, type?, anchors?}`.
+### `memory update <dir> <id> [--title ..] [--content ..] [--type ..] [--anchors a,b] [--status s] [--resolution "..."]`
+Update an observation in place by id (the revision is kept — evolve through `save --topic`
+for a new revision). `--status active|resolved|obsolete` changes its lifecycle (see
+`memory resolve`); `--resolution` is a short note that needs a non-active status. A
+status-only change keeps `updated_at`, so it never reorders anything by recency. **Batch:**
+`--batch [--atomic]` reads a JSON array of
+`{id, title?, content?, type?, anchors?, status?, resolution?}`.
+
+### `memory resolve <dir> <id> [--note "..."] [--obsolete]`
+Close an observation without deleting it: status `resolved` (or `obsolete` with
+`--obsolete`), stamped with today's date and the optional `--note`. A non-active note leaves
+the SessionStart injection and `memory context`; `search`, `verified` and `get` still return
+it, labelled (`(resolved)`, `status: resolved 2026-07-19 — note`) and ranked below active
+notes. The drift verdict stays independent of the status. Re-saving the same `--topic` brings
+the note back as active. **Batch:** `memory resolve <dir> --batch [--atomic]` reads a JSON
+array of id strings or `{id, note?, obsolete?}` objects (`--note` / `--obsolete` set the
+default for every item).
+
+### `memory reopen <dir> <id>`
+Set the status back to `active` and clear the resolution note.
 
 ### `memory search <dir> <query> [--type t] [--scope s] [--limit N]`
 Full-text search (default limit 10). Prints `#id [type] [topic] title` plus a snippet per hit.
@@ -271,14 +288,14 @@ you're about to act on remembered context. If the graph is unavailable, verdicts
 unverified (still printed).
 
 ### `memory get <dir> <id>`
-Print the full observation (title, type, topic_key, timestamps, revision, content). Ids are
+Print the full observation (title, type, topic_key, status, timestamps, revision, content). Ids are
 scoped to the current project: another project's id reads as not found (same for
 `memory update`).
 **Batch:** `memory get <dir> --batch` reads a JSON array of id strings from stdin.
 
 ### `memory context <dir> [--limit N]`
-Recent sessions + latest observations for the project. **Run this at the start of every
-session** to restore prior decisions.
+Recent sessions + latest **active** observations for the project (resolved/obsolete notes are
+left out). **Run this at the start of every session** to restore prior decisions.
 
 ### `memory session <dir> --content "summary" [--title "..."]`
 Save a session summary. Run at the **end** of a session.
@@ -633,7 +650,7 @@ exports the full graph.
 | `memory verified` | `memory_verified` | honours `type` |
 | `memory context` | `memory_context` | previews by default (budget-safe; `contentChars` counts code points); `limit`, `sessionLimit`, `full:true` |
 | `memory get` | `memory_get` | batch: `ids[]`; ids of other projects read as not found |
-| `memory update` | `memory_update` | current project's ids only |
+| `memory update` / `resolve` / `reopen` | `memory_update` | current project's ids only; `status` (`active`/`resolved`/`obsolete`) + `resolution` |
 | `memory suggest-topic` | `memory_suggest_topic` | |
 | `memory session` | `memory_session` | |
 | `agent-hook SessionStart` | `context_build` | |

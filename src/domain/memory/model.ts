@@ -77,6 +77,27 @@ export function parseScope(raw: unknown): Scope {
   throw new InvalidMemoryValueError(`invalid scope ${JSON.stringify(raw)}: must be one of ${SCOPES.join("|")}`);
 }
 
+/**
+ * Lifecycle of an observation, independent of its graph drift state. `active` notes are
+ * current knowledge; `resolved` ones describe something that was dealt with (a fixed bug, a
+ * closed backlog item); `obsolete` ones are no longer true. Only active notes are injected at
+ * session start; search / verified / get still return the others, labelled and ranked below.
+ */
+export const OBSERVATION_STATUSES = ["active", "resolved", "obsolete"] as const;
+
+export type ObservationStatus = (typeof OBSERVATION_STATUSES)[number];
+
+export function isObservationStatus(v: unknown): v is ObservationStatus {
+  return typeof v === "string" && (OBSERVATION_STATUSES as readonly string[]).includes(v);
+}
+
+export function parseObservationStatus(raw: unknown): ObservationStatus {
+  if (isObservationStatus(raw)) return raw;
+  throw new InvalidMemoryValueError(
+    `invalid status ${JSON.stringify(raw)}: must be one of ${OBSERVATION_STATUSES.join("|")}`,
+  );
+}
+
 export interface ObservationInput {
   title: string;
   content: string;
@@ -100,6 +121,11 @@ export interface Observation {
   updatedAt: number;
   revision: number;
   supersededBy?: string;
+  status: ObservationStatus;
+  /** When the status last changed (resolve / reopen). Absent for a note that was never resolved. */
+  statusChangedAt?: number;
+  /** Optional note saying how or why the observation was resolved / made obsolete. */
+  resolution?: string;
 }
 
 export interface SearchHit {
@@ -111,6 +137,7 @@ export interface SearchHit {
   score: number;
   updatedAt: number;
   scope: Scope;
+  status: ObservationStatus;
 }
 
 export interface Session {
@@ -124,11 +151,16 @@ export interface Session {
 }
 
 // UpdateFields — partial mutable fields for mem_update (id-stable in-place correction).
+// A status-only update (status / resolution) never touches updatedAt: resolving a note must
+// not make it the "most recent" one.
 export interface UpdateFields {
   title?: string;
   content?: string;
   type?: ObservationType;
   anchors?: string[];
+  status?: ObservationStatus;
+  /** Only with a non-active status (or on a note that already is): how it was resolved. */
+  resolution?: string;
 }
 
 // TopicKeySuggestion — return shape for mem_suggest_topic_key.

@@ -144,6 +144,7 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     scope?: Scope;
     limit?: number;
     sessionLimit?: number;
+    includeInactive?: boolean;
   }): { sessions: Session[]; observations: Observation[] } {
     const seenObs = new Set<string>();
     const seenSess = new Set<string>();
@@ -165,7 +166,7 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     }
 
     observations.sort(
-      (a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt),
+      (a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
     );
     sessions.sort(
       (a, b) => b.startedAt - a.startedAt,

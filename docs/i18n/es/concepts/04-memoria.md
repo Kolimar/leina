@@ -66,6 +66,8 @@ classDiagram
         +createdAt / updatedAt: number
         +revision: number
         +supersededBy?: string
+        +status: active|resolved|obsolete
+        +statusChangedAt? / resolution?
     }
     class Session {
         +id: string
@@ -124,6 +126,28 @@ flowchart LR
     v1 -.- audit["(queda como<br/>rastro de auditoría,<br/>fuera del índice de búsqueda)"]
 ```
 
+### El `status` (el ciclo de vida de una entrada)
+
+Un diario se llena de cosas que fueron ciertas alguna vez: un ítem de backlog que ya se
+publicó, la nota de un bug cuyo fix ya entró. Borrarlas pierde historia; dejarlas vivas hace
+que el agente actúe sobre ellas. Por eso cada observación lleva un **status**:
+
+| `status` | Significado | Inyectada / `memory context` | `search` / `verified` / `get` |
+|----------|-------------|------------------------------|-------------------------------|
+| `active` (por defecto) | sigue vigente | sí | sí |
+| `resolved` | hecho / arreglado — se conserva como historia | **no** | sí, etiquetada y más abajo |
+| `obsolete` | ya no es cierta o ya no importa | **no** | sí, etiquetada y más abajo |
+
+`leina memory resolve <dir> <id> [--note "..."] [--obsolete]` cierra una entrada (la forma
+`--batch` cierra varias de una vez), `memory reopen` la reabre, y `memory update --status` /
+`memory_update {status, resolution}` por MCP lo fijan directamente. Un cambio de estado guarda
+su fecha (`statusChangedAt`) y la nota opcional (`resolution`) pero **no toca `updatedAt`**:
+cerrar una nota vieja nunca la sube al tope de nada ordenado por recencia. Volver a guardar el
+mismo `topicKey` arranca una revisión nueva y activa (el snapshot conserva el estado viejo).
+
+El estado es independiente del veredicto de drift (siguiente capítulo): una nota resuelta
+puede tener anclas frescas y una activa puede estar stale; `verified` informa ambos.
+
 ### La `session` (un turno de trabajo)
 
 Agrupa observaciones de una misma sesión de trabajo (`startedAt`/`endedAt`). Al final de una
@@ -179,7 +203,7 @@ documentos donde las palabras aparecen juntas. Cada resultado trae `id`, `title`
 Comandos de lectura:
 
 - `leina memory search <dir> "<query>"` — búsqueda cruda (lo de arriba).
-- `leina memory context <dir>` — sesiones recientes + últimas observaciones.
+- `leina memory context <dir>` — sesiones recientes + últimas observaciones **activas**.
 - `leina memory verified <dir> "<query>"` — búsqueda **+ chequeo de drift** contra el
   grafo. Eso es justo el tema del próximo capítulo.
 

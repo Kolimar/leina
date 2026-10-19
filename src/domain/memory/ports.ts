@@ -91,7 +91,9 @@ export interface MemoryRepository {
 
   /**
    * In-place partial update of a LIVE observation by id. Does NOT bump revision
-   * or create a snapshot — use the topic_key upsert path for that.
+   * or create a snapshot — use the topic_key upsert path for that. A lifecycle-only
+   * update (`status` / `resolution`) leaves `updatedAt` untouched and stamps
+   * `statusChangedAt` instead.
    */
   update(id: string, fields: UpdateFields): Observation;
 
@@ -123,12 +125,14 @@ export interface MemoryRepository {
 
   /**
    * Return recent sessions and the most recently updated observations for
-   * the project.
+   * the project (`updatedAt DESC`, ties broken by id). Only `active` observations
+   * unless `includeInactive` is set — resolved/obsolete notes are not context.
    */
   recentContext(opts?: {
     scope?: Scope;
     limit?: number;
     sessionLimit?: number;
+    includeInactive?: boolean;
   }): { sessions: Session[]; observations: Observation[] };
 
   // ---- sessions -----------------------------------------------------------

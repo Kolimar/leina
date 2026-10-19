@@ -1,6 +1,6 @@
 // cli/handlers/memory.ts — `leina memory <sub>` command handler.
-// sub-commands: save | update | get | search | verified | context | session |
-//               session-start | suggest-topic | current-project | merge-projects |
+// sub-commands: save | update | resolve | reopen | get | search | verified | context |
+//               session | session-start | suggest-topic | current-project | merge-projects |
 //               reanchor | compact | export | import | sync
 //
 // handleMemory is a thin dispatcher: it resolves <dir> and routes to a per-subcommand
@@ -14,11 +14,14 @@ import { reanchorObservations } from "../../application/memory/reanchor.ts";
 import { compactMemory, type CompactReport } from "../../application/memory/compact.ts";
 import {
   InvalidMemoryValueError,
+  parseObservationStatus,
   parseObservationType,
   parseScope,
   type ExportedObservation,
   type ImportReport,
+  type Observation,
   type ObservationInput,
+  type ObservationStatus,
   type ObservationType,
   type Scope,
   type UpdateFields,
@@ -72,6 +75,28 @@ function typeFlag(rest: string[], fallback: string | undefined): ObservationType
 function scopeFlag(rest: string[]): Scope {
   const raw = optFlag(rest, "--scope", "project") ?? "project";
   return validFlag(() => parseScope(raw));
+}
+
+function statusFlag(rest: string[]): ObservationStatus | undefined {
+  const raw = optFlag(rest, "--status", undefined);
+  return raw === undefined ? undefined : validFlag(() => parseObservationStatus(raw));
+}
+
+// Store errors on an id-keyed write (unknown id, superseded snapshot, invalid value) are
+// user errors: print the message, exit 1 — never a stack trace.
+function storeWrite<T>(write: () => T): T {
+  try {
+    return write();
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/** ` · resolved 2026-07-19 — note` suffix for a non-active observation (empty when active). */
+function statusLabel(o: Pick<Observation, "status" | "statusChangedAt" | "resolution">): string {
+  if (o.status === "active") return "";
+  const when = o.statusChangedAt === undefined ? "" : ` ${new Date(o.statusChangedAt).toISOString().slice(0, 10)}`;
+  return ` · ${o.status}${when}${o.resolution === undefined ? "" : ` — ${o.resolution}`}`;
 }
 
 async function memSave(rest: string[], dir: string): Promise<void> {
@@ -134,33 +159,99 @@ function memUpdate(rest: string[], dir: string): void {
   const { store, close } = memOpenGuarded(dir);
   try {
     if (hasFlag(rest, "--batch")) {
-      // stdin: JSON array of { id, title?, content?, type?, anchors? }
+      // stdin: JSON array of { id, title?, content?, type?, anchors?, status?, resolution? }
       const items = parseBatchInput<{ id: string; fields: UpdateFields }>(readStdin(), (raw) => {
         if (typeof raw.id !== "string") throw new Error("each item requires a string id");
         const fields: UpdateFields = {};
         if (typeof raw.title === "string") fields.title = raw.title;
         if (typeof raw.content === "string") fields.content = raw.content;
-        if (raw.type !== undefined) fields.type = raw.type as ObservationType; // store validates
+        // type / status are validated per item by the store.
+        if (raw.type !== undefined) fields.type = raw.type as ObservationType;
+        if (raw.status !== undefined) fields.status = raw.status as ObservationStatus;
+        if (typeof raw.resolution === "string") fields.resolution = raw.resolution;
         const anchors = normalizeAnchors(raw.anchors);
         if (anchors !== undefined) fields.anchors = anchors;
         return { id: raw.id, fields };
       });
       const results = store.updateBatch(items, { atomic: hasFlag(rest, "--atomic") });
-      console.log(formatBatchResults(results, (o) => `#${o.id} (rev ${o.revision})`));
+      console.log(formatBatchResults(results, (o) => `#${o.id} (rev ${o.revision})${statusLabel(o)}`));
       return;
     }
-    const id = rest[2] && !rest[2].startsWith("--") ? rest[2] : fail("usage: memory update <dir> <id> [--title ..] [--content ..] [--type ..]");
+    const id = rest[2] && !rest[2].startsWith("--") ? rest[2] : fail("usage: memory update <dir> <id> [--title ..] [--content ..] [--type ..] [--status ..] [--resolution ..]");
     const fields: UpdateFields = {};
     const title = optFlag(rest, "--title", undefined);
     const content = optFlag(rest, "--content", undefined);
     const type = typeFlag(rest, undefined);
+    const status = statusFlag(rest);
+    const resolution = optFlag(rest, "--resolution", undefined);
     const anchorsRaw = optFlag(rest, "--anchors", undefined);
     if (title !== undefined) fields.title = title;
     if (content !== undefined) fields.content = content;
     if (type !== undefined) fields.type = type;
+    if (status !== undefined) fields.status = status;
+    if (resolution !== undefined) fields.resolution = resolution;
     if (anchorsRaw !== undefined) fields.anchors = anchorsRaw.split(",").map((a) => a.trim()).filter(Boolean);
-    const obs = store.update(id, fields);
-    console.log(`Updated #${obs.id} (rev ${obs.revision}).`);
+    const obs = storeWrite(() => store.update(id, fields));
+    console.log(`Updated #${obs.id} (rev ${obs.revision})${statusLabel(obs)}.`);
+  } finally {
+    close();
+  }
+}
+
+// `memory resolve --batch` stdin: a JSON array whose items are an id string or
+// { id, note?, obsolete? } — "these 17 backlog notes are done" in one call.
+function parseResolveBatch(stdin: string, defaults: UpdateFields): { id: string; fields: UpdateFields }[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdin);
+  } catch {
+    fail("--batch expects a JSON array on stdin");
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) fail("--batch expects a non-empty JSON array on stdin");
+  return parsed.map((el: unknown) => {
+    if (typeof el === "string") return { id: el, fields: { ...defaults } };
+    if (typeof el !== "object" || el === null || typeof (el as { id?: unknown }).id !== "string") {
+      fail("--batch items must be id strings or {id, note?, obsolete?} objects");
+    }
+    const item = el as { id: string; note?: unknown; obsolete?: unknown };
+    const fields: UpdateFields = { ...defaults };
+    if (item.obsolete === true) fields.status = "obsolete";
+    if (typeof item.note === "string") fields.resolution = item.note;
+    return { id: item.id, fields };
+  });
+}
+
+// memory resolve <dir> <id> [--note "..."] [--obsolete] — close an observation without
+// deleting it: it leaves the SessionStart injection and `memory context`, and search /
+// verified / get keep returning it, labelled and ranked below active notes. Never touches
+// updated_at, so resolving cannot push a note to the top of any recency ordering.
+function memResolve(rest: string[], dir: string): void {
+  const note = optFlag(rest, "--note", undefined);
+  const defaults: UpdateFields = { status: hasFlag(rest, "--obsolete") ? "obsolete" : "resolved" };
+  if (note !== undefined) defaults.resolution = note;
+  const { store, close } = memOpenGuarded(dir);
+  try {
+    if (hasFlag(rest, "--batch")) {
+      const items = parseResolveBatch(readStdin(), defaults);
+      const results = store.updateBatch(items, { atomic: hasFlag(rest, "--atomic") });
+      console.log(formatBatchResults(results, (o) => `#${o.id}${statusLabel(o)}`));
+      return;
+    }
+    const id = rest[2] && !rest[2].startsWith("--") ? rest[2] : fail("usage: memory resolve <dir> <id> [--note \"...\"] [--obsolete]");
+    const obs = storeWrite(() => store.update(id, defaults));
+    console.log(`Resolved #${obs.id}${statusLabel(obs)}.`);
+  } finally {
+    close();
+  }
+}
+
+// memory reopen <dir> <id> — back to active (clears the resolution note).
+function memReopen(rest: string[], dir: string): void {
+  const id = rest[2] && !rest[2].startsWith("--") ? rest[2] : fail("usage: memory reopen <dir> <id>");
+  const { store, close } = memOpenGuarded(dir);
+  try {
+    const obs = storeWrite(() => store.update(id, { status: "active" }));
+    console.log(`Reopened #${obs.id} (active).`);
   } finally {
     close();
   }
@@ -209,7 +300,8 @@ function memSearch(rest: string[], dir: string): void {
   }
   for (const h of hits) {
     const tk = h.topicKey ? ` [${h.topicKey}]` : "";
-    console.log(`#${h.id} [${h.type}]${tk} ${h.title}`);
+    const st = h.status === "active" ? "" : ` (${h.status})`;
+    console.log(`#${h.id} [${h.type}]${tk}${st} ${h.title}`);
     console.log(`  ${h.snippet}`);
   }
 }
@@ -229,7 +321,8 @@ function memVerified(rest: string[], dir: string): void {
     for (const it of items) {
       const tk = it.topicKey ? ` [${it.topicKey}]` : "";
       const flag = it.checkViolation ? "  ⚠ check-violation" : "";
-      console.log(`  #${it.id} [${it.type}/${it.state}]${tk} ${it.title}${flag}`);
+      const st = it.status === "active" ? "" : ` (${it.status})`;
+      console.log(`  #${it.id} [${it.type}/${it.state}]${tk}${st} ${it.title}${flag}`);
       console.log(`    ${it.reason}`);
     }
   };
@@ -256,6 +349,7 @@ function memGet(rest: string[], dir: string): void {
     if (obs) {
       const tk = obs.topicKey ? `\ntopic_key: ${obs.topicKey}` : "";
       console.log(`title: ${obs.title}\ntype: ${obs.type}${tk}`);
+      console.log(`status: ${obs.status}${statusLabel(obs).replace(/^ · \S+/, "")}`);
       console.log(`created: ${new Date(obs.createdAt).toISOString()}  updated: ${new Date(obs.updatedAt).toISOString()}  revision: ${obs.revision}`);
       console.log(`\n${obs.content}`);
     } else {
@@ -461,7 +555,11 @@ function memHelp(): void {
       `             [--anchors a,b]\n` +
       `  save <dir> --batch [--atomic]      (stdin: JSON array of {title,content,type?,topicKey?,scope?,anchors?})\n` +
       `  update <dir> <id> [--title ..] [--content ..] [--type ..] [--anchors a,b]\n` +
-      `  update <dir> --batch [--atomic]    (stdin: JSON array of {id,title?,content?,type?,anchors?})\n` +
+      `                    [--status active|resolved|obsolete] [--resolution "..."]\n` +
+      `  update <dir> --batch [--atomic]    (stdin: JSON array of {id,title?,content?,type?,anchors?,status?,resolution?})\n` +
+      `  resolve <dir> <id> [--note "..."] [--obsolete]   (close a note: hidden from context, kept in search)\n` +
+      `  resolve <dir> --batch [--atomic]   (stdin: JSON array of ids or {id,note?,obsolete?})\n` +
+      `  reopen <dir> <id>                  (back to active)\n` +
       `  search <dir> <query> [--type ..]\n` +
       `         [--scope project|personal|workspace|path|skill|process|technology|security|infra]\n` +
       `         [--limit N]\n` +
@@ -587,6 +685,8 @@ const MEM_HANDLERS: Record<string, MemSubHandler> = {
   import: memImport,
   sync: memSync,
   update: memUpdate,
+  resolve: memResolve,
+  reopen: memReopen,
   search: memSearch,
   verified: memVerified,
   get: memGet,

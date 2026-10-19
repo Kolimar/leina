@@ -64,6 +64,8 @@ classDiagram
         +createdAt / updatedAt: number
         +revision: number
         +supersededBy?: string
+        +status: active|resolved|obsolete
+        +statusChangedAt? / resolution?
     }
     class Session {
         +id: string
@@ -122,6 +124,28 @@ flowchart LR
     v1 -.- audit["(remains as an<br/>audit trail,<br/>outside the search index)"]
 ```
 
+### The `status` (an entry's lifecycle)
+
+A diary fills up with things that were true once: a backlog item that has since shipped, a
+bug note whose fix landed. Deleting them loses history; leaving them live makes the agent act
+on them. Each observation therefore carries a **status**:
+
+| `status` | Meaning | Injected / `memory context` | `search` / `verified` / `get` |
+|----------|---------|-----------------------------|-------------------------------|
+| `active` (default) | still applies | yes | yes |
+| `resolved` | done / fixed — kept for history | **no** | yes, labelled and ranked lower |
+| `obsolete` | no longer true or no longer relevant | **no** | yes, labelled and ranked lower |
+
+`leina memory resolve <dir> <id> [--note "..."] [--obsolete]` closes an entry (a `--batch`
+form closes many at once), `memory reopen` brings it back, and `memory update --status` /
+MCP `memory_update {status, resolution}` set it directly. A status change records its date
+(`statusChangedAt`) and the optional note (`resolution`) but **does not touch `updatedAt`**:
+closing an old note never pushes it to the top of anything ordered by recency. Re-saving the
+same `topicKey` starts a fresh, active revision (the snapshot keeps the old status).
+
+The status is independent of the drift verdict (next chapter): a resolved note can still have
+fresh anchors, and an active one can be stale; `verified` reports both.
+
 ### The `session` (a work shift)
 
 Groups observations from a single work session (`startedAt`/`endedAt`). At the end of a
@@ -178,7 +202,7 @@ words appear together. Each `SearchHit` carries `id`, `title`, `type`, `topicKey
 Read commands:
 
 - `leina memory search <dir> "<query>"` — raw search (the above).
-- `leina memory context <dir>` — recent sessions + latest observations.
+- `leina memory context <dir>` — recent sessions + latest **active** observations.
 - `leina memory verified <dir> "<query>"` — search **+ drift check** against the graph.
   That's exactly the subject of the next chapter.
 

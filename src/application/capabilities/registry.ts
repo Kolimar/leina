@@ -282,6 +282,8 @@ const memoryUpdateInputSchema = {
     content: { type: "string" as const },
     type: { type: "string" as const },
     anchors: { type: "array" as const },
+    status: { type: "string" as const },
+    resolution: { type: "string" as const },
   },
 };
 
@@ -527,13 +529,17 @@ export const capabilities: readonly CommandContract[] = [
   {
     capability: {
       id: "memory.update",
-      description: "In-place partial update of a live observation by id (title/content/type/anchors). Does not bump revision — use topic-key upsert (memory.add) for evolution.",
+      description:
+        "In-place partial update of a live observation by id (title/content/type/anchors), or its lifecycle " +
+        "(status active|resolved|obsolete + optional resolution note — a status-only change keeps updatedAt). " +
+        "Does not bump revision — use topic-key upsert (memory.add) for evolution.",
       inputSchema: memoryUpdateInputSchema,
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
-      schemaVersion: 1,
+      // v2: accepts status / resolution (observation lifecycle).
+      schemaVersion: 2,
     },
-    cli: { command: "memory update", flags: ["--title", "--content", "--type"] },
+    cli: { command: "memory update", flags: ["--title", "--content", "--type", "--status", "--resolution"] },
     mcp: { tool: "memory_update" },
   },
   {

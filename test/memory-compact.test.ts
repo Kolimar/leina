@@ -173,6 +173,7 @@ test("(compact-5) anchors of deleted snapshots are cascade-deleted; live anchors
       createdAt: 1,
       updatedAt: 1,
       revision: 1,
+      status: "active",
       supersededBy: "test-project:whatever",
       anchors: [
         { nodeId: "n1", role: "about", createdAt: 1 },

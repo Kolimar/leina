@@ -280,10 +280,26 @@ la observación (se resuelven contra el grafo vivo al guardar).
 **Batch:** `memory save <dir> --batch [--atomic]` lee desde stdin un array JSON de
 `{title, content, type?, topicKey?, scope?, anchors?}`.
 
-### `memory update <dir> <id> [--title ..] [--content ..] [--type ..] [--anchors a,b]`
-Actualiza una observación in place por id, incrementando su revisión.
+### `memory update <dir> <id> [--title ..] [--content ..] [--type ..] [--anchors a,b] [--status s] [--resolution "..."]`
+Actualiza una observación in place por id (la revisión se conserva — para una revisión nueva,
+evolucioná con `save --topic`). `--status active|resolved|obsolete` cambia su ciclo de vida
+(ver `memory resolve`); `--resolution` es una nota corta que requiere un estado no activo. Un
+cambio solo de estado conserva `updated_at`, así que nunca reordena nada por recencia.
 **Batch:** `--batch [--atomic]` lee desde stdin un array JSON de
-`{id, title?, content?, type?, anchors?}`.
+`{id, title?, content?, type?, anchors?, status?, resolution?}`.
+
+### `memory resolve <dir> <id> [--note "..."] [--obsolete]`
+Cierra una observación sin borrarla: estado `resolved` (u `obsolete` con `--obsolete`), con
+la fecha de hoy y la `--note` opcional. Una nota no activa sale de la inyección de
+SessionStart y de `memory context`; `search`, `verified` y `get` la siguen devolviendo,
+etiquetada (`(resolved)`, `status: resolved 2026-07-19 — nota`) y por debajo de las notas
+activas. El veredicto de drift es independiente del estado. Volver a guardar el mismo
+`--topic` la reactiva. **Batch:** `memory resolve <dir> --batch [--atomic]` lee desde stdin un
+array JSON de strings de id u objetos `{id, note?, obsolete?}` (`--note` / `--obsolete` fijan
+el valor por defecto de cada ítem).
+
+### `memory reopen <dir> <id>`
+Vuelve el estado a `active` y borra la nota de resolución.
 
 ### `memory search <dir> <query> [--type t] [--scope s] [--limit N]`
 Búsqueda de texto completo (límite por defecto 10). Imprime `#id [type] [topic] title` más
@@ -296,14 +312,14 @@ cuando estés por actuar sobre contexto recordado. Si el grafo no está disponib
 veredictos degradan a no verificados (igual se imprimen).
 
 ### `memory get <dir> <id>`
-Imprime la observación completa (title, type, topic_key, timestamps, revision, content). Los
+Imprime la observación completa (title, type, topic_key, status, timestamps, revision, content). Los
 ids están acotados al proyecto actual: el id de otro proyecto se lee como inexistente (igual en
 `memory update`).
 **Batch:** `memory get <dir> --batch` lee desde stdin un array JSON de strings de id.
 
 ### `memory context <dir> [--limit N]`
-Sesiones recientes + últimas observaciones del proyecto. **Ejecutá esto al inicio de cada
-sesión** para restaurar decisiones previas.
+Sesiones recientes + últimas observaciones **activas** del proyecto (las resueltas/obsoletas
+quedan afuera). **Ejecutá esto al inicio de cada sesión** para restaurar decisiones previas.
 
 ### `memory session <dir> --content "summary" [--title "..."]`
 Guarda un resumen de sesión. Ejecutar al **final** de una sesión.
@@ -668,7 +684,7 @@ exportando el grafo completo.
 | `memory verified` | `memory_verified` | respeta `type` |
 | `memory context` | `memory_context` | previews por defecto (respeta el presupuesto de tokens; `contentChars` cuenta code points); `limit`, `sessionLimit`, `full:true` |
 | `memory get` | `memory_get` | batch: `ids[]`; los ids de otros proyectos se leen como inexistentes |
-| `memory update` | `memory_update` | solo ids del proyecto actual |
+| `memory update` / `resolve` / `reopen` | `memory_update` | solo ids del proyecto actual; `status` (`active`/`resolved`/`obsolete`) + `resolution` |
 | `memory suggest-topic` | `memory_suggest_topic` | |
 | `memory session` | `memory_session` | |
 | `agent-hook SessionStart` | `context_build` | |

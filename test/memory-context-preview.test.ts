@@ -26,6 +26,7 @@ function obs(over: Partial<Observation>): Observation {
     createdAt: 1,
     updatedAt: 2,
     revision: 1,
+    status: "active",
     ...over,
   };
 }

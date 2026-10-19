@@ -18,7 +18,9 @@ live graph on save, and `memory verified` re-checks them (drift detection).
 | Command | Purpose |
 |------|---------|
 | `memory save <dir> --title --content [--type] [--topic] [--anchors]` | Save/upsert an observation |
-| `memory update <dir> <id> [--title] [--content] [--type]` | Update an observation in place |
+| `memory update <dir> <id> [--title] [--content] [--type] [--status]` | Update an observation in place |
+| `memory resolve <dir> <id> [--note] [--obsolete]` | Close a note (hidden from injection/context, kept in search) |
+| `memory reopen <dir> <id>` | Set a resolved/obsolete note back to active |
 | `memory search <dir> "<query>"` | Full-text search |
 | `memory verified <dir> "<query>"` | Search + drift classification (USABLE/WARNING/DO-NOT-USE) |
 | `memory get <dir> <id>` | Full observation content by id |
@@ -318,6 +320,9 @@ MEMORY (always-on injection + global DB, keyed by project — advisory, never bl
   evolve an existing entry in place.
 - Run `leina memory get <dir> <id>` to read a single observation in full, and
   `leina memory update <dir> <id> [--title] [--content] [--type]` to correct one in place.
+- When a saved note is done or no longer true (a shipped backlog item, a landed fix), run
+  `leina memory resolve <dir> <id> [--note "..."]` (`--obsolete` when it no longer applies;
+  `memory reopen` undoes it). Resolved notes leave the injection; search still finds them.
 - Run `leina memory session-start <dir>` to open a fresh session id, and
   `leina memory suggest-topic <dir> --title "..."` to get a normalized topic_key.
 - Run `leina memory session <dir> --content "<summary>"` at the END of a session.

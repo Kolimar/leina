@@ -44,6 +44,7 @@ export class MockMemoryRepository implements MemoryRepository {
       createdAt: now,
       updatedAt: now,
       revision: 1,
+      status: "active",
     };
     this.observations.push(obs);
     return { observation: obs, evolved: false };
@@ -64,7 +65,8 @@ export class MockMemoryRepository implements MemoryRepository {
     if (!obs) throw new Error(`Observation ${id} not found`);
     if (fields.title !== undefined) obs.title = fields.title;
     if (fields.content !== undefined) obs.content = fields.content;
-    obs.updatedAt = Date.now();
+    if (fields.status !== undefined) obs.status = fields.status;
+    else obs.updatedAt = Date.now();
     return obs;
   }
 
@@ -107,6 +109,7 @@ export class MockMemoryRepository implements MemoryRepository {
         score: 1.0,
         updatedAt: o.updatedAt,
         scope: o.scope,
+        status: o.status,
       }));
   }
 

@@ -4,7 +4,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { LEGACY_TYPE_ALIASES, OBSERVATION_TYPES, SCOPES } from "../../domain/memory/model.ts";
 
-export const MEMORY_SCHEMA_VERSION = 6;
+export const MEMORY_SCHEMA_VERSION = 7;
 
 // Node bundles its built-in SQLite WITHOUT the FTS5 compile flag until Node 24.
 // Node 22/23 builds ship without FTS5; Node 24+ enables it (nodejs/node#56476).
@@ -127,7 +127,8 @@ CREATE TABLE IF NOT EXISTS observations (
   type TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
   topic_key TEXT, session_id TEXT,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
-  superseded_by TEXT
+  superseded_by TEXT,
+  status TEXT NOT NULL DEFAULT 'active', status_changed_at INTEGER, resolution TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_obs_proj_time ON observations(project_key, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_obs_type      ON observations(project_key, type);
@@ -274,6 +275,7 @@ function runMemoryMigrations(db: DatabaseSync, fts5: boolean): void {
   // No gateada por fts5: el cambio afecta al modelo de dominio, no a los índices FTS.
   if (v < 5) migrateV4toV5(db);
   if (v < 6) migrateV5toV6(db);
+  if (v < 7) migrateV6toV7(db);
   db.exec(`PRAGMA user_version = ${MEMORY_SCHEMA_VERSION}`);
 }
 
@@ -380,5 +382,21 @@ function migrateV5toV6(db: DatabaseSync): void {
         `UPDATE ${table} SET scope = 'project' WHERE scope NOT IN (${placeholders(SCOPES.length)})`,
       ).run(...SCOPES);
     }
+  });
+}
+
+// v6 → v7: observation lifecycle (status / status_changed_at / resolution). Every existing row
+// starts `active` — exactly what it was before the column existed. Guarded per column (the DDL
+// above already creates them on a fresh db, and a crash between two ALTERs must re-run
+// cleanly), inside one transaction. No index references the new columns from the DDL: a
+// CREATE INDEX there would run BEFORE this ALTER on an old db and fail.
+function migrateV6toV7(db: DatabaseSync): void {
+  const have = new Set(
+    (db.prepare("PRAGMA table_info(observations)").all() as unknown as { name: string }[]).map((c) => c.name),
+  );
+  inTransaction(db, () => {
+    if (!have.has("status")) db.exec("ALTER TABLE observations ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+    if (!have.has("status_changed_at")) db.exec("ALTER TABLE observations ADD COLUMN status_changed_at INTEGER");
+    if (!have.has("resolution")) db.exec("ALTER TABLE observations ADD COLUMN resolution TEXT");
   });
 }

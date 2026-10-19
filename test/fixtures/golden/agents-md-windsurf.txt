@@ -67,6 +67,9 @@ MEMORY (always-on injection + global DB, keyed by project — advisory, never bl
   evolve an existing entry in place.
 - Run `leina memory get <dir> <id>` to read a single observation in full, and
   `leina memory update <dir> <id> [--title] [--content] [--type]` to correct one in place.
+- When a saved note is done or no longer true (a shipped backlog item, a landed fix), run
+  `leina memory resolve <dir> <id> [--note "..."]` (`--obsolete` when it no longer applies;
+  `memory reopen` undoes it). Resolved notes leave the injection; search still finds them.
 - Run `leina memory session-start <dir>` to open a fresh session id, and
   `leina memory suggest-topic <dir> --title "..."` to get a normalized topic_key.
 - Run `leina memory session <dir> --content "<summary>"` at the END of a session.
@@ -116,7 +119,7 @@ SDD (spec-driven changes)
 - `memory.verified` — leina memory verified: Memory search with drift verdicts: each hit re-checked against the live graph (USABLE / WARNING / DO-NOT-USE).
 - `memory.context` — leina memory context [--limit]: Recent sessions and latest observations for a project — the session-start context payload. Over MCP, bodies are clipped to previews (full content via memory.get, or full:true to opt out).
 - `memory.get` — leina memory get: Fetch a single memory observation by id, full content included. Batch form: pass an `ids` array instead of `id`.
-- `memory.update` — leina memory update [--title --content --type]: In-place partial update of a live observation by id (title/content/type/anchors). Does not bump revision — use topic-key upsert (memory.add) for evolution.
+- `memory.update` — leina memory update [--title --content --type --status --resolution]: In-place partial update of a live observation by id (title/content/type/anchors), or its lifecycle (status active|resolved|obsolete + optional resolution note — a status-only change keeps updatedAt). Does not bump revision — use topic-key upsert (memory.add) for evolution.
 - `memory.suggestTopic` — leina memory suggest-topic [--title --type]: Suggest a normalised topic_key for a new observation and rank near-matches from existing live keys (dedupe aid before memory.add with --topic).
 - `memory.session` — leina memory session [--content --title]: Summarise and close the active session (or open a one-shot one) — the end-of-session summary that memory.context surfaces next time.
 - `harness.contract.new` — leina harness contract new [--goal --type --scope --out-of-scope --criterion --max-retries]: Declare the harness task contract (goal, scope globs, acceptance criteria) before starting a non-trivial task. Records the git base ref and seeds the criteria checklist.

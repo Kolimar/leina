@@ -12,9 +12,11 @@
 import {
   InvalidMemoryValueError,
   LEGACY_TYPE_ALIASES,
+  OBSERVATION_STATUSES,
   OBSERVATION_TYPES,
   SCOPES,
   parseObservationType,
+  type ObservationStatus,
   type ExportedAnchor,
   type ExportedObservation,
   type Scope,
@@ -100,6 +102,20 @@ function parseAnchor(raw: unknown, i: number): ExportedAnchor {
   return a;
 }
 
+// Exports taken before the lifecycle existed carry no status: they were all active.
+function parseLifecycle(raw: Record<string, unknown>): Pick<ExportedObservation, "status" | "statusChangedAt" | "resolution"> {
+  const status = raw.status === undefined || raw.status === null
+    ? "active"
+    : oneOf<ObservationStatus>(raw, "status", OBSERVATION_STATUSES);
+  const out: Pick<ExportedObservation, "status" | "statusChangedAt" | "resolution"> = { status };
+  if (raw.statusChangedAt !== undefined && raw.statusChangedAt !== null) {
+    out.statusChangedAt = timestamp(raw, "statusChangedAt");
+  }
+  const resolution = optStr(raw, "resolution", MAX_FIELD_CHARS);
+  if (resolution !== undefined) out.resolution = resolution;
+  return out;
+}
+
 function parseOrThrow(raw: unknown): ExportedObservation {
   if (!isRecord(raw)) throw new InvalidExport("not a JSON object");
   if (raw.schemaVersion !== undefined && raw.schemaVersion !== 1) {
@@ -134,6 +150,7 @@ function parseOrThrow(raw: unknown): ExportedObservation {
     createdAt: timestamp(raw, "createdAt"),
     updatedAt: timestamp(raw, "updatedAt"),
     revision: raw.revision,
+    ...parseLifecycle(raw),
     anchors: anchors.map(parseAnchor),
   };
   const topicKey = optStr(raw, "topicKey", MAX_IMPORT_TITLE_CHARS);

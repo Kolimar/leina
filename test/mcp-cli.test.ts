@@ -839,3 +839,38 @@ test("(mcps-2) unknown tool and missing args surface as isError, not crashes", a
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("(mcps-15) memory_update status: resolve hides from memory_context, keeps search; invalid status is a tool error", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home13-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo13-"));
+  const env = sandboxEnv(home);
+  const init = [
+    { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+  ];
+  try {
+    const first = await driveMcp(dir, env, [
+      ...init,
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "memory_add", arguments: { root: dir, title: "gadget backlog item", content: "gadget todo" } } },
+    ]);
+    const added = first.find((r) => r.id === 2)?.result?.content?.[0]?.text ?? "{}";
+    const id = (JSON.parse(added) as { observation: { id: string } }).observation.id;
+    const responses = await driveMcp(dir, env, [
+      ...init,
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "memory_update", arguments: { root: dir, id, status: "resolved", resolution: "shipped" } } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "memory_context", arguments: { root: dir } } },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "memory_search", arguments: { root: dir, query: "gadget" } } },
+      { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "memory_update", arguments: { root: dir, id, status: "done" } } },
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+    assert.ok(!byId.get(2)?.result?.isError, byId.get(2)?.result?.content?.[0]?.text);
+    assert.match(byId.get(2)?.result?.content?.[0]?.text ?? "", /"status": "resolved"/);
+    assert.doesNotMatch(byId.get(3)?.result?.content?.[0]?.text ?? "", /gadget/, "resolved note is not context");
+    assert.match(byId.get(4)?.result?.content?.[0]?.text ?? "", /"status": "resolved"/, "search still returns it, labelled");
+    assert.equal(byId.get(5)?.result?.isError, true);
+    assert.match(byId.get(5)?.result?.content?.[0]?.text ?? "", /invalid status "done"/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

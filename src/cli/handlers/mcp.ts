@@ -36,6 +36,7 @@ import { previewRecentContext } from "../../application/memory/context-preview.t
 import { buildActiveContext } from "../../application/context/active-context.ts";
 import { runAudit } from "../../application/audit/run.ts";
 import {
+  parseObservationStatus,
   parseObservationType,
   type ObservationInput,
   type ObservationType,
@@ -417,6 +418,8 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
         content: optStr(a, "content"),
         type: optType(a),
         anchors: Array.isArray(a.anchors) ? (a.anchors as string[]) : undefined,
+        status: a.status === undefined ? undefined : parseObservationStatus(a.status),
+        resolution: optStr(a, "resolution"),
       };
       return s.store.update(str(a, "id"), fields);
     }),
@@ -634,6 +637,14 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
       content: { type: "string" },
       type: { type: "string" },
       anchors: { type: "array", items: { type: "string" } },
+      status: {
+        type: "string",
+        enum: ["active", "resolved", "obsolete"],
+        description:
+          "lifecycle: resolved/obsolete hides the note from memory_context and session injection " +
+          "(search still returns it, ranked lower); active reopens it. A status-only update keeps updatedAt",
+      },
+      resolution: { type: "string", description: "with status resolved/obsolete: how or why (short note)" },
     },
   },
   memory_suggest_topic: {

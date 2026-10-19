@@ -2,7 +2,7 @@
 // Stable seam for Phase 2 (graph-aware anchor resolution).
 
 import type { MemoryRepository } from "../../domain/memory/ports.ts";
-import type { ObservationType, Scope, SearchHit } from "../../domain/memory/model.ts";
+import type { ObservationStatus, ObservationType, Scope, SearchHit } from "../../domain/memory/model.ts";
 
 interface SearchOpts {
   scope?: Scope;
@@ -209,6 +209,8 @@ export interface VerifiedItem {
   id: string;
   title: string;
   type: ObservationType;
+  /** Lifecycle status, reported next to (never folded into) the drift `state`. */
+  status: ObservationStatus;
   topicKey?: string;
   snippet: string;
   score: number;
@@ -249,6 +251,7 @@ export function getVerifiedContext(
       id: h.id,
       title: h.title,
       type: h.type,
+      status: h.status,
       snippet: h.snippet,
       score: h.score,
       nature,
