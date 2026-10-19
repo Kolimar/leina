@@ -48,19 +48,25 @@ export class HarnessGit implements GitPort {
       }
     };
 
-    const diff = run(repoRoot, ["diff", "--name-only", base ?? "HEAD"]);
+    // `--relative`: paths relative to `repoRoot` and limited to its subtree,
+    // like `ls-files` below. Without it a harness rooted in a monorepo package
+    // (packages/app/.harness) got toplevel-relative diff paths
+    // (packages/app/src/a.ts) next to package-relative untracked ones, and the
+    // contract scope (src/**) — relative to the harness root — never matched.
+    const diff = run(repoRoot, ["diff", "--name-only", "--relative", base ?? "HEAD"]);
     if (diff !== null) {
       addAll(diff);
     } else {
       // No commits yet (unresolvable HEAD/base): every tracked file is staged-new.
-      addAll(run(repoRoot, ["diff", "--name-only", "--cached"]));
+      addAll(run(repoRoot, ["diff", "--name-only", "--relative", "--cached"]));
     }
     addAll(run(repoRoot, ["ls-files", "--others", "--exclude-standard"]));
     return [...files].sort();
   }
 
   async diffUnified(repoRoot: string, options: GitDiffOptions = {}): Promise<string | null> {
-    const args = ["diff", "--unified=0"];
+    // `--relative`: file headers relative to `repoRoot` (see changedFiles).
+    const args = ["diff", "--unified=0", "--relative"];
     if (options.cached) args.push("--cached");
     else args.push(options.base ?? "HEAD");
     if (options.paths && options.paths.length > 0) args.push("--", ...options.paths);

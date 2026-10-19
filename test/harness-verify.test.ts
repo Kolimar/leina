@@ -221,6 +221,88 @@ describe("runVerify", () => {
   });
 });
 
+describe("harness rooted in a monorepo package", () => {
+  it("(mono-1) changed files and diff paths are relative to the harness root, not the git toplevel", async () => {
+    const mono = await makeTmpRepo();
+    const restore = isolateLeinaHome(path.join(mono.root, "no-user-config"));
+    try {
+      const app = path.join(mono.root, "packages", "app");
+      await mono.write("README.md", "# mono\n");
+      await mono.write("packages/app/src/a.ts", "export const a = 1;\n");
+      await mono.write("packages/app/.harness/config.json", JSON.stringify({ rules: {} }));
+      mono.git("add", ".");
+      mono.git("commit", "-m", "init");
+
+      await mono.write("packages/app/src/a.ts", "export const a = 2;\n");
+      await mono.write("packages/app/src/new.ts", "export const n = 1;\n");
+      await mono.write("README.md", "# mono, edited outside the package\n");
+
+      assert.deepEqual(await ports.git.changedFiles(app, "HEAD"), ["src/a.ts", "src/new.ts"]);
+      const diff = (await ports.git.diffUnified(app, { base: "HEAD" })) ?? "";
+      assert.match(diff, /^\+\+\+ b\/src\/a\.ts$/m);
+      assert.match(diff, /^\+\+\+ b\/src\/new\.ts$/m);
+      assert.doesNotMatch(diff, /packages\/app|README/);
+    } finally {
+      restore();
+      await mono.cleanup();
+    }
+  });
+
+  it("(mono-2) verify keeps an in-scope package edit in scope and reports content hits package-relative", async () => {
+    const mono = await makeTmpRepo();
+    const restore = isolateLeinaHome(path.join(mono.root, "no-user-config"));
+    try {
+      const app = path.join(mono.root, "packages", "app");
+      await mono.write("packages/app/src/a.ts", "export const a = 1;\n");
+      await mono.write(
+        "packages/app/.harness/config.json",
+        JSON.stringify({
+          rules: {
+            "harness/tests-pass": { enabled: false },
+            "harness/typecheck": { enabled: false },
+            "harness/lint-clean": { enabled: false },
+            "harness/no-skipped-tests": { enabled: false },
+            "harness/leina-graph-fresh": { enabled: false },
+            "harness/leina-session-summary": { enabled: false },
+          },
+        }),
+      );
+      await mono.write(
+        "packages/app/.harness/rules/no-todo.md",
+        jsonFrontmatterDoc(
+          {
+            id: "project/no-todo",
+            phase: "verify",
+            severity: "advisory",
+            gate: { type: "diff-content", forbidAdded: "TODO" },
+          },
+          "# No TODOs",
+        ),
+      );
+      mono.git("add", ".");
+      mono.git("commit", "-m", "init");
+      await saveContract(app, {
+        goal: "edit the package",
+        scope: ["src/**"],
+        outOfScope: [],
+        criteria: [],
+        maxRetries: 3,
+        baseRef: (await ports.git.currentHead(app))!,
+      });
+      await mono.write("packages/app/src/a.ts", "export const a = 2; // TODO later\n");
+
+      const outcome = await runVerify(app, { ports });
+      const byId = new Map(outcome.report.results.map((r) => [r.ruleId, r]));
+      assert.equal(byId.get("harness/diff-in-scope")?.status, "pass", byId.get("harness/diff-in-scope")?.detail);
+      assert.equal(byId.get("project/no-todo")?.status, "fail");
+      assert.match(byId.get("project/no-todo")?.output ?? "", /^src\/a\.ts:1: /m);
+    } finally {
+      restore();
+      await mono.cleanup();
+    }
+  });
+});
+
 describe("outside a git repository (changed files unknown)", () => {
   it("(verify-nogit-1) fails closed: onlyIfChanged gates run and diff gates error instead of skipping", async () => {
     const bare = await makeTmpRepo(false);

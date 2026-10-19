@@ -59,15 +59,18 @@ export interface GitPort {
   /** merge-base of HEAD and `ref`, or undefined when unresolvable. */
   mergeBase(repoRoot: string, ref: string): Promise<string | undefined>;
   /**
-   * Changed files relative to `base` (committed + staged + worktree),
-   * repo-relative posix paths, sorted. Untracked files are included — a model
+   * Changed files relative to `base` (committed + staged + worktree), as posix
+   * paths relative to `repoRoot` — which may be a subdirectory of the git
+   * toplevel (a harness rooted in a monorepo package): changes outside it are
+   * not listed. Sorted. Untracked files are included — a model
    * creating files out of scope must not escape the diff gate by never staging
    * them. When `base` is unresolvable (fresh repo) falls back to the index
    * diff. Returns null only when `repoRoot` is not a git repository.
    */
   changedFiles(repoRoot: string, base?: string): Promise<string[] | null>;
   /**
-   * Raw `git diff --unified=0` output for content-level gates. Working-tree
+   * Raw `git diff --unified=0` output for content-level gates, file headers
+   * relative to `repoRoot` (same subtree rule as changedFiles). Working-tree
    * diffs (cached: false) also append untracked text files as synthetic
    * new-file diffs, within per-file and aggregate size budgets (content gates
    * must see a secret before it is ever staged); `cached: true` is strictly
