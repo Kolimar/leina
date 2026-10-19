@@ -200,13 +200,14 @@ test("(GC-15) affected prints the call-site line; path prints the real edge dire
       join(dir, "a.ts"),
       `import { beta } from "./b.ts";\nexport function alpha(): number {\n  const x = 1;\n  return beta() + x;\n}\n`,
     );
-    writeFileSync(join(dir, "c.ts"), `import { beta } from "./b.ts";\n\n\nexport const v = beta();\n`);
+    writeFileSync(join(dir, "c.ts"), `import { beta } from "./b.ts";\n\n\nbeta();\nexport const v = beta();\n`);
     runCli(["build", dir]);
     const r = runCli(["affected", dir, "beta"]);
     assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
     assert.match(r.stdout, /Blast radius of beta\(\) \(b\.ts:1\):/);
     assert.match(r.stdout, /alpha\(\) {2}\[calls\] {2}a\.ts:4\n/, "call at L4, not alpha's definition at L2");
     assert.match(r.stdout, /c\.ts {2}\[calls\] {2}c\.ts:4\n/, "module-level caller keeps its line");
+    assert.match(r.stdout, /v {2}\[calls\] {2}c\.ts:5\n/, "a top-level initializer's call belongs to its variable");
     const fwd = runCli(["path", dir, "alpha", "beta"]);
     assert.match(fwd.stdout, /^alpha\(\) {2}\(a\.ts:2\)\n {2}--calls\(EXTRACTED\)--> beta\(\) {2}a\.ts:4\n$/);
     const back = runCli(["path", dir, "beta", "alpha"]);
