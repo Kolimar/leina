@@ -13,6 +13,14 @@ import { getVerifiedContext } from "../../application/memory/query.ts";
 import { reanchorObservations } from "../../application/memory/reanchor.ts";
 import { compactMemory, type CompactReport } from "../../application/memory/compact.ts";
 import {
+  buildContextView,
+  contextCountLabel,
+  CONTEXT_NOTES,
+  CONTEXT_POOL,
+  renderContextNotes,
+  TEXT_PREVIEW_CHARS,
+} from "../../application/memory/context-preview.ts";
+import {
   InvalidMemoryValueError,
   parseObservationStatus,
   parseObservationType,
@@ -82,8 +90,8 @@ function statusFlag(rest: string[]): ObservationStatus | undefined {
   return raw === undefined ? undefined : validFlag(() => parseObservationStatus(raw));
 }
 
-// Store errors on an id-keyed write (unknown id, superseded snapshot, invalid value) are
-// user errors: print the message, exit 1 — never a stack trace.
+// Store errors on an id-keyed call (unknown or ambiguous id, superseded snapshot, invalid
+// value) are user errors: print the message, exit 1 — never a stack trace.
 function storeWrite<T>(write: () => T): T {
   try {
     return write();
@@ -345,7 +353,7 @@ function memGet(rest: string[], dir: string): void {
       return;
     }
     const id = rest[2] ?? fail("memory get requires an id");
-    const obs = store.get(id);
+    const obs = storeWrite(() => store.get(id));
     if (obs) {
       const tk = obs.topicKey ? `\ntopic_key: ${obs.topicKey}` : "";
       console.log(`title: ${obs.title}\ntype: ${obs.type}${tk}`);
@@ -360,11 +368,17 @@ function memGet(rest: string[], dir: string): void {
   }
 }
 
+// The same ranked view the SessionStart injection and MCP memory_context use
+// (application/memory/context-preview.ts). The RECENT SESSIONS block keeps full session ids:
+// the harness session-summary gate reads their creation epochs from it.
 function memContext(rest: string[], dir: string): void {
-  const limit = Number(optFlag(rest, "--limit", "10"));
+  const limit = Number(optFlag(rest, "--limit", String(CONTEXT_NOTES)));
+  if (!Number.isInteger(limit) || limit < 1) fail("--limit must be a positive integer");
   const { store, close } = memOpenGuarded(dir);
-  const { sessions, observations } = store.recentContext({ limit });
+  const ctx = store.recentContext({ limit: CONTEXT_POOL });
   close();
+  const { sessions, observations } = ctx;
+  const view = buildContextView(ctx, { limit, previewChars: TEXT_PREVIEW_CHARS });
   console.log("RECENT SESSIONS:");
   if (sessions.length === 0) console.log("  (none)");
   for (const s of sessions) {
@@ -372,12 +386,9 @@ function memContext(rest: string[], dir: string): void {
     console.log(`  #${s.id} ${s.title ?? "(untitled)"} ${new Date(s.startedAt).toISOString()}${ended}`);
     if (s.summary) console.log(`    ${s.summary.slice(0, 120)}`);
   }
-  console.log("\nRECENT OBSERVATIONS:");
-  if (observations.length === 0) console.log("  (none)");
-  for (const o of observations) {
-    const tk = o.topicKey ? ` [${o.topicKey}]` : "";
-    console.log(`  #${o.id} [${o.type}]${tk} ${o.title}`);
-  }
+  console.log(`\nRECENT OBSERVATIONS: ${contextCountLabel(view)}, ranked by type and recency (resolved notes hidden)`);
+  if (view.observations.length === 0) console.log("  (none)");
+  for (const block of renderContextNotes(view)) console.log(block);
   if (sessions.length === 0 && observations.length === 0) warnIfOrphanKeys(dir);
 }
 

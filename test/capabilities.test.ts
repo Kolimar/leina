@@ -57,12 +57,15 @@ test("(cap-2) canonical IDs are present", () => {
 });
 
 // memory.add / memory.get moved to v2 when they grew the batch form (items[] / ids[]);
-// memory.update when it grew the lifecycle (status / resolution).
-const SCHEMA_V2 = new Set(["memory.add", "memory.get", "memory.context", "memory.update"]);
+// memory.update when it grew the lifecycle (status / resolution). memory.context is v3:
+// ranked observations with shortId/status.
+const SCHEMA_V2 = new Set(["memory.add", "memory.get", "memory.update"]);
+const SCHEMA_V3 = new Set(["memory.context"]);
+const expectedSchemaVersion = (id: string): number => (SCHEMA_V3.has(id) ? 3 : SCHEMA_V2.has(id) ? 2 : 1);
 
 test("(cap-3) each capability has the expected schemaVersion", () => {
   for (const cc of capabilities) {
-    const expected = SCHEMA_V2.has(cc.capability.id) ? 2 : 1;
+    const expected = expectedSchemaVersion(cc.capability.id);
     assert.equal(
       cc.capability.schemaVersion,
       expected,
@@ -161,7 +164,7 @@ test("(cap-cli-3) capabilities list --json: expected schemaVersion on all entrie
   const res = runCli("capabilities", "list", "--json");
   const arr = JSON.parse(res.stdout) as { id: string; schemaVersion: number }[];
   for (const item of arr) {
-    const expected = SCHEMA_V2.has(item.id) ? 2 : 1;
+    const expected = expectedSchemaVersion(item.id);
     assert.equal(item.schemaVersion, expected, `${item.id}: schemaVersion must be ${expected}, got ${item.schemaVersion}`);
   }
 });

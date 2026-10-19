@@ -98,6 +98,27 @@ export function parseObservationStatus(raw: unknown): ObservationStatus {
   );
 }
 
+// Stored ids end in a random uuid segment (`<project>:<type>:<slug>:<ms>:<uuid>`), so its
+// first 8 hex chars identify an observation within a project for all practical purposes.
+// `memory context` and the session injection print that short form; every id-keyed verb
+// (get / update / resolve / reopen, CLI and MCP) accepts it back.
+const SHORT_ID_CHARS = 8;
+const SHORT_ID_HEAD_RE = /^[0-9a-f]{8}/i;
+/** A string that may be a short id: 4–32 hex chars, no `:` separator. */
+export const SHORT_ID_RE = /^[0-9a-f]{4,32}$/i;
+
+/** The short display form of an observation id (the whole id when it has no uuid tail). */
+export function shortObservationId(id: string): string {
+  const tail = id.slice(id.lastIndexOf(":") + 1);
+  return SHORT_ID_HEAD_RE.test(tail) ? tail.slice(0, SHORT_ID_CHARS) : id;
+}
+
+/** True when `id`'s uuid tail starts with the (hex, case-insensitive) short form `short`. */
+export function matchesShortId(id: string, short: string): boolean {
+  const tail = id.slice(id.lastIndexOf(":") + 1);
+  return tail.toLowerCase().startsWith(short.toLowerCase());
+}
+
 export interface ObservationInput {
   title: string;
   content: string;

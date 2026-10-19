@@ -13,7 +13,13 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { SQLiteMemoryRepository as MemoryStore } from "../../infrastructure/sqlite/memory-repository.ts";
-import type { Observation } from "../../domain/memory/model.ts";
+import {
+  buildContextView,
+  CONTEXT_NOTES,
+  CONTEXT_POOL,
+  renderMemoryInjection,
+  TEXT_PREVIEW_CHARS,
+} from "../memory/context-preview.ts";
 import { globalMemoryPath } from "../../infrastructure/install/share-paths.ts";
 import { deriveProjectKey } from "../project/detect-key.ts";
 import { GraphStore } from "../../infrastructure/sqlite/graph-store.ts";
@@ -41,13 +47,13 @@ export function buildActiveContext(cwd: string): ActiveContextResult {
   try {
     const start = Date.now();
     const BUDGET_MS = 2500;
-    const MEMORY_CAP = 4000;
-    const SNIPPET_MAX = 200;
+    // ≈1.5k tokens for the memory section; the graph / freshness / reminder lines add ~60.
+    const MEMORY_CAP = 6000;
 
     const key = deriveProjectKey(cwd).key;
 
     const parts: string[] = [];
-    const { section, delivered } = readMemorySection(key, MEMORY_CAP, SNIPPET_MAX);
+    const { section, delivered } = readMemorySection(key, MEMORY_CAP);
     parts.push(section);
 
     const graphDbPath = join(cwd, ".leina", "graph.db");
@@ -75,19 +81,18 @@ export function buildActiveContext(cwd: string): ActiveContextResult {
   }
 }
 
-function readMemorySection(
-  key: string,
-  memoryCap: number,
-  snippetMax: number,
-): { section: string; delivered: boolean } {
+// The same ranked view `leina memory context` and MCP memory_context show (context-preview.ts):
+// active notes only, type weight × recency, at most two per topic prefix, plus the latest
+// session summary.
+function readMemorySection(key: string, memoryCap: number): { section: string; delivered: boolean } {
   let mem: InstanceType<typeof MemoryStore> | null = null;
   try {
     mem = new MemoryStore(globalMemoryPath(), key);
-    const { observations } = mem.recentContext({ limit: 10 });
-    if (observations.length === 0) {
-      return { section: "## Project memory\n(no observations yet)", delivered: true };
-    }
-    return { section: formatMemorySection(observations, memoryCap, snippetMax), delivered: true };
+    const view = buildContextView(mem.recentContext({ limit: CONTEXT_POOL }), {
+      limit: CONTEXT_NOTES,
+      previewChars: TEXT_PREVIEW_CHARS,
+    });
+    return { section: renderMemoryInjection(view, { maxChars: memoryCap }), delivered: true };
   } finally {
     try {
       mem?.close();
@@ -95,28 +100,6 @@ function readMemorySection(
       /* ignore close errors */
     }
   }
-}
-
-function formatMemorySection(observations: Observation[], memoryCap: number, snippetMax: number): string {
-  const lines: string[] = ["## Project memory"];
-  let charCount = lines[0]!.length + 1;
-  for (const obs of observations) {
-    const entry = `- ${obs.title} [${obs.type}]\n  ${formatSnippet(obs.content ?? "", snippetMax)}`;
-    if (charCount + entry.length + 1 > memoryCap) break;
-    lines.push(entry);
-    charCount += entry.length + 1;
-  }
-  return lines.join("\n");
-}
-
-function formatSnippet(rawContent: string, snippetMax: number): string {
-  const firstLine = rawContent.split("\n").find((l) => l.trim().length > 0) ?? "";
-  if (firstLine.length > snippetMax) {
-    const cut = firstLine.slice(0, snippetMax);
-    const lastSpace = cut.lastIndexOf(" ");
-    return `${lastSpace > 0 ? cut.slice(0, lastSpace) : cut  }…`;
-  }
-  return firstLine;
 }
 
 function readGraphStatsPart(graphDbPath: string): string {

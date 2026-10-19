@@ -31,8 +31,8 @@ live graph on save, and `memory verified` re-checks them (drift detection).
 
 `save`, `update` and `get` also accept `--batch` (JSON array on stdin; `--atomic` for save/update).
 
-**Always-on injection**: the `SessionStart` hook automatically injects the top-10 memory
-observations + graph stats into the agent's context — no manual `memory context` call needed
+**Always-on injection**: the `SessionStart` hook automatically injects the top-10 ranked active
+memory observations (type × recency, short ids) + graph stats into the agent's context — no manual `memory context` call needed
 at session start. `PostCompaction` re-injects the same context after compaction events.
 `Stop` emits a once-per-session advisory to run `leina memory session <dir>` if no save
 was detected this session (advisory only — never blocks; Claude Code receives it as Stop

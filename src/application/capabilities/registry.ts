@@ -503,12 +503,16 @@ export const capabilities: readonly CommandContract[] = [
     capability: {
       id: "memory.context",
       description:
-        "Recent sessions and latest observations for a project — the session-start context payload. Over MCP, bodies are clipped to previews (full content via memory.get, or full:true to opt out).",
+        "Recent sessions and the most relevant active observations for a project — the session-start context payload " +
+        "(the same ranking the SessionStart injection uses: type weight × recency, at most 2 per topic prefix; " +
+        "resolved/obsolete notes are left out). Over MCP, bodies are clipped to previews (full content via memory.get, " +
+        "or full:true to opt out).",
       inputSchema: memoryContextInputSchema,
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       // v2: accepts limit/sessionLimit/full; MCP output defaults to clipped previews.
-      schemaVersion: 2,
+      // v3: observations are ranked (no longer newest-first) and carry shortId/status; activeTotal added.
+      schemaVersion: 3,
     },
     cli: { command: "memory context", flags: ["--limit"] },
     mcp: { tool: "memory_context" },

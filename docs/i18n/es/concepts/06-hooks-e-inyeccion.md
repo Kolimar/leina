@@ -126,7 +126,7 @@ El corazón es la construcción del **contexto activo**. Arma un bloque de
 ```mermaid
 flowchart TD
     start["contexto activo"] --> key["derivar project key"]
-    key --> mem["1. Sección de memoria<br/>top-10 observaciones recientes<br/>(siempre incluida)"]
+    key --> mem["1. Sección de memoria<br/>top-10 observaciones activas rankeadas<br/>(siempre incluida)"]
     mem --> budget1{¿queda<br/>presupuesto?}
     budget1 -->|sí| gstats["2. Stats del grafo<br/>'graph: N nodes, M edges'"]
     budget1 -->|no| skip1["(se omite)"]
@@ -136,8 +136,13 @@ flowchart TD
     fresh --> out["additionalContext +<br/>recordatorio de guardar al final"]
 ```
 
-- **Memoria:** las 10 observaciones más recientes del proyecto, con
-  título, `type` y un snippet de ~200 chars, hasta un tope de 4000 chars. Si no hay
+- **Memoria:** las 10 observaciones **activas** más relevantes del proyecto — rankeadas por
+  peso de tipo × recencia, como mucho dos por familia de topic (la misma vista que
+  `leina memory context`; ver la referencia del CLI) — cada una como
+  `- [type] título (#idcorto · fecha · topic)` más hasta tres líneas de preview, después de un
+  encabezado `N of M active notes` y el resumen de la última sesión, y seguidas de los verbos
+  `memory get` / `memory resolve` (que aceptan el id corto). Las notas resueltas/obsoletas nunca
+  se inyectan. La sección queda por debajo de ~6000 chars (≈1.2–1.6k tokens). Si no hay
   observaciones aún, inyecta `## Project memory\n(no observations yet)`.
 - **Grafo:** el conteo `N nodes, M edges` leído del `graph.db`.
 - **Frescura:** corre el chequeo de frescura y agrega `(fresh)` o `(stale)` con la

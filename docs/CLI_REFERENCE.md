@@ -290,12 +290,26 @@ unverified (still printed).
 ### `memory get <dir> <id>`
 Print the full observation (title, type, topic_key, status, timestamps, revision, content). Ids are
 scoped to the current project: another project's id reads as not found (same for
-`memory update`).
+`memory update`). Every id-keyed verb (`get`, `update`, `resolve`, `reopen`, and MCP
+`memory_get` / `memory_update`) also accepts the **short id** `memory context` prints — the
+first 8 hex chars of the id's uuid tail, or any unique prefix of at least 4; a prefix shared by
+several observations is an error asking for more characters.
 **Batch:** `memory get <dir> --batch` reads a JSON array of id strings from stdin.
 
 ### `memory context <dir> [--limit N]`
-Recent sessions + latest **active** observations for the project (resolved/obsolete notes are
-left out). **Run this at the start of every session** to restore prior decisions.
+Recent sessions + the most relevant **active** observations for the project (resolved/obsolete
+notes are left out). **Run this at the start of every session** to restore prior decisions.
+It shows the same ranked view the SessionStart injection and MCP `memory_context` use:
+
+- **Ranking:** type weight (`decision`/`preference` 1.0, `architecture` 0.9, `pattern` 0.85,
+  `bugfix` 0.8, `config` 0.75, `discovery` 0.7, `manual` 0.6) × recency decay (45-day
+  half-life, measured from the project's newest note, with a 10% floor); ties break by
+  newest, then id — the same data always prints in the same order.
+- **Diversity:** at most 2 notes per topic family — the first two segments of the topic key,
+  never the leaf (`sdd/auth/*` → `sdd/auth`, a flat `backlog/x` → `backlog`).
+- **Format:** `- [type] title (#shortid · YYYY-MM-DD · topic)` followed by up to three preview
+  lines (~280 chars). `--limit` (default 10) sets how many notes are shown. The
+  `RECENT SESSIONS` block keeps full session ids.
 
 ### `memory session <dir> --content "summary" [--title "..."]`
 Save a session summary. Run at the **end** of a session.
@@ -648,7 +662,7 @@ exports the full graph.
 | `memory save` | `memory_add` | batch: `items[]` + `atomic` |
 | `memory search` | `memory_search` | |
 | `memory verified` | `memory_verified` | honours `type` |
-| `memory context` | `memory_context` | previews by default (budget-safe; `contentChars` counts code points); `limit`, `sessionLimit`, `full:true` |
+| `memory context` | `memory_context` | same ranked selection as the CLI (default `limit` 20); previews by default (budget-safe; `contentChars` counts code points) with `shortId`, `status` and `activeTotal`; `sessionLimit`, `full:true` (whole bodies, same order) |
 | `memory get` | `memory_get` | batch: `ids[]`; ids of other projects read as not found |
 | `memory update` / `resolve` / `reopen` | `memory_update` | current project's ids only; `status` (`active`/`resolved`/`obsolete`) + `resolution` |
 | `memory suggest-topic` | `memory_suggest_topic` | |

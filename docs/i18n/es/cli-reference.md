@@ -314,12 +314,29 @@ veredictos degradan a no verificados (igual se imprimen).
 ### `memory get <dir> <id>`
 Imprime la observación completa (title, type, topic_key, status, timestamps, revision, content). Los
 ids están acotados al proyecto actual: el id de otro proyecto se lee como inexistente (igual en
-`memory update`).
+`memory update`). Todo verbo que recibe un id (`get`, `update`, `resolve`, `reopen`, y
+`memory_get` / `memory_update` por MCP) acepta también el **id corto** que imprime
+`memory context`: los primeros 8 caracteres hex de la cola uuid del id, o cualquier prefijo
+único de al menos 4; un prefijo compartido por varias observaciones es un error que pide más
+caracteres.
 **Batch:** `memory get <dir> --batch` lee desde stdin un array JSON de strings de id.
 
 ### `memory context <dir> [--limit N]`
-Sesiones recientes + últimas observaciones **activas** del proyecto (las resueltas/obsoletas
-quedan afuera). **Ejecutá esto al inicio de cada sesión** para restaurar decisiones previas.
+Sesiones recientes + las observaciones **activas** más relevantes del proyecto (las
+resueltas/obsoletas quedan afuera). **Ejecutá esto al inicio de cada sesión** para restaurar
+decisiones previas. Muestra la misma vista rankeada que usan la inyección de SessionStart y
+`memory_context` por MCP:
+
+- **Ranking:** peso por tipo (`decision`/`preference` 1.0, `architecture` 0.9, `pattern` 0.85,
+  `bugfix` 0.8, `config` 0.75, `discovery` 0.7, `manual` 0.6) × decaimiento por recencia
+  (vida media de 45 días, medida desde la nota más nueva del proyecto, con un piso del 10%);
+  los empates se resuelven por más nueva y después por id — los mismos datos siempre salen en
+  el mismo orden.
+- **Diversidad:** como mucho 2 notas por familia de topic — los dos primeros segmentos del
+  topic key, nunca la hoja (`sdd/auth/*` → `sdd/auth`, un `backlog/x` plano → `backlog`).
+- **Formato:** `- [type] título (#idcorto · AAAA-MM-DD · topic)` seguido de hasta tres líneas
+  de preview (~280 chars). `--limit` (por defecto 10) fija cuántas notas se muestran. El bloque
+  `RECENT SESSIONS` conserva los ids de sesión completos.
 
 ### `memory session <dir> --content "summary" [--title "..."]`
 Guarda un resumen de sesión. Ejecutar al **final** de una sesión.
@@ -682,7 +699,7 @@ exportando el grafo completo.
 | `memory save` | `memory_add` | batch: `items[]` + `atomic` |
 | `memory search` | `memory_search` | |
 | `memory verified` | `memory_verified` | respeta `type` |
-| `memory context` | `memory_context` | previews por defecto (respeta el presupuesto de tokens; `contentChars` cuenta code points); `limit`, `sessionLimit`, `full:true` |
+| `memory context` | `memory_context` | misma selección rankeada que el CLI (`limit` por defecto 20); previews por defecto (respeta el presupuesto de tokens; `contentChars` cuenta code points) con `shortId`, `status` y `activeTotal`; `sessionLimit`, `full:true` (cuerpos completos, mismo orden) |
 | `memory get` | `memory_get` | batch: `ids[]`; los ids de otros proyectos se leen como inexistentes |
 | `memory update` / `resolve` / `reopen` | `memory_update` | solo ids del proyecto actual; `status` (`active`/`resolved`/`obsolete`) + `resolution` |
 | `memory suggest-topic` | `memory_suggest_topic` | |

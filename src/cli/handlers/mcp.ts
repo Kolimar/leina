@@ -32,7 +32,7 @@ import { compactDependents, compactNode, compactPath, compactQuery } from "../..
 import { analyzeSymbolImpact } from "../../application/graph/impact.ts";
 import { graphStatus } from "../../application/graph/manifest.ts";
 import { searchMemory, getVerifiedContext } from "../../application/memory/query.ts";
-import { previewRecentContext } from "../../application/memory/context-preview.ts";
+import { buildContextView, CONTEXT_POOL, rankForContext } from "../../application/memory/context-preview.ts";
 import { buildActiveContext } from "../../application/context/active-context.ts";
 import { runAudit } from "../../application/audit/run.ts";
 import {
@@ -80,6 +80,8 @@ const intArg = (a: ToolArgs, k: keyof typeof ARG_BOUNDS): number | undefined => 
   const [min, max] = ARG_BOUNDS[k];
   return Math.min(max, Math.max(min, Math.trunc(v)));
 };
+// memory_context's default note count (the CLI / injection show CONTEXT_NOTES = 10).
+const MCP_CONTEXT_LIMIT = 20;
 const optNum = (a: ToolArgs, k: string): number | undefined =>
   typeof a[k] === "number" ? (a[k]) : undefined;
 const optStr = (a: ToolArgs, k: string): string | undefined =>
@@ -399,11 +401,12 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
     ),
   memory_context: (a) =>
     withMemStore(rootOf(a), (s) => {
-      const ctx = s.store.recentContext({
-        limit: intArg(a, "limit"),
-        sessionLimit: intArg(a, "sessionLimit"),
-      });
-      return a.full === true ? ctx : previewRecentContext(ctx);
+      // Same ranked selection as the session injection and `memory context` (active notes,
+      // type × recency, ≤2 per topic prefix); full:true swaps previews for whole bodies.
+      const ctx = s.store.recentContext({ limit: CONTEXT_POOL, sessionLimit: intArg(a, "sessionLimit") });
+      const limit = intArg(a, "limit") ?? MCP_CONTEXT_LIMIT;
+      if (a.full === true) return { sessions: ctx.sessions, observations: rankForContext(ctx.observations, { limit }) };
+      return buildContextView(ctx, { limit });
     }),
   memory_get: (a) =>
     withMemStore(rootOf(a), (s) => {
@@ -610,12 +613,15 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     type: "object",
     properties: {
       root: ROOT_PROP,
-      limit: intProp("limit", "max observations (default 20)"),
+      limit: intProp(
+        "limit",
+        "max observations (default 20). Active notes only, ranked by type weight × recency, at most 2 per topic prefix",
+      ),
       sessionLimit: intProp("sessionLimit", "max sessions (default 5)"),
       full: {
         type: "boolean",
         description:
-          "return full bodies instead of previews (default false — bodies are clipped; use memory_get for full content)",
+          "return full bodies instead of previews (default false — bodies are clipped; use memory_get with the id or shortId for full content)",
       },
     },
   },

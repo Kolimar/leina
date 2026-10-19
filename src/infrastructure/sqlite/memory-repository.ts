@@ -24,6 +24,8 @@ import type {
 } from "../../domain/memory/model.ts";
 import {
   InvalidMemoryValueError,
+  matchesShortId,
+  SHORT_ID_RE,
   parseObservationStatus,
   parseObservationType,
   parseScope,
@@ -823,9 +825,9 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   // (old.superseded_by IS NULL AND new.superseded_by IS NULL) and does delete+insert
   // into obs_fts automatically. No manual FTS code needed.
   update(id: string, fields: UpdateFields): Observation {
-    // Normalize the presentation "#" prefix so a copy-pasted id from search/get
-    // resolves the same way it does in get() (see stripIdPrefix).
-    const nid = stripIdPrefix(id);
+    // Normalize the presentation "#" prefix / short id so a copy-pasted id from
+    // search/get/context resolves the same way it does in get() (see resolveId).
+    const nid = this.resolveId(id);
 
     // Read-check outside the transaction so error messages are clean.
     const precheckError = this._updatableError(nid);
@@ -938,6 +940,26 @@ export class SQLiteMemoryRepository implements MemoryRepository {
 
   // Pre-check (outside any transaction) that an observation exists IN THIS PROJECT and is
   // live, for clean error messages — returns the error string, or null when updatable.
+  // Accepts what the CLI/MCP surfaces print: a full id (optionally "#"-prefixed) or the short
+  // form `memory context` shows (the first hex chars of the uuid tail). A short id that names
+  // exactly one observation of this project resolves to its full id; one that names none is
+  // returned as-is (so the caller's "not found" stays the error); one that names several is an
+  // error asking for more characters.
+  private resolveId(raw: string): string {
+    const id = stripIdPrefix(raw);
+    if (!SHORT_ID_RE.test(id)) return id;
+    const exact = this.db.prepare("SELECT 1 FROM observations WHERE id=? AND project_key=?").get(id, this.projectKey);
+    if (exact !== undefined) return id;
+    const rows = this.db
+      .prepare("SELECT id FROM observations WHERE project_key=? AND instr(lower(id), ?) > 0")
+      .all(this.projectKey, `:${id.toLowerCase()}`) as unknown as { id: string }[];
+    const matches = rows.map((r) => r.id).filter((full) => matchesShortId(full, id));
+    if (matches.length > 1) {
+      throw new Error(`ambiguous short id ${id}: it matches ${matches.length} observations — use more characters or the full id`);
+    }
+    return matches[0] ?? id;
+  }
+
   private _updatableError(id: string): string | null {
     const existing = this.db
       .prepare("SELECT * FROM observations WHERE id=? AND project_key=?")
@@ -977,13 +999,18 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     const atomic = opts?.atomic ?? false;
 
     if (atomic) {
-      return this._runBatchAtomic(items, (item) => this._updateInTx(stripIdPrefix(item.id), item.fields));
+      return this._runBatchAtomic(items, (item) => this._updateInTx(this.resolveId(item.id), item.fields));
     }
 
     // Non-atomic: pre-check outside transaction for clean error messages (same as
     // update()), then each item gets its own BEGIN/COMMIT.
     return items.map((item) => {
-      const nid = stripIdPrefix(item.id);
+      let nid: string;
+      try {
+        nid = this.resolveId(item.id);
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
       const precheckError = this._updatableError(nid);
       if (precheckError !== null) {
         return { ok: false, error: precheckError };
@@ -996,7 +1023,12 @@ export class SQLiteMemoryRepository implements MemoryRepository {
 
   getBatch(ids: string[]): BatchResult<Observation>[] {
     return ids.map((id) => {
-      const obs = this.get(id);
+      let obs: Observation | undefined;
+      try {
+        obs = this.get(id);
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
       if (!obs) {
         return { ok: false, error: "not found" };
       }
@@ -1238,7 +1270,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   get(id: string): Observation | undefined {
     const r = this.db
       .prepare("SELECT * FROM observations WHERE id=? AND project_key=?")
-      .get(stripIdPrefix(id), this.projectKey) as unknown as ObsRow | undefined;
+      .get(this.resolveId(id), this.projectKey) as unknown as ObsRow | undefined;
     return r ? rowToObs(r) : undefined;
   }
 

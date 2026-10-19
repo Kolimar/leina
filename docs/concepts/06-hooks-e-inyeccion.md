@@ -128,7 +128,7 @@ three parts, under a **2500ms budget** that degrades gracefully:
 ```mermaid
 flowchart TD
     start["build active context (cwd)"] --> key["derive project key (cwd)"]
-    key --> mem["1. Memory section<br/>top-10 recent observations<br/>(always included)"]
+    key --> mem["1. Memory section<br/>top-10 ranked active observations<br/>(always included)"]
     mem --> budget1{budget<br/>remaining?}
     budget1 -->|yes| gstats["2. Graph stats<br/>'graph: N nodes, M edges'"]
     budget1 -->|no| skip1["(skipped)"]
@@ -138,9 +138,13 @@ flowchart TD
     fresh --> out["additionalContext +<br/>reminder to save at the end"]
 ```
 
-- **Memory**: the project's 10 most recent observations, with title, `type`, and a ~200-char
-  snippet, up to a 4000-char cap. If there are no observations yet, it injects
-  `## Project memory\n(no observations yet)`.
+- **Memory**: the project's 10 most relevant **active** observations — ranked by type weight
+  × recency, at most two per topic family (the same view as `leina memory context`; see the
+  CLI reference) — each as `- [type] title (#shortid · date · topic)` plus up to three preview
+  lines, after a `N of M active notes` header and the latest session summary, and followed by
+  the `memory get` / `memory resolve` verbs (which accept the short id). Resolved/obsolete
+  notes are never injected. The section stays under ~6000 chars (≈1.2–1.6k tokens). If there
+  are no observations yet, it injects `## Project memory\n(no observations yet)`.
 - **Graph**: the `N nodes, M edges` count read from `graph.db`.
 - **Freshness**: runs the staleness check and adds `(fresh)` or `(stale)` along with the
   `refresh` suggestion (or `build` if there's no graph yet).
