@@ -13,6 +13,7 @@
 
 import path from "node:path";
 import fs from "node:fs/promises";
+import { MAX_RETRIES_CAP } from "../../domain/harness/model.ts";
 import { type GitPort, type HarnessPorts } from "../../domain/harness/ports.ts";
 import { matchesAny } from "../../domain/harness/glob.ts";
 import { trustStoreDir } from "../install/trust.ts";
@@ -492,13 +493,11 @@ export type StopDecision =
   | { kind: "block"; reason: string };
 
 /**
- * Hard ceiling on contract.maxRetries. The contract file lives in gitignored
- * state but can be force-committed, so a hostile/typo'd value must not be able
- * to extend the Stop-block loop unboundedly. Floored at 0 (yield immediately),
- * non-finite values fall back to the default of 3.
+ * contract.maxRetries capped at MAX_RETRIES_CAP. The contract file lives in
+ * gitignored state but can be force-committed, so a hostile/typo'd value must
+ * not be able to extend the Stop-block loop unboundedly. Floored at 0 (yield
+ * immediately), non-finite values fall back to the default of 3.
  */
-export const MAX_RETRIES_CAP = 10;
-
 function effectiveMaxRetries(declared: number | undefined): number {
   if (typeof declared !== "number" || !Number.isFinite(declared)) return 3;
   return Math.min(Math.max(Math.trunc(declared), 0), MAX_RETRIES_CAP);

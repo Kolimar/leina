@@ -28,7 +28,7 @@ import {
   harnessVerifyOutputSchema,
   harnessRulesListOutputSchema,
 } from "../../domain/contracts/schemas.ts";
-import { gatesOf, type TaskContract } from "../../domain/harness/model.ts";
+import { gatesOf, MAX_RETRIES_CAP, type TaskContract } from "../../domain/harness/model.ts";
 import { type GitPort } from "../../domain/harness/ports.ts";
 import { loadContract, saveContract, writeChecklist } from "../harness/contract-io.ts";
 import { loadConfig } from "../harness/config-io.ts";
@@ -84,6 +84,9 @@ export async function harnessContractNew(
   const maxRetries = input.maxRetries ?? 3;
   if (!Number.isInteger(maxRetries) || maxRetries < 1) {
     return { ok: false, error: "maxRetries must be a positive integer" };
+  }
+  if (maxRetries > MAX_RETRIES_CAP) {
+    return { ok: false, error: `maxRetries must be at most ${MAX_RETRIES_CAP} (the stop gate's cap)` };
   }
 
   const baseRef = git && (await git.isRepo(repoRoot)) ? await git.currentHead(repoRoot) : undefined;

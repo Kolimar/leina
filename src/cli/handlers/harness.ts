@@ -12,9 +12,9 @@
 
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { hasFlag, optFlag } from "../args.ts";
-import { fail, readStdin } from "../io.ts";
-import { gatesOf, type TaskContract } from "../../domain/harness/model.ts";
+import { hasFlag } from "../args.ts";
+import { readStdin } from "../io.ts";
+import { gatesOf, MAX_RETRIES_CAP, type TaskContract } from "../../domain/harness/model.ts";
 import { type HarnessPorts } from "../../domain/harness/ports.ts";
 import { endContract, loadContract, saveContract, writeChecklist } from "../../application/harness/contract-io.ts";
 import { loadConfig } from "../../application/harness/config-io.ts";
@@ -67,13 +67,29 @@ export function findHarnessRepoRoot(cwd: string = process.cwd()): string {
   }
 }
 
+/**
+ * A malformed invocation (missing flag value, unknown sub-command …).
+ * handleHarness reports it as a usage error — exit 2, per the output contract
+ * above — instead of the shared `fail()` (exit 1, and process.exit).
+ */
+class HarnessUsageError extends Error {}
+
+/** The value of `--flag <value>`; absent → undefined; present without a value → usage error. */
+function flagValue(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  if (i < 0) return undefined;
+  const v = args[i + 1];
+  if (v === undefined || v.startsWith("--")) throw new HarnessUsageError(`${name} requires a value`);
+  return v;
+}
+
 /** Every value of a repeatable flag (`--scope a --scope b` → ["a", "b"]). */
 function flagValues(args: string[], name: string): string[] {
   const values: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] !== name) continue;
     const v = args[i + 1];
-    if (v === undefined || v.startsWith("--")) fail(`${name} requires a value`);
+    if (v === undefined || v.startsWith("--")) throw new HarnessUsageError(`${name} requires a value`);
     values.push(v);
     i++;
   }
@@ -148,6 +164,11 @@ export async function createContract(
   if (!Number.isInteger(maxRetries) || maxRetries < 1) {
     return { ok: false, error: "--max-retries must be a positive integer" };
   }
+  // Rejected rather than silently capped: the stop gate never blocks a chain
+  // more than MAX_RETRIES_CAP times, so a larger value would be a lie.
+  if (maxRetries > MAX_RETRIES_CAP) {
+    return { ok: false, error: `--max-retries must be at most ${MAX_RETRIES_CAP} (the stop gate's cap)` };
+  }
 
   const git = new HarnessGit();
   const baseRef = (await git.isRepo(repoRoot)) ? await git.currentHead(repoRoot) : undefined;
@@ -169,14 +190,15 @@ export async function createContract(
 }
 
 async function contractNew(repoRoot: string, rest: string[]): Promise<void> {
-  const maxRetriesRaw = optFlag(rest, "--max-retries", undefined);
+  const maxRetriesRaw = flagValue(rest, "--max-retries");
   const result = await createContract(repoRoot, {
-    goal: optFlag(rest, "--goal", undefined),
-    taskType: optFlag(rest, "--type", undefined),
+    goal: flagValue(rest, "--goal"),
+    taskType: flagValue(rest, "--type"),
     scope: flagValues(rest, "--scope"),
     outOfScope: flagValues(rest, "--out-of-scope"),
     criteria: flagValues(rest, "--criterion"),
-    maxRetries: maxRetriesRaw !== undefined ? Number.parseInt(maxRetriesRaw, 10) : undefined,
+    // Number(), not parseInt: "5abc" must be rejected, not read as 5.
+    maxRetries: maxRetriesRaw !== undefined ? Number(maxRetriesRaw) : undefined,
   });
   if (!result.ok) {
     err(result.error);
@@ -201,7 +223,7 @@ async function contractEdit(repoRoot: string, rest: string[]): Promise<void> {
     return;
   }
 
-  const goal = optFlag(rest, "--goal", undefined);
+  const goal = flagValue(rest, "--goal");
   if (goal !== undefined) active.goal = goal;
   active.scope.push(...flagValues(rest, "--add-scope").filter((g) => !active.scope.includes(g)));
   active.outOfScope.push(
@@ -277,14 +299,14 @@ async function handleContract(repoRoot: string, rest: string[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function handleVerifySub(repoRoot: string, rest: string[]): Promise<void> {
-  const phases = parsePhases(optFlag(rest, "--phase", undefined));
+  const phases = parsePhases(flagValue(rest, "--phase"));
   if ("error" in phases) {
     err(phases.error);
     process.exitCode = 2;
     return;
   }
 
-  const ruleId = optFlag(rest, "--rule", undefined);
+  const ruleId = flagValue(rest, "--rule");
   const outcome = await runVerify(repoRoot, {
     ports: makeHarnessPorts(),
     phases,
@@ -303,7 +325,9 @@ async function handleVerifySub(repoRoot: string, rest: string[]): Promise<void> 
       );
     }
   }
-  if (hasFlag(rest, "--json")) out(JSON.stringify(outcome.report, null, 2));
+  // loadErrors ride along so a config/rule error is never mistaken for an
+  // empty green report (blockingFailures: 0) by a --json consumer.
+  if (hasFlag(rest, "--json")) out(JSON.stringify({ ...outcome.report, loadErrors: outcome.loadErrors }, null, 2));
   process.exitCode = outcome.exitCode;
 }
 
@@ -312,7 +336,7 @@ async function handleVerifySub(repoRoot: string, rest: string[]): Promise<void> 
 // ---------------------------------------------------------------------------
 
 async function handleSyncSub(repoRoot: string, rest: string[]): Promise<void> {
-  const platformsFlag = optFlag(rest, "--platforms", undefined);
+  const platformsFlag = flagValue(rest, "--platforms");
   const result = await runSync(repoRoot, {
     check: hasFlag(rest, "--check"),
     force: hasFlag(rest, "--force"),
@@ -348,8 +372,8 @@ async function handleSyncSub(repoRoot: string, rest: string[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function handleListSub(repoRoot: string, rest: string[]): Promise<void> {
-  const phase = optFlag(rest, "--phase", undefined);
-  const tag = optFlag(rest, "--tag", undefined);
+  const phase = flagValue(rest, "--phase");
+  const tag = flagValue(rest, "--tag");
 
   const resolution = await loadResolvedRules(repoRoot);
   for (const error of resolution.errors) err(`error: ${error}`);
@@ -496,6 +520,16 @@ function printHarnessHelp(): void {
 }
 
 export async function handleHarness(rest: string[]): Promise<void> {
+  try {
+    await dispatchHarness(rest);
+  } catch (error) {
+    if (!(error instanceof HarnessUsageError)) throw error;
+    err(error.message);
+    process.exitCode = 2;
+  }
+}
+
+async function dispatchHarness(rest: string[]): Promise<void> {
   const [sub, ...subRest] = rest;
   const repoRoot = findHarnessRepoRoot();
   switch (sub) {
@@ -529,6 +563,6 @@ export async function handleHarness(rest: string[]): Promise<void> {
     default:
       err(`unknown harness sub-command "${sub}"`);
       printHarnessHelp();
-      process.exitCode = 1;
+      process.exitCode = 2;
   }
 }

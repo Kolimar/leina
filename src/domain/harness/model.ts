@@ -168,6 +168,13 @@ export interface Criterion {
   justification?: string;
 }
 
+/**
+ * Hard ceiling on TaskContract.maxRetries: the stop gate never blocks one stop
+ * chain more often than this, whatever the contract says (the contract file is
+ * task state and can be force-committed), and contract creation rejects more.
+ */
+export const MAX_RETRIES_CAP = 10;
+
 export interface TaskContract {
   goal: string;
   taskType?: string;
@@ -175,6 +182,7 @@ export interface TaskContract {
   scope: string[];
   outOfScope: string[];
   criteria: Criterion[];
+  /** Blocks per stop chain before the stop gate yields; 1..MAX_RETRIES_CAP at creation. */
   maxRetries: number;
   /** Git ref recorded at contract start; the diff gate's default base. */
   baseRef?: string;

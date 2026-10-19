@@ -219,6 +219,10 @@ describe("harness capability use-cases (tmp repo)", () => {
     const badRetries = await harnessContractNew(repo.root, { goal: "g", maxRetries: 0 });
     assert.equal(badRetries.ok, false);
 
+    // (cli-retries-mcp) above the stop gate's cap is rejected, not silently capped.
+    const overCap = await harnessContractNew(repo.root, { goal: "g", maxRetries: 11 });
+    assert.ok(!overCap.ok && overCap.error.includes("at most 10"));
+
     const blankGoal = await harnessContractNew(repo.root, { goal: "   " });
     assert.equal(blankGoal.ok, false);
 

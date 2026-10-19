@@ -500,9 +500,45 @@ describe("leina harness (group)", () => {
     assert.match(res.stdout, /contract new/);
   });
 
-  it("unknown sub-command → help + exit 1", async () => {
+  it("unknown sub-command → help + exit 2 (usage error)", async () => {
     const res = await run(["frobnicate"]);
-    assert.equal(res.code, 1);
+    assert.equal(res.code, 2);
     assert.match(res.stderr, /unknown harness sub-command/);
+  });
+
+  it("(cli-usage-1) a flag without its value is a usage error (exit 2), not exit 1", async () => {
+    for (const args of [
+      ["contract", "new", "--goal"],
+      ["contract", "new", "--goal", "g", "--scope"],
+      ["contract", "new", "--goal", "g", "--scope", "--criterion", "c"],
+      ["verify", "--rule"],
+      ["list", "--phase"],
+    ]) {
+      const res = await run(args);
+      assert.equal(res.code, 2, args.join(" "));
+      assert.match(res.stderr, /requires a value/, args.join(" "));
+    }
+    assert.equal(await exists(".harness/state/current/contract.json"), false, "nothing created");
+  });
+
+  it("(cli-usage-2) --max-retries above the stop gate's cap (10) or malformed is rejected with exit 2", async () => {
+    for (const value of ["50", "11", "3x", "0"]) {
+      const res = await run(["contract", "new", "--goal", "g", "--max-retries", value]);
+      assert.equal(res.code, 2, value);
+    }
+    const over = await run(["contract", "new", "--goal", "g", "--max-retries", "50"]);
+    assert.match(over.stderr, /at most 10/);
+    const ok = await run(["contract", "new", "--goal", "g", "--max-retries", "10"]);
+    assert.equal(ok.code, 0, ok.stderr);
+    assert.equal(JSON.parse(await read(".harness/state/current/contract.json")).maxRetries, 10);
+  });
+
+  it("(cli-usage-3) verify --json on a config error carries loadErrors and exits 2", async () => {
+    await repo.write(".harness/config.json", "{ broken");
+    const res = await run(["verify", "--json"]);
+    assert.equal(res.code, 2);
+    const report = JSON.parse(res.stdout);
+    assert.ok(Array.isArray(report.loadErrors) && report.loadErrors.length > 0, res.stdout);
+    assert.match(report.loadErrors.join(" "), /config\.json/);
   });
 });
