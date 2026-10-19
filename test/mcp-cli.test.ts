@@ -319,6 +319,46 @@ test("(mcps-5) graph_visualize returns the path of a generated HTML file", async
   }
 });
 
+test("(mcps-8) graph_visualize: out resolves against root, is confined and must be .html", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home8-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo8-"));
+  const env = sandboxEnv(home);
+  const escapeName = `leina-evil-${process.pid}-${Date.now()}.html`;
+  try {
+    mkdirSync(join(dir, "pkg"), { recursive: true });
+    writeFileSync(join(dir, "pkg", "a.ts"), "export function one(): number { return 1; }\n");
+    // Build first (separate session — see mcps-5 on intra-session ordering).
+    await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "graph_build", arguments: { root: "pkg" } } },
+    ]);
+    const responses = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "graph_visualize", arguments: { root: "pkg", out: join("viz", "g.html") } } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "graph_visualize", arguments: { root: "pkg", out: join("..", "..", escapeName) } } },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "graph_visualize", arguments: { root: "pkg", out: "notes.txt" } } },
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+
+    assert.ok(!byId.get(2)?.result?.isError, `visualize failed: ${byId.get(2)?.result?.content?.[0]?.text}`);
+    assert.ok(existsSync(join(dir, "pkg", "viz", "g.html")), "relative out lands under root, not the server cwd");
+    assert.ok(!existsSync(join(dir, "viz", "g.html")), "nothing written relative to the server cwd");
+
+    assert.equal(byId.get(3)?.result?.isError, true, "escaping out rejected");
+    assert.match(byId.get(3)?.result?.content?.[0]?.text ?? "", /outside the server workspace/);
+    assert.ok(!existsSync(join(dir, "..", escapeName)), "escaping file never written");
+
+    assert.equal(byId.get(4)?.result?.isError, true, "non-.html out rejected");
+    assert.ok(!existsSync(join(dir, "pkg", "notes.txt")), "non-.html file never written");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(tmpdir(), escapeName), { force: true });
+  }
+});
+
 test("(mcps-6) harness tools: parseable schemas and contract new → show → verify → list → end over stdio", async () => {
   const home = mkdtempSync(join(tmpdir(), "leina-mcp-home6-"));
   const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo6-"));

@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { confineRoot } from "../src/cli/handlers/mcp.ts";
+import { confineOut, confineRoot } from "../src/cli/handlers/mcp.ts";
 
 const CWD = path.resolve(path.sep, "srv", "workspace", "repo");
 
@@ -206,4 +206,41 @@ test("(root-12) real filesystem: escaping, dangling and inner symlinks", (t) => 
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// graph_visualize `out` — a model-chosen WRITE target (mkdir -p + overwrite), so it
+// gets the same confinement as `root`, resolves against the confined root (not the
+// server cwd), and may only name an .html file.
+// ---------------------------------------------------------------------------
+
+test("(root-13) out resolves against the root, not the server cwd", () => {
+  const root = path.join(CWD, "packages", "app");
+  assert.equal(confineOut("viz/graph.html", root, CWD), path.join(root, "viz", "graph.html"));
+  assert.equal(
+    confineOut(path.join(CWD, "docs", "g.html"), root, CWD),
+    path.join(CWD, "docs", "g.html"),
+    "absolute paths elsewhere in the workspace stay allowed",
+  );
+});
+
+test("(root-14) out outside the workspace is rejected, allow-list honoured", () => {
+  const other = path.resolve(path.sep, "srv", "other-project");
+  for (const bad of [path.join("..", "..", "..", "evil.html"), path.resolve(path.sep, "tmp", "x.html")]) {
+    assert.throws(() => confineOut(bad, CWD, CWD), /out .* is outside the server workspace/);
+  }
+  assert.equal(confineOut(path.join(other, "g.html"), CWD, CWD, other), path.join(other, "g.html"));
+});
+
+test("(root-15) out must be an .html file — by name AND after resolving symlinks", () => {
+  for (const bad of ["notes.txt", ".bashrc", "graph", "graph.html.sh"]) {
+    assert.throws(() => confineOut(bad, CWD, CWD), /must be an \.html file/, `"${bad}" rejected`);
+  }
+  assert.equal(confineOut("Graph.HTML", CWD, CWD), path.join(CWD, "Graph.HTML"));
+  // An .html name that is really a link to a source file would overwrite that file.
+  const real = fakeReal({ links: { [path.join(CWD, "view.html")]: path.join(CWD, "src", "index.ts") } });
+  assert.throws(() => confineOut("view.html", CWD, CWD, undefined, real), /must be an \.html file/);
+  // An .html link that escapes the workspace is rejected by the containment check.
+  const real2 = fakeReal({ links: { [path.join(CWD, "out.html")]: path.resolve(path.sep, "tmp", "o.html") } });
+  assert.throws(() => confineOut("out.html", CWD, CWD, undefined, real2), /outside the server workspace/);
 });

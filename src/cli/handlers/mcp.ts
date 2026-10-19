@@ -14,7 +14,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { lstatSync, realpathSync } from "node:fs";
-import { basename, delimiter, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
 import {
   capabilities,
   harnessContractNew,
@@ -184,6 +184,29 @@ export function confineRoot(
   real: RealpathFn = realpathOrMissing,
 ): string {
   return confinePath("root", rootArg ?? ".", cwd, cwd, allowRoots, real);
+}
+
+const isHtml = (p: string): boolean => extname(p).toLowerCase() === ".html";
+
+/**
+ * Confine graph_visualize's `out` — a model-chosen WRITE target (mkdir -p + overwrite).
+ * Resolved against the already-confined `root` (not the server cwd), held to the same
+ * workspace/allow-list containment, and limited to an .html file both by name and
+ * after symlink resolution (an `x.html` link to a source file would overwrite it).
+ */
+export function confineOut(
+  outArg: string,
+  root: string,
+  cwd: string,
+  allowRoots?: string,
+  real: RealpathFn = realpathOrMissing,
+): string {
+  const notHtml = (): Error =>
+    new Error(`out "${outArg}" must be an .html file — graph_visualize only writes the HTML viewer.`);
+  if (!isHtml(outArg)) throw notHtml();
+  const resolved = confinePath("out", outArg, root, cwd, allowRoots, real);
+  if (!isHtml(resolved)) throw notHtml();
+  return resolved;
 }
 
 const rootOf = (a: ToolArgs): string =>
@@ -403,11 +426,17 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
     // Heavy path: lazy-import like graph_build (pulls the html-export + wiring stack).
     // Returns the PATH of the generated HTML, never the HTML itself (megabytes of
     // inlined vis-network would flood the model context).
+    // The default target is confined too: a repo-shipped `.leina` symlink must not
+    // redirect the write outside the workspace.
+    const root = rootOf(a);
+    const out = confineOut(
+      optStr(a, "out") ?? join(".leina", "graph.html"),
+      root,
+      process.cwd(),
+      process.env.LEINA_MCP_ALLOW_ROOTS,
+    );
     const { runVisualizeToFile } = await import("./visualize.ts");
-    return runVisualizeToFile(rootOf(a), {
-      out: optStr(a, "out"),
-      drilldown: a.drilldown === true,
-    });
+    return runVisualizeToFile(root, { out, drilldown: a.drilldown === true });
   },
 };
 
@@ -566,7 +595,12 @@ function listTools(): { name: string; description: string; inputSchema: object }
         type: "object",
         properties: {
           root: ROOT_PROP,
-          out: { type: "string", description: "output path (default: <root>/.leina/graph.html)" },
+          out: {
+            type: "string",
+            description:
+              "output .html path, relative to root (default: <root>/.leina/graph.html); " +
+              "confined like root",
+          },
           drilldown: { type: "boolean", description: "workspace roots: merged per-repo-coloured graph instead of the constellation view" },
         },
       },
