@@ -4,7 +4,8 @@
 // reglas fijas/ajustables, el cálculo de overrides de enabled, el writer
 // merge-safe de `.harness/config.json`, las sugerencias extraídas de recetas,
 // las proyecciones textuales y el helper compartido createContract (misma
-// ruta de código que `leina harness contract new`).
+// ruta de código que `leina harness contract new`); y el flow armado completo
+// con prompts guionados (__setPromptsForTests): nada se escribe sin confirmar.
 //
 // Run: node --no-warnings --experimental-strip-types --test test/harness-tui.test.ts
 
@@ -23,6 +24,7 @@ import {
   verifyReportLines,
 } from "../src/application/harness/tui-support.ts";
 import { createContract } from "../src/cli/handlers/harness.ts";
+import { __setPromptsForTests, harnessArmFlow } from "../src/cli/handlers/tui.ts";
 import { loadRecipes } from "../src/application/harness/recipes.ts";
 import { isolateLeinaHome, makeTmpRepo, type TmpRepo } from "./helpers/harness-tmprepo.ts";
 
@@ -343,4 +345,68 @@ test("TUI composition: split → select → overrides → merged config round-tr
   const next = mergeRuleOverridesIntoConfig("{}", overrides);
   assert.ok(next !== null);
   assert.deepEqual(JSON.parse(next).rules, { "harness/lint-clean": { enabled: true } });
+});
+
+// ---------------------------------------------------------------------------
+// harnessArmFlow con prompts guionados: nada se escribe antes de confirmar.
+// ---------------------------------------------------------------------------
+
+describe("harnessArmFlow (prompts guionados)", () => {
+  let repo: TmpRepo;
+  let restoreHome: () => void;
+
+  beforeEach(async () => {
+    repo = await makeTmpRepo();
+    restoreHome = isolateLeinaHome(path.join(repo.root, "no-user-config"));
+    await repo.write("src/app.ts", "export const app = 1;\n");
+    repo.git("add", ".");
+    repo.git("commit", "-m", "init");
+  });
+
+  afterEach(async () => {
+    __setPromptsForTests(null);
+    restoreHome();
+    await repo.cleanup();
+  });
+
+  /** Fake @clack/prompts: answers by prompt kind; `confirm` decides the outcome. */
+  function scriptedPrompts(confirmAnswer: boolean): void {
+    let criteriaAsked = 0;
+    const noop = (): void => undefined;
+    const fake = {
+      isCancel: () => false,
+      cancel: noop,
+      note: noop,
+      log: { info: noop, warn: noop, error: noop, success: noop, message: noop, step: noop },
+      text: async ({ message }: { message: string }) => {
+        if (message.startsWith("Goal")) return "armar arnés";
+        if (message.startsWith("Criterio")) return criteriaAsked++ === 0 ? "el criterio" : "";
+        return ""; // scope / fuera de scope: línea vacía termina
+      },
+      // Tipo "docs": ninguna receta builtin lo declara → sin prompt de receta.
+      select: async ({ message }: { message: string }) => (message === "Tipo de tarea" ? "docs" : ""),
+      // Invierte la selección inicial → siempre produce overrides de reglas.
+      multiselect: async ({ options, initialValues }: { options: { value: string }[]; initialValues?: string[] }) =>
+        options.map((o) => o.value).filter((v) => !(initialValues ?? []).includes(v)),
+      confirm: async () => confirmAnswer,
+    };
+    __setPromptsForTests(fake as unknown as Parameters<typeof __setPromptsForTests>[0]);
+  }
+
+  it("(tui-arm-1) cancelling at «¿Crear el contrato?» writes nothing — no config overrides, no contract", async () => {
+    scriptedPrompts(false);
+    await harnessArmFlow(repo.root);
+    await assert.rejects(fs.access(path.join(repo.root, ".harness/config.json")), "rule overrides not persisted");
+    await assert.rejects(fs.access(path.join(repo.root, ".harness/state/current/contract.json")));
+  });
+
+  it("(tui-arm-2) confirming writes the rule overrides and the contract", async () => {
+    scriptedPrompts(true);
+    await harnessArmFlow(repo.root);
+    const config = JSON.parse(await fs.readFile(path.join(repo.root, ".harness/config.json"), "utf8"));
+    assert.ok(Object.keys(config.rules ?? {}).length > 0, "overrides persisted after confirmation");
+    const contract = JSON.parse(await fs.readFile(path.join(repo.root, ".harness/state/current/contract.json"), "utf8"));
+    assert.equal(contract.goal, "armar arnés");
+    assert.equal(contract.taskType, "docs");
+  });
 });

@@ -8,7 +8,7 @@
 // non-interactive equivalents. The env "set" flow uses a password-style prompt, keeping
 // the names-not-values contract (see handlers/env.ts).
 
-import * as p from "@clack/prompts";
+import * as clack from "@clack/prompts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { readPackageVersion } from "../../version.ts";
@@ -59,6 +59,8 @@ import { loadRecipes } from "../../application/harness/recipes.ts";
 import { runVerify } from "../../application/harness/verify.ts";
 import { runSync } from "../../application/harness/sync.ts";
 import { type VerifyReport } from "../../application/harness/gates/report.ts";
+import { writeFileAtomicSync } from "../../application/harness/adapters/writer.ts";
+import { type RuleOverride } from "../../domain/harness/model.ts";
 import {
   computeEnabledOverrides,
   contractSummary,
@@ -68,6 +70,13 @@ import {
   verifyReportLines,
 } from "../../application/harness/tui-support.ts";
 
+/** The prompt library — swappable only so tests can script an interactive flow. */
+let p: typeof clack = clack;
+
+/** Test seam: install scripted prompts (null restores @clack/prompts). */
+export function __setPromptsForTests(impl: typeof clack | null): void {
+  p = impl ?? clack;
+}
 
 function loadCatalog(): Catalog | null {
   const raw = readIfExists(join(entryAssetsRoot(), "catalog.json"));
@@ -494,11 +503,18 @@ async function harnessInterview(root: string): Promise<HarnessInterview | null> 
   return { goal: goal as string, taskType: taskType as string, scope, outOfScope, criteria };
 }
 
+interface HarnessRuleSelection {
+  activeRuleIds: string[];
+  /** `enabled` overrides to persist — only once the contract is confirmed. */
+  overrides: Record<string, RuleOverride>;
+}
+
 // d. Reglas: las blocking activas son fijas (la capa local no puede
 // debilitarlas); el resto es ajustable y se persiste como override de
-// `enabled` en .harness/config.json (capa proyecto). Devuelve los ids de las
-// reglas que quedan activas, o null si el usuario cancela / el config está roto.
-async function selectHarnessRules(root: string): Promise<string[] | null> {
+// `enabled` en .harness/config.json (capa proyecto) — pero solo tras la
+// confirmación final (persistRuleOverrides): cancelar no deja nada escrito.
+// Devuelve la selección, o null si el usuario cancela / el config está roto.
+async function selectHarnessRules(root: string): Promise<HarnessRuleSelection | null> {
   const resolution = await loadResolvedRules(root);
   for (const e of resolution.errors) p.log.error(e);
   const { fixed, adjustable } = splitAdjustableRules(resolution.rules);
@@ -509,7 +525,7 @@ async function selectHarnessRules(root: string): Promise<string[] | null> {
       "reglas fijas — blocking activas, no descartables",
     );
   }
-  if (adjustable.length === 0) return activeRuleIds;
+  if (adjustable.length === 0) return { activeRuleIds, overrides: {} };
 
   const chosen = await p.multiselect({
     message: "Reglas ajustables — activa/desactiva para este repo",
@@ -525,31 +541,48 @@ async function selectHarnessRules(root: string): Promise<string[] | null> {
   const selected = chosen as string[];
 
   const overrides = computeEnabledOverrides(adjustable, selected);
-  if (Object.keys(overrides).length > 0) {
-    const configPath = join(harnessDir(root), "config.json");
-    const next = mergeRuleOverridesIntoConfig(readIfExists(configPath), overrides);
-    if (next === null) {
-      p.log.error(`${configPath}: JSON malformado — no se toca; arréglalo y reintenta`);
-      return null;
-    }
-    mkdirSync(dirname(configPath), { recursive: true });
-    writeFileSync(configPath, next);
-    p.log.success(`overrides de reglas guardados en ${configPath}`);
+  // Validated now (no confirmation for something that cannot be applied),
+  // written later.
+  if (Object.keys(overrides).length > 0 && ruleOverridesConfig(root, overrides) === null) return null;
+  return { activeRuleIds: [...activeRuleIds, ...selected], overrides };
+}
+
+/** Next .harness/config.json text with the overrides merged; null (and logged) when malformed. */
+function ruleOverridesConfig(
+  root: string,
+  overrides: Record<string, RuleOverride>,
+): { path: string; content: string } | null {
+  const configPath = join(harnessDir(root), "config.json");
+  const next = mergeRuleOverridesIntoConfig(readIfExists(configPath), overrides);
+  if (next === null) {
+    p.log.error(`${configPath}: JSON malformado — no se toca; arréglalo y reintenta`);
+    return null;
   }
-  return [...activeRuleIds, ...selected];
+  return { path: configPath, content: next };
+}
+
+function persistRuleOverrides(root: string, overrides: Record<string, RuleOverride>): void {
+  if (Object.keys(overrides).length === 0) return;
+  const target = ruleOverridesConfig(root, overrides); // re-read: never write a stale merge
+  if (target === null) return;
+  mkdirSync(dirname(target.path), { recursive: true });
+  writeFileAtomicSync(target.path, target.content);
+  p.log.success(`overrides de reglas guardados en ${target.path}`);
 }
 
 // El flujo estrella: contrato activo → entrevista → reglas → resumen → contrato.
-async function harnessArmFlow(root: string): Promise<void> {
+export async function harnessArmFlow(root: string): Promise<void> {
   if (!(await confirmNoActiveContract(root))) return;
 
   const interview = await harnessInterview(root);
   if (interview === null) return;
 
-  const activeRuleIds = await selectHarnessRules(root);
-  if (activeRuleIds === null) return;
+  const rules = await selectHarnessRules(root);
+  if (rules === null) return;
+  const { activeRuleIds } = rules;
 
   // e. Resumen → confirmación → misma ruta de creación que `contract new`.
+  // Nada se escribe antes de la confirmación (ni contrato ni overrides).
   const summaryLines = [
     `goal: ${interview.goal}`,
     `tipo: ${interview.taskType}`,
@@ -577,6 +610,7 @@ async function harnessArmFlow(root: string): Promise<void> {
     return;
   }
   p.log.success("contrato creado");
+  persistRuleOverrides(root, rules.overrides);
   p.note(
     "siguiente paso: trabaja dentro del scope y cierra con `leina harness verify`\n(y `leina harness contract end` cuando esté en verde)",
     "harness",
