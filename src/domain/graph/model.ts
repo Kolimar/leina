@@ -18,6 +18,7 @@ type OpenStr = string & { _?: never };
 /** Known code node kinds (always present in KNOWN_NODE_KINDS). */
 const CODE_NODE_KINDS = [
   "class", "function", "method", "interface", "module", "concept",
+  "type", "enum", "variable", "accessor",
 ] as const;
 
 /** Known infra node kinds (always present in KNOWN_NODE_KINDS). */
@@ -34,6 +35,7 @@ export const KNOWN_NODE_KINDS: ReadonlySet<string> = new Set<string>([
 
 export type NodeKind =
   | "class" | "function" | "method" | "interface" | "module" | "concept"
+  | "type" | "enum" | "variable" | "accessor"
   | "service" | "api" | "database" | "queue" | "config"
   | "secret" | "finding" | "deployment" | "environment"
   | OpenStr;

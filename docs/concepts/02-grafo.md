@@ -143,12 +143,19 @@ classDiagram
   Casefolding can make two **distinct** declarations of one scope share an id
   (`interface HostSpec` + `function hostSpec`, `class Parser` + `function parser`, a static and
   an instance member with the same name). The first one in registration order (classes,
-  interfaces, functions, function-valued consts) keeps the plain id; each
-  later one gets `:<kind>` appended — `src_x_ts:hostspec:function` — then `_2`, `_3`, … if
-  that is taken too. The member tags are `method` and `static`.
+  interfaces, functions, function-valued consts, then type aliases, enums and other
+  top-level variables) keeps the plain id; each
+  later one gets `:<kind>` appended — `src_x_ts:hostspec:function`, or
+  `src_x_ts:user:variable` for `const User` next to `type User` — then `_2`, `_3`, … if
+  that is taken too. The member tags are `method`, `static`, `accessor` and
+  `static_accessor`.
   Declarations of the same entity (interface merging, overloads, a get/set pair) share one node.
-- `kind` — `class` · `function` · `method` · `interface` · `module` · `concept`.
-- `signature` — only for functions/methods: return type, parameters (with type, nullability,
+- `kind` — `class` · `function` · `method` · `interface` · `module` · `concept`, plus, for
+  TypeScript, `type` (type alias) · `enum` · `variable` (top-level `const`/`let`/`var` that is
+  not a function) · `accessor` (a `get`/`set` pair). The methods of an object literal held by a
+  top-level variable are `method` nodes of that variable, and an anonymous `export default`
+  function or arrow is the function `default`.
+- `signature` — only for functions/methods/accessors: return type, parameters (with type, nullability,
   optionality), access modifier, `isAsync`/`isGenerator` flags.
 
 ### The `edge` (the street)
@@ -161,7 +168,7 @@ the street exists):
 | Structural | `contains` | module → definition that lives in it |
 | Structural | `method` | class → its method |
 | Calls | `calls` | function → function it invokes |
-| Calls | `references` | function → type it uses |
+| Calls | `references` | function → type, enum, constant or accessor it uses |
 | Imports | `imports`, `imports_from` | module dependency |
 | Inheritance | `extends`, `implements`, `inherits` | type hierarchy |
 | Other | `uses` | generic usage |

@@ -142,12 +142,19 @@ classDiagram
   El casefold puede hacer que dos declaraciones **distintas** de un mismo ámbito compartan id
   (`interface HostSpec` + `function hostSpec`, `class Parser` + `function parser`, un miembro
   estático y uno de instancia con el mismo nombre). La primera en orden de registro (clases,
-  interfaces, funciones, consts con valor función) conserva el id
-  plano; cada una de las siguientes recibe `:<tipo>` al final — `src_x_ts:hostspec:function` — y
-  luego `_2`, `_3`, … si también está ocupado. Las etiquetas de miembro son `method` y `static`. Las declaraciones de una misma entidad (fusión de interfaces,
+  interfaces, funciones, consts con valor función, y después alias de tipo, enums y el resto
+  de las variables de nivel superior) conserva el id
+  plano; cada una de las siguientes recibe `:<tipo>` al final — `src_x_ts:hostspec:function`, o
+  `src_x_ts:user:variable` para `const User` junto a `type User` — y
+  luego `_2`, `_3`, … si también está ocupado. Las etiquetas de miembro son `method`, `static`,
+  `accessor` y `static_accessor`. Las declaraciones de una misma entidad (fusión de interfaces,
   sobrecargas, un par get/set) comparten un solo nodo.
-- `kind` — `class` · `function` · `method` · `interface` · `module` · `concept`.
-- `signature` — solo para funciones/métodos: tipo de retorno, parámetros (con tipo,
+- `kind` — `class` · `function` · `method` · `interface` · `module` · `concept` y, para
+  TypeScript, `type` (alias de tipo) · `enum` · `variable` (`const`/`let`/`var` de nivel
+  superior que no es una función) · `accessor` (un par `get`/`set`). Los métodos de un objeto
+  literal guardado en una variable de nivel superior son nodos `method` de esa variable, y una
+  función o arrow anónima en `export default` es la función `default`.
+- `signature` — solo para funciones/métodos/accessors: tipo de retorno, parámetros (con tipo,
   nullabilidad, opcionalidad), modificador de acceso, flags `isAsync`/`isGenerator`.
 
 ### El `edge` (la calle)
@@ -160,7 +167,7 @@ de que la calle existe):
 | Estructural | `contains` | módulo → definición que vive en él |
 | Estructural | `method` | clase → su método |
 | Llamadas | `calls` | función → función que invoca |
-| Llamadas | `references` | función → tipo que usa |
+| Llamadas | `references` | función → tipo, enum, constante o accessor que usa |
 | Imports | `imports`, `imports_from` | dependencia de módulo |
 | Herencia | `extends`, `implements`, `inherits` | jerarquía de tipos |
 | Otros | `uses` | uso genérico |

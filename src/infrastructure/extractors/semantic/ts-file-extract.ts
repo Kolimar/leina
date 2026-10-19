@@ -140,7 +140,8 @@ function hasModifier(n: ts.Node, kind: ts.SyntaxKind): boolean {
 }
 
 function accessOf(decl: FnLike): Signature["accessModifier"] {
-  if (!ts.isMethodDeclaration(decl) || !ts.isClassLike(decl.parent)) return undefined;
+  const member = ts.isMethodDeclaration(decl) || ts.isGetAccessorDeclaration(decl) || ts.isSetAccessorDeclaration(decl);
+  if (!member || !ts.isClassLike(decl.parent)) return undefined;
   const flags = ts.getCombinedModifierFlags(decl);
   if (flags & ts.ModifierFlags.Private) return "private";
   if (flags & ts.ModifierFlags.Protected) return "protected";
@@ -163,6 +164,23 @@ function symbolOf(checker: ts.TypeChecker, node: ts.Node): ts.Symbol | undefined
   if (s) return s;
   const name = (node as { name?: ts.Node }).name;
   return name !== undefined && typeof name === "object" && "kind" in name ? symbolOf(checker, name) : undefined;
+}
+
+/**
+ * Which declarations of a merged symbol a reference means: `const User` + `type User` are one
+ * symbol, but `User.parse()` uses the value and `u: User` the type.
+ */
+type Meaning = "value" | "type";
+
+function declMeans(d: ts.Node, meaning: Meaning): boolean {
+  const typeOnly = ts.isInterfaceDeclaration(d) || ts.isTypeAliasDeclaration(d);
+  if (meaning === "value") return !typeOnly;
+  return typeOnly || ts.isClassLike(d) || ts.isEnumDeclaration(d);
+}
+
+function isCallee(n: ts.Node): boolean {
+  const p = n.parent;
+  return (ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression === n;
 }
 
 const loc = (n: ts.Node, sf: ts.SourceFile): string =>
@@ -189,7 +207,7 @@ class FileExtractor {
   private readonly news: Site[] = [];
   private readonly typeRefs: Site[] = [];
   private readonly valueRefs: Site[] = [];
-  private readonly resolved = new Map<ts.Symbol, string | null>();
+  private readonly resolved: Record<Meaning, Map<ts.Symbol, string | null>> = { value: new Map(), type: new Map() };
   private readonly env: TsProgramEnv;
   private readonly sf: ts.SourceFile;
   private readonly defs: FileDefs;
@@ -316,8 +334,10 @@ class FileExtractor {
   private isExcludedValueId(id: ts.Identifier, st: WalkState): boolean {
     if (st.inHeritage || st.inTypeRef) return true;
     const p = id.parent;
-    if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression === id) return true;
-    if (ts.isPropertyAccessExpression(p) && p.name === id) return true;
+    if (isCallee(id)) return true;
+    // `obj.NAME` as a callee is the call edge's; read, written or passed as a value
+    // (`a.balance = 1`, `register(handlers.build)`) it is a reference to the member.
+    if (ts.isPropertyAccessExpression(p) && p.name === id) return isCallee(p);
     switch (p.kind) {
       case ts.SyntaxKind.ImportSpecifier:
       case ts.SyntaxKind.ImportClause:
@@ -337,23 +357,32 @@ class FileExtractor {
     return this.env.defsOf(d.getSourceFile())?.idByDecl.get(d);
   }
 
-  private resolveSymbol(sym: ts.Symbol): string | undefined {
-    const hit = this.resolved.get(sym);
+  /** First registered declaration with the wanted meaning, else the first registered one. */
+  private pickDecl(decls: readonly ts.Node[], meaning: Meaning): string | undefined {
+    let fallback: string | undefined;
+    for (const d of decls) {
+      const id = this.idOfDecl(d);
+      if (id === undefined) continue;
+      if (declMeans(d, meaning)) return id;
+      fallback ??= id;
+    }
+    return fallback;
+  }
+
+  private resolveSymbol(sym: ts.Symbol, meaning: Meaning): string | undefined {
+    const cache = this.resolved[meaning];
+    const hit = cache.get(sym);
     if (hit !== undefined) return hit ?? undefined;
     let target = sym;
     if (target.flags & ts.SymbolFlags.Alias) target = this.checker.getAliasedSymbol(target);
-    let id: string | undefined;
-    for (const d of target.declarations ?? []) {
-      id = this.idOfDecl(d);
-      if (id !== undefined) break;
-    }
-    this.resolved.set(sym, id ?? null);
+    const id = this.pickDecl(target.declarations ?? [], meaning);
+    cache.set(sym, id ?? null);
     return id;
   }
 
-  private resolve(node: ts.Node): string | undefined {
+  private resolve(node: ts.Node, meaning: Meaning): string | undefined {
     const sym = symbolOf(this.checker, node);
-    return sym ? this.resolveSymbol(sym) : undefined;
+    return sym ? this.resolveSymbol(sym, meaning) : undefined;
   }
 
   // --- edges -------------------------------------------------------------------------
@@ -368,10 +397,10 @@ class FileExtractor {
   private classHeritage(d: TsDef): void {
     const cls = d.decl as ts.ClassLikeDeclaration;
     for (const clause of cls.heritageClauses ?? []) {
-      const relation = clause.token === ts.SyntaxKind.ExtendsKeyword ? "extends" : "implements";
+      const isExtends = clause.token === ts.SyntaxKind.ExtendsKeyword;
       for (const t of clause.types) {
-        const target = this.resolve(t.expression);
-        if (target) this.addEdge(d.id, target, relation, t);
+        const target = this.resolve(t.expression, isExtends ? "value" : "type");
+        if (target) this.addEdge(d.id, target, isExtends ? "extends" : "implements", t);
       }
     }
   }
@@ -380,7 +409,7 @@ class FileExtractor {
     const itf = d.decl as ts.InterfaceDeclaration;
     for (const clause of itf.heritageClauses ?? []) {
       for (const t of clause.types) {
-        const target = this.resolve(t.expression);
+        const target = this.resolve(t.expression, "type");
         if (target) this.addEdge(d.id, target, "extends", t);
       }
     }
@@ -388,11 +417,11 @@ class FileExtractor {
 
   private emitCalls(): void {
     for (const c of this.calls) {
-      const target = this.resolve((c.node as ts.CallExpression).expression);
+      const target = this.resolve((c.node as ts.CallExpression).expression, "value");
       if (target) this.addEdge(c.from, target, "calls", c.node);
     }
     for (const n of this.news) {
-      const target = this.resolve((n.node as ts.NewExpression).expression);
+      const target = this.resolve((n.node as ts.NewExpression).expression, "value");
       if (target) this.addEdge(n.from, target, "references", n.node);
     }
   }
@@ -408,8 +437,8 @@ class FileExtractor {
       seen.add(key);
       this.addEdge(from, target, "references", at);
     };
-    for (const t of this.typeRefs) emit(t.from, this.resolve((t.node as ts.TypeReferenceNode).typeName), t.node);
-    for (const v of this.valueRefs) emit(v.from, this.resolve(v.node), v.node);
+    for (const t of this.typeRefs) emit(t.from, this.resolve((t.node as ts.TypeReferenceNode).typeName, "type"), t.node);
+    for (const v of this.valueRefs) emit(v.from, this.resolve(v.node, "value"), v.node);
   }
 }
 

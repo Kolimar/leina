@@ -96,3 +96,63 @@ test("(b3-unique-ids) the extractor emits each node id once", () => {
   const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
   assert.deepStrictEqual(dupes, []);
 });
+
+// ---------------------------------------------------------------------------
+// B4 — type aliases, enums, variables, accessors, object-literal methods and the
+// anonymous default export are nodes; uses of them are edges
+// ---------------------------------------------------------------------------
+
+const KINDS = "data_kinds_ts";
+const USER = "data_user_ts";
+
+test("(b4-nodes) new declaration kinds get nodes with their own kind", () => {
+  assert.deepStrictEqual(nodesOf("data-kinds.ts"), [
+    `accessor:${KINDS}_account:balance`,
+    `class:${KINDS}:account`,
+    `enum:${KINDS}:color`,
+    `method:${KINDS}_handlers:build`,
+    `method:${KINDS}_handlers:query`,
+    `module:${KINDS}`,
+    `type:${KINDS}:status`,
+    `type:${KINDS}:user`,
+    `variable:${KINDS}:handlers`,
+    `variable:${KINDS}:limit`,
+    `variable:${KINDS}:save_re`,
+    `variable:${KINDS}:user:variable`,
+  ]);
+  assert.deepStrictEqual(nodesOf("data-default.ts"), ["function:data_default_ts:default", "module:data_default_ts"]);
+  assert.equal(node("data_default_ts:default").label, "default()");
+  assert.equal(node(`${KINDS}:limit`).label, "LIMIT");
+  assert.ok(node(`${KINDS}_account:balance`).signature, "accessors carry a signature");
+});
+
+test("(b4-structure) members of object literals and accessors hang off their owner", () => {
+  assert.deepStrictEqual(edgesFrom(`${KINDS}:handlers`, ["method"]), [
+    `${KINDS}:handlers -method-> ${KINDS}_handlers:build @L17`,
+    `${KINDS}:handlers -method-> ${KINDS}_handlers:query @L20`,
+  ]);
+  assert.deepStrictEqual(edgesFrom(`${KINDS}:account`, ["method"]), [
+    `${KINDS}:account -method-> ${KINDS}_account:balance @L25`,
+  ]);
+});
+
+test("(b4-uses) consts, enums, type aliases, accessors and literal methods are reached by their users", () => {
+  assert.deepStrictEqual(edgesFrom(`${USER}:usekinds`), [
+    `${USER}:usekinds -calls-> data_default_ts:default @L8`,
+    `${USER}:usekinds -calls-> ${KINDS}_handlers:build @L7`,
+    `${USER}:usekinds -calls-> ${KINDS}_handlers:query @L9`,
+    `${USER}:usekinds -references-> ${KINDS}:account @L5`,
+    `${USER}:usekinds -references-> ${KINDS}:color @L8`,
+    `${USER}:usekinds -references-> ${KINDS}:handlers @L7`,
+    `${USER}:usekinds -references-> ${KINDS}:limit @L6`,
+    `${USER}:usekinds -references-> ${KINDS}:status @L4`,
+    `${USER}:usekinds -references-> ${KINDS}:user:variable @L8`,
+    `${USER}:usekinds -references-> ${KINDS}_account:balance @L6`,
+  ]);
+});
+
+test("(b4-merged-value-type) a const and a type alias sharing a name resolve by meaning", () => {
+  // `u: User` is the type; `User.kind` (above) and `typeof User` are the value.
+  assert.deepStrictEqual(edgesFrom(`${USER}:asuser`), [`${USER}:asuser -references-> ${KINDS}:user @L12`]);
+  assert.deepStrictEqual(edgesFrom(`${KINDS}:user`), [`${KINDS}:user -references-> ${KINDS}:user:variable @L14`]);
+});

@@ -15,7 +15,9 @@ export type FnLike =
   | ts.FunctionDeclaration
   | ts.MethodDeclaration
   | ts.ArrowFunction
-  | ts.FunctionExpression;
+  | ts.FunctionExpression
+  | ts.GetAccessorDeclaration
+  | ts.SetAccessorDeclaration;
 
 export interface TsDef {
   id: string;
@@ -42,6 +44,21 @@ export interface FileDefs {
 
 function isFunctionInitializer(init: ts.Node | undefined): init is ts.ArrowFunction | ts.FunctionExpression {
   return init !== undefined && (ts.isArrowFunction(init) || ts.isFunctionExpression(init));
+}
+
+/** `(x)`, `x as T`, `x satisfies T`, `<T>x`, `x!` → x. */
+export function unwrapExpression(e: ts.Expression): ts.Expression {
+  let cur = e;
+  while (
+    ts.isParenthesizedExpression(cur) ||
+    ts.isAsExpression(cur) ||
+    ts.isSatisfiesExpression(cur) ||
+    ts.isTypeAssertionExpression(cur) ||
+    ts.isNonNullExpression(cur)
+  ) {
+    cur = cur.expression;
+  }
+  return cur;
 }
 
 function hasModifier(n: ts.Node, kind: ts.SyntaxKind): boolean {
@@ -164,6 +181,35 @@ class DefCollector {
       const name = nameText(p.name);
       if (name !== undefined) this.method(classId, p, name, hasModifier(p, ts.SyntaxKind.StaticKeyword), p.initializer);
     }
+    for (const a of cls.members) {
+      if (ts.isGetAccessorDeclaration(a) || ts.isSetAccessorDeclaration(a)) {
+        this.accessor(classId, a, hasModifier(a, ts.SyntaxKind.StaticKeyword));
+      }
+    }
+  }
+
+  // get/set accessors: one `accessor` node per property (a get/set pair merges).
+  private accessor(ownerId: string, a: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration, isStatic: boolean): void {
+    const name = nameText(a.name);
+    if (name === undefined) return;
+    const tag = isStatic ? "static_accessor" : "accessor";
+    this.member(ownerId, { decl: a, name, tag, kind: "accessor", label: name, fn: a });
+  }
+
+  /** Methods of an object literal bound to a top-level variable (handler maps, adapters). */
+  literalMembers(lit: ts.ObjectLiteralExpression, ownerId: string): void {
+    for (const p of lit.properties) {
+      if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) {
+        this.accessor(ownerId, p, false);
+        continue;
+      }
+      const name = nameText(p.name);
+      if (name === undefined) continue;
+      if (ts.isMethodDeclaration(p)) this.method(ownerId, p, name, false, p);
+      else if (ts.isPropertyAssignment(p) && isFunctionInitializer(p.initializer)) {
+        this.method(ownerId, p, name, false, p.initializer);
+      }
+    }
   }
 
   interfaceMembers(itf: ts.InterfaceDeclaration, itfId: string): void {
@@ -181,6 +227,61 @@ class DefCollector {
   }
 }
 
+/** Type aliases, enums and every other top-level variable (with its object-literal methods). */
+function collectDataDefs(c: DefCollector, stmts: ts.NodeArray<ts.Statement>): void {
+  for (const s of stmts) {
+    if (ts.isTypeAliasDeclaration(s)) {
+      c.topLevel({ decl: s, name: s.name.text, tag: "type", kind: "type", label: s.name.text });
+    }
+  }
+  for (const s of stmts) {
+    if (ts.isEnumDeclaration(s)) {
+      c.topLevel({ decl: s, name: s.name.text, tag: "enum", kind: "enum", label: s.name.text });
+    }
+  }
+  for (const s of stmts) {
+    if (!ts.isVariableStatement(s)) continue;
+    for (const vd of s.declarationList.declarations) {
+      // Destructuring declarations bind other values' members — they are resolved, not nodes.
+      if (!ts.isIdentifier(vd.name) || isFunctionInitializer(vd.initializer)) continue;
+      const name = vd.name.text;
+      const id = c.topLevel({ decl: vd, name, tag: "variable", kind: "variable", label: name });
+      const init = vd.initializer && unwrapExpression(vd.initializer);
+      if (init && ts.isObjectLiteralExpression(init)) c.literalMembers(init, id);
+    }
+  }
+}
+
+/** An anonymous default export becomes a node named `default`; `export default name` stays an alias. */
+function collectDefaultExport(c: DefCollector, stmts: ts.NodeArray<ts.Statement>): void {
+  for (const s of stmts) {
+    if (ts.isFunctionDeclaration(s) && !s.name && hasModifier(s, ts.SyntaxKind.DefaultKeyword)) {
+      if (s.body === undefined && !isAmbient(s)) continue;
+      c.topLevel({ decl: s, name: "default", tag: "function", kind: "function", label: "default()", fn: s });
+    } else if (ts.isClassDeclaration(s) && !s.name && hasModifier(s, ts.SyntaxKind.DefaultKeyword)) {
+      c.classMembers(s, c.topLevel({ decl: s, name: "default", tag: "class", kind: "class", label: "default" }));
+    } else if (ts.isExportAssignment(s) && !s.isExportEquals) {
+      defaultExpression(c, s);
+    }
+  }
+}
+
+function defaultExpression(c: DefCollector, s: ts.ExportAssignment): void {
+  const e = unwrapExpression(s.expression);
+  if (ts.isIdentifier(e) || ts.isPropertyAccessExpression(e)) return; // alias of a named declaration
+  // The `default` export symbol's declaration is the ExportAssignment itself.
+  if (isFunctionInitializer(e)) {
+    c.topLevel({ decl: s, name: "default", tag: "function", kind: "function", label: "default()", fn: e });
+  } else if (ts.isClassExpression(e)) {
+    const id = c.topLevel({ decl: e, name: "default", tag: "class", kind: "class", label: "default" });
+    c.idByDecl.set(s, id);
+    c.classMembers(e, id);
+  } else {
+    const id = c.topLevel({ decl: s, name: "default", tag: "variable", kind: "variable", label: "default" });
+    if (ts.isObjectLiteralExpression(e)) c.literalMembers(e, id);
+  }
+}
+
 /** Collect the graph definitions of `sf` (relPath: root-relative POSIX path). */
 export function collectDefs(sf: ts.SourceFile, relPath: string): FileDefs {
   const c = new DefCollector(makeId(relPath), relPath);
@@ -190,7 +291,8 @@ export function collectDefs(sf: ts.SourceFile, relPath: string): FileDefs {
   const stmts = sf.statements;
   // Registration order decides which of two colliding declarations keeps the plain id:
   // classes, interfaces, functions, function-valued consts — the order ids were always
-  // assigned in, so a symbol that used to win a collision keeps its id.
+  // assigned in, so a symbol that used to win a collision keeps its id — then the kinds that
+  // gained nodes later (type aliases, enums, variables, the anonymous default export).
   for (const s of stmts) {
     if (!ts.isClassDeclaration(s) || !s.name) continue;
     const name = s.name.text;
@@ -217,5 +319,7 @@ export function collectDefs(sf: ts.SourceFile, relPath: string): FileDefs {
       c.topLevel({ decl: vd, name, tag: "function", kind: "function", label: `${name}()`, fn: vd.initializer });
     }
   }
+  collectDataDefs(c, stmts);
+  collectDefaultExport(c, stmts);
   return { fileId: c.fileId, relPath, defs: c.defs, idByDecl: c.idByDecl };
 }

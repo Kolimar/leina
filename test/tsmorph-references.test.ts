@@ -39,6 +39,7 @@ const UNUSED_EXPORT = "decls_ts:unusedexport";
 const RECURSIVE_NODE = "decls_ts:recursivenode";
 
 const REFS = "refs_ts";
+const REGISTRY = "refs_ts:registry";
 const USE_NODE = "refs_ts:usenode";
 const USE_MAP = "refs_ts:usemap";
 const USE_PRIMITIVE = "refs_ts:useprimitive";
@@ -83,8 +84,10 @@ test("(tr-negative-primitive) primitive types do not resolve to a registered dec
 // REQ-VR-1 — value-position Identifier walk
 // ---------------------------------------------------------------------------
 
+// The literal is the initializer of the top-level `registry` const, which is a node of its
+// own (kind "variable"), so the reference is attributed to it rather than to the module.
 test("(vr-object-literal-value) symbol referenced as a value (not called) inside an object literal", () => {
-  assert.ok(hasEdge("references", REFS, BUILD_GRAPH), `esperado ${REFS} -references-> ${BUILD_GRAPH}\n${edgesInfo()}`);
+  assert.ok(hasEdge("references", REGISTRY, BUILD_GRAPH), `esperado ${REGISTRY} -references-> ${BUILD_GRAPH}\n${edgesInfo()}`);
 });
 
 test("(vr-argument) symbol passed as an argument (not the callee itself)", () => {
@@ -108,7 +111,7 @@ test("(vr-negative-unregistered-local) exact references edge set — no spurious
     `${USE_NODE}->${GRAPH_EDGE}@L10`,
     `${USE_MAP}->${GRAPH_NODE}@L16`,
     `${WRAP}->${RECURSIVE_NODE}@L58`,
-    `${REFS}->${BUILD_GRAPH}@L28`,
+    `${REGISTRY}->${BUILD_GRAPH}@L28`,
     `${REFS}->${MY_HANDLER}@L32`,
     `${USE_NAMESPACE_MEMBER}->${DECLS}@L52`,
   ].sort();
