@@ -13,7 +13,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { resolve as resolvePath } from "node:path";
+import { delimiter, isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
 import {
   capabilities,
   harnessContractNew,
@@ -51,9 +51,49 @@ const optStr = (a: ToolArgs, k: string): string | undefined =>
 const optStrArr = (a: ToolArgs, k: string): string[] | undefined =>
   Array.isArray(a[k]) ? (a[k] as string[]) : undefined;
 
-// Root always resolves relative to the server's cwd (the host launches `leina mcp` at
-// the workspace root, per the registration entry written by init/activate).
-const rootOf = (a: ToolArgs): string => resolvePath(optStr(a, "root") ?? ".");
+// Root confinement — `root` arrives from the MODEL, so under prompt injection it is
+// attacker-controlled. Unconfined, it would let a hostile prompt point every tool at an
+// arbitrary directory: cross-project reads via graph_query/context_build, harness_verify
+// re-running command gates inside a foreign repo, and consent lookups against roots that
+// never opted in (no .leina/consent reads as "unknown" = allowed). Roots are therefore
+// confined to the server's cwd (the host launches `leina mcp` at the workspace root, per
+// the registration entry written by init/activate). Legitimate multi-project flows opt
+// out EXPLICITLY and auditably: LEINA_MCP_ALLOW_ROOTS lists extra allowed absolute paths
+// (':' PATH-style or ',' separated); a root equal to, or inside, one of them is accepted.
+
+/** True when `child` is `parent` itself or a path inside it (both already resolved). */
+const isWithin = (parent: string, child: string): boolean => {
+  const rel = relative(parent, child);
+  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+};
+
+/**
+ * Resolve a tool's `root` argument against `cwd` and enforce the confinement above.
+ * Pure (cwd and allow-list are injected) and exported for direct unit testing
+ * (test/mcp-root-confinement.test.ts). Throws when the resolved root falls outside
+ * `cwd` and no LEINA_MCP_ALLOW_ROOTS entry covers it.
+ */
+export function confineRoot(rootArg: string | undefined, cwd: string, allowRoots?: string): string {
+  const resolved = resolvePath(cwd, rootArg ?? ".");
+  if (isWithin(cwd, resolved)) return resolved;
+  const allowed = (allowRoots ?? "")
+    .split(delimiter)
+    .flatMap((part) => part.split(","))
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => resolvePath(cwd, p));
+  if (allowed.some((base) => isWithin(base, resolved))) return resolved;
+  throw new Error(
+    `root "${resolved}" is outside the server workspace "${cwd}". MCP tool calls are ` +
+      `confined to the directory the server was launched in, so a prompt-injected root ` +
+      `cannot read (or run gates against) other projects. To allow specific external ` +
+      `roots on purpose, launch the server with ` +
+      `LEINA_MCP_ALLOW_ROOTS=/abs/path[:/abs/path...] (':' or ',' separated).`,
+  );
+}
+
+const rootOf = (a: ToolArgs): string =>
+  confineRoot(optStr(a, "root"), process.cwd(), process.env.LEINA_MCP_ALLOW_ROOTS);
 
 async function withFreshStore<T>(
   root: string,
@@ -257,6 +297,15 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
   },
 };
 
+// Shared schema for the `root` parameter — the description mirrors the confinement
+// that confineRoot actually enforces (it previously advertised only a default).
+const ROOT_PROP = {
+  type: "string",
+  description:
+    "Project directory (default: server cwd). Must resolve inside the server cwd; " +
+    "paths outside it are rejected unless allow-listed via LEINA_MCP_ALLOW_ROOTS.",
+};
+
 // JSON-friendly schema override for tools whose REGISTRY schema still describes the
 // port-injected form (store objects) — the MCP surface always takes root+params.
 const MCP_INPUT_OVERRIDES: Record<string, object> = {
@@ -264,7 +313,7 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     type: "object",
     required: ["question"],
     properties: {
-      root: { type: "string", description: "Project directory (default: server cwd)" },
+      root: ROOT_PROP,
       question: { type: "string" },
       depth: { type: "number" },
       maxNodes: { type: "number" },
@@ -273,7 +322,7 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
   memory_add: {
     type: "object",
     properties: {
-      root: { type: "string" },
+      root: ROOT_PROP,
       title: { type: "string", description: "required unless `items` is used" },
       content: { type: "string", description: "required unless `items` is used" },
       type: { type: "string", description: "decision | bugfix | discovery | manual | ..." },
@@ -290,7 +339,7 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     type: "object",
     required: ["query"],
     properties: {
-      root: { type: "string" },
+      root: ROOT_PROP,
       query: { type: "string" },
       type: { type: "string" },
       limit: { type: "number" },
@@ -299,7 +348,7 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
   memory_get: {
     type: "object",
     properties: {
-      root: { type: "string" },
+      root: ROOT_PROP,
       id: { type: "string" },
       ids: { type: "array", items: { type: "string" }, description: "batch form: fetch many ids at once" },
     },
@@ -308,7 +357,7 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     type: "object",
     required: ["id"],
     properties: {
-      root: { type: "string" },
+      root: ROOT_PROP,
       id: { type: "string" },
       title: { type: "string" },
       content: { type: "string" },
@@ -320,7 +369,7 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     type: "object",
     required: ["title"],
     properties: {
-      root: { type: "string" },
+      root: ROOT_PROP,
       title: { type: "string" },
       type: { type: "string" },
     },
@@ -329,24 +378,24 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     type: "object",
     required: ["content"],
     properties: {
-      root: { type: "string" },
+      root: ROOT_PROP,
       content: { type: "string", description: "session summary to persist" },
       title: { type: "string" },
     },
   },
-  context_build: { type: "object", properties: { root: { type: "string" } } },
+  context_build: { type: "object", properties: { root: ROOT_PROP } },
   audit_run: {
     type: "object",
-    properties: { root: { type: "string" }, fromIds: { type: "array", items: { type: "string" } } },
+    properties: { root: ROOT_PROP, fromIds: { type: "array", items: { type: "string" } } },
   },
-  graph_status: { type: "object", properties: { root: { type: "string" } } },
+  graph_status: { type: "object", properties: { root: ROOT_PROP } },
   // Harness: the registry schemas require `root`; over MCP it defaults to the
   // server cwd like every other tool, so only the true inputs stay required.
   harness_contract_new: {
     type: "object",
     required: ["goal"],
     properties: {
-      root: { type: "string" },
+      root: ROOT_PROP,
       goal: { type: "string", description: "one sentence: what done looks like" },
       taskType: { type: "string", description: "configured task type (feature | bugfix | refactor | docs | chore by default)" },
       scope: { type: "array", items: { type: "string" }, description: "globs of files the task may change" },
@@ -355,17 +404,17 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
       maxRetries: { type: "number" },
     },
   },
-  harness_contract_show: { type: "object", properties: { root: { type: "string" } } },
-  harness_contract_end: { type: "object", properties: { root: { type: "string" } } },
+  harness_contract_show: { type: "object", properties: { root: ROOT_PROP } },
+  harness_contract_end: { type: "object", properties: { root: ROOT_PROP } },
   harness_verify: {
     type: "object",
     properties: {
-      root: { type: "string" },
+      root: ROOT_PROP,
       phases: { type: "array", items: { type: "string" }, description: "intake | plan | execute | verify | deliver (default: verify,deliver)" },
       ruleId: { type: "string", description: "restrict the run to a single rule id" },
     },
   },
-  harness_rules_list: { type: "object", properties: { root: { type: "string" } } },
+  harness_rules_list: { type: "object", properties: { root: ROOT_PROP } },
 };
 
 function listTools(): { name: string; description: string; inputSchema: object }[] {
@@ -381,7 +430,7 @@ function listTools(): { name: string; description: string; inputSchema: object }
     {
       name: "doctor_run",
       description: "Read-only install/project health report (environment, share, host links, project wiring, graph freshness).",
-      inputSchema: { type: "object", properties: { root: { type: "string" } } },
+      inputSchema: { type: "object", properties: { root: ROOT_PROP } },
     },
     {
       name: "graph_visualize",
@@ -389,7 +438,7 @@ function listTools(): { name: string; description: string; inputSchema: object }
       inputSchema: {
         type: "object",
         properties: {
-          root: { type: "string" },
+          root: ROOT_PROP,
           out: { type: "string", description: "output path (default: <root>/.leina/graph.html)" },
           drilldown: { type: "boolean", description: "workspace roots: merged per-repo-coloured graph instead of the constellation view" },
         },
