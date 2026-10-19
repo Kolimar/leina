@@ -208,7 +208,7 @@ test("(MC-17) no sub-command prints the memory help", () => {
   withEnv(({ env }) => {
     const r = runCli(["memory"], { env });
     assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
-    assert.match(r.stdout, /leina memory <dir> <sub-command>/);
+    assert.match(r.stdout, /leina memory <sub-command> <dir>/);
   });
 });
 

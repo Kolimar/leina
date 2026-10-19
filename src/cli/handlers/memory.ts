@@ -429,7 +429,7 @@ function memCompact(rest: string[], dir: string): void {
 
 function memHelp(): void {
   console.log(
-    `leina memory <dir> <sub-command>\n\n` +
+    `leina memory <sub-command> <dir>\n\n` +
       `  save <dir> --title "..." --content "..." [--type decision|bugfix|...] [--topic key]\n` +
       `             [--scope project|personal|workspace|path|skill|process|technology|security|infra]\n` +
       `             [--anchors a,b]\n` +
