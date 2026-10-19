@@ -112,15 +112,43 @@ describe("bootstrapHarness (leina init step)", () => {
 });
 
 describe("deinitHarness (leina deinit inverse)", () => {
-  it("round-trips cleanly: artifacts and lockfile removed; the platforms config (host choice) stays", async () => {
+  it("(deinit-cfg-1) round-trips cleanly: artifacts, lockfile and the untouched init-written config go", async () => {
     await bootstrapHarness(repo.root, ["claude"]);
     const result = deinitHarness(repo.root);
     assert.deepEqual(result.failures, [], result.failures.join("; "));
 
     assert.equal(await exists("CLAUDE.md"), false, "file contained only the harness block");
     assert.equal(await exists(".harness/harness.lock.json"), false);
-    assert.ok(await exists(".harness/config.json"), "platforms config records the user's host choice — kept");
-    assert.deepEqual(JSON.parse(await read(".harness/config.json")), { platforms: ["claude-code"] });
+    assert.equal(await exists(".harness/config.json"), false, "init wrote it and nobody touched it since");
+    assert.equal(await exists(".harness"), false, "empty .harness/ pruned");
+    assert.ok(result.removed.some((r) => r.startsWith(".harness/config.json")));
+  });
+
+  it("(deinit-cfg-2) a config edited after init is the user's — kept", async () => {
+    await bootstrapHarness(repo.root, ["claude"]);
+    const edited = `${JSON.stringify({ platforms: ["claude-code"], strictness: "strict" }, null, 2)}\n`;
+    await repo.write(".harness/config.json", edited);
+
+    const result = deinitHarness(repo.root);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+    assert.equal(await read(".harness/config.json"), edited);
+  });
+
+  it("(deinit-cfg-3) a re-init that merges hosts into its own config keeps it removable", async () => {
+    await bootstrapHarness(repo.root, ["claude"]);
+    await bootstrapHarness(repo.root, ["claude", "devin"]);
+    assert.deepEqual(JSON.parse(await read(".harness/config.json")).platforms, ["claude-code", "windsurf"]);
+
+    deinitHarness(repo.root);
+    assert.equal(await exists(".harness/config.json"), false);
+  });
+
+  it("(deinit-cfg-4) a user-created config that init merged platforms into stays", async () => {
+    await repo.write(".harness/config.json", JSON.stringify({ strictness: "strict" }));
+    await bootstrapHarness(repo.root, ["claude"]);
+
+    deinitHarness(repo.root);
+    assert.ok(await exists(".harness/config.json"), "never init's file");
   });
 
   it("round-trips to nothing when the seed was the empty {} (no hosts)", async () => {
@@ -267,6 +295,62 @@ describe("deinitHarness (leina deinit inverse)", () => {
     const raw = await read(".cursor/hooks.json");
     assert.ok(!raw.includes("harness hook"), "no dangling harness commands");
   });
+
+  it("(deinit-json-1) a tracked JSON file with no harness entries left is not rewritten", async () => {
+    await repo.write(".cursor/rules/.keep", "");
+    await runSync(repo.root, { platforms: ["cursor"] });
+    // Another tool rewrote hooks.json since: minified, no version, no harness entries.
+    const foreign = JSON.stringify({ hooks: { stop: [{ command: "my-hook" }] } });
+    await repo.write(".cursor/hooks.json", foreign);
+
+    const result = deinitHarness(repo.root);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+    assert.equal(await read(".cursor/hooks.json"), foreign, "byte-identical — no version key, no reformat");
+  });
+
+  it("(deinit-json-2) stripping harness entries keeps the user's formatting and adds no version key", async () => {
+    await repo.write(".cursor/rules/.keep", "");
+    await runSync(repo.root, { platforms: ["cursor"] });
+    const hooks = JSON.parse(await read(".cursor/hooks.json")) as { hooks: Record<string, unknown[]> };
+    // The user's own style: 4-space indent, no version, no trailing newline.
+    const userStyled = JSON.stringify({ hooks: { ...hooks.hooks, beforeReadFile: [{ command: "my-reader" }] } }, null, 4);
+    await repo.write(".cursor/hooks.json", userStyled);
+
+    deinitHarness(repo.root);
+    assert.equal(
+      await read(".cursor/hooks.json"),
+      JSON.stringify({ hooks: { beforeReadFile: [{ command: "my-reader" }] } }, null, 4),
+    );
+  });
+
+  it("(deinit-json-3) an opencode.json with no harness entries is left byte-identical", async () => {
+    await repo.write("opencode.json", "{}\n");
+    await runSync(repo.root, { platforms: ["opencode"] });
+    const foreign = '{\n\t"theme": "dark",\n\t"instructions": ["docs/style.md"]\n}';
+    await repo.write("opencode.json", foreign);
+
+    deinitHarness(repo.root);
+    assert.equal(await read("opencode.json"), foreign);
+  });
+
+  it(
+    "(deinit-atomic-1) co-owned files are rewritten via temp file + rename, keeping their mode",
+    { skip: process.platform === "win32" ? "inode/mode semantics differ on Windows" : false },
+    async () => {
+      await repo.write("AGENTS.md", "# Mine\n");
+      await bootstrapHarness(repo.root);
+      const agents = path.join(repo.root, "AGENTS.md");
+      await fs.chmod(agents, 0o640);
+      const before = await fs.stat(agents);
+
+      deinitHarness(repo.root);
+      const after = await fs.stat(agents);
+      assert.notEqual(after.ino, before.ino, "replaced by rename, not rewritten in place");
+      assert.equal(after.mode & 0o777, 0o640);
+      assert.equal(await read("AGENTS.md"), "# Mine\n");
+      assert.deepEqual((await fs.readdir(repo.root)).filter((n) => n.includes("harness-tmp")), []);
+    },
+  );
 
   it("removes a harness-born .cursor/hooks.json entirely (empty skeleton)", async () => {
     await repo.write(".cursor/rules/.keep", "");

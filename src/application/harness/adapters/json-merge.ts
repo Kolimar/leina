@@ -82,30 +82,69 @@ export function mergeCursorHooks(
 }
 
 /**
- * Deinit inverse of mergeCursorHooks: drop every harness-managed entry, keep
- * the user's. (A merge with no desired additions is exactly that strip.)
+ * Re-serialize a stripped document in the style of the user's original: its
+ * indent unit (spaces/tab, or none for single-line JSON), line endings and
+ * trailing-newline choice. Only reached when a harness entry was removed — a
+ * strip with nothing to remove returns the original bytes untouched.
  */
-export function stripCursorHooks(existingJson: string): JsonMergeResult {
-  return mergeCursorHooks(existingJson, {});
+function serializeLike(original: string, value: unknown): string {
+  const indent = /\n([ \t]+)\S/.exec(original)?.[1] ?? (original.trim().includes("\n") ? 2 : 0);
+  const eol = original.includes("\r\n") ? "\r\n" : "\n";
+  let text = JSON.stringify(value, null, indent);
+  if (eol !== "\n") text = text.replaceAll("\n", eol);
+  return /\r?\n$/.test(original) ? `${text}${eol}` : text;
+}
+
+function isHarnessHookEntry(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const command = (entry as { command?: unknown }).command;
+  return typeof command === "string" && isHarnessHookCommand(command);
 }
 
 /**
- * Deinit inverse of mergeOpencodeInstructions: drop the harness-generated
- * instruction entries (they point at files deinit just deleted).
+ * Deinit/orphan inverse of mergeCursorHooks: drop every harness-managed entry
+ * and nothing else — no `version` key added, events the user left empty stay,
+ * and a file with no harness entries is reported unchanged (never rewritten).
+ */
+export function stripCursorHooks(existingJson: string): JsonMergeResult {
+  const unchanged = { content: existingJson, changed: false };
+  const parsed = parseObjectRoot(existingJson, "hooks.json");
+  if ("failure" in parsed) return parsed.failure;
+  if (!("root" in parsed)) return unchanged;
+  const hooks = parsed.root.hooks;
+  if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) return unchanged;
+
+  let changed = false;
+  const events = hooks as Record<string, unknown>;
+  for (const [event, entries] of Object.entries(events)) {
+    if (!Array.isArray(entries)) continue;
+    const kept = entries.filter((e) => !isHarnessHookEntry(e));
+    if (kept.length === entries.length) continue;
+    changed = true;
+    if (kept.length > 0) events[event] = kept;
+    else delete events[event];
+  }
+  return changed ? { content: serializeLike(existingJson, parsed.root), changed: true } : unchanged;
+}
+
+/**
+ * Deinit/orphan inverse of mergeOpencodeInstructions: drop the harness-
+ * generated instruction entries (they point at files deinit just deleted);
+ * like the cursor strip, a file without such entries is left as is.
  */
 export function stripOpencodeInstructions(existingJson: string): JsonMergeResult {
+  const unchanged = { content: existingJson, changed: false };
   const parsed = parseObjectRoot(existingJson, "opencode.json");
   if ("failure" in parsed) return parsed.failure;
-  if (!("root" in parsed)) return { content: existingJson, changed: false };
+  if (!("root" in parsed)) return unchanged;
   const root = parsed.root;
 
   const existing = Array.isArray(root.instructions) ? (root.instructions as unknown[]) : [];
   const kept = existing.filter((e) => !(typeof e === "string" && e.includes(".harness/generated/")));
+  if (kept.length === existing.length) return unchanged;
   if (kept.length > 0) root.instructions = kept;
   else delete root.instructions;
-
-  const content = `${JSON.stringify(root, null, 2)}\n`;
-  return { content, changed: content !== existingJson };
+  return { content: serializeLike(existingJson, root), changed: true };
 }
 
 /** The empty hooks skeleton the cursor strategy leaves when it created the file. */

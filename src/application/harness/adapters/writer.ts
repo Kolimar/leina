@@ -11,7 +11,7 @@
 
 import path from "node:path";
 import fs from "node:fs/promises";
-import { lstatSync, realpathSync } from "node:fs";
+import { chmodSync, lstatSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import crypto from "node:crypto";
 import { HARNESS_DIR, harnessDir } from "../config-io.ts";
 import { readJsonIfExists, readTextIfExists } from "../io.ts";
@@ -163,16 +163,41 @@ export async function writeFileAtomic(absolute: string, content: string, mode?: 
       // new file — platform default (umask) applies
     }
   }
-  const tmp = path.join(
-    path.dirname(absolute),
-    `.${path.basename(absolute)}.harness-tmp-${crypto.randomBytes(6).toString("hex")}`,
-  );
+  const tmp = atomicTempPath(absolute);
   try {
     await fs.writeFile(tmp, content, "utf8");
     if (finalMode !== undefined) await fs.chmod(tmp, finalMode);
     await fs.rename(tmp, absolute);
   } catch (err) {
     await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
+}
+
+function atomicTempPath(absolute: string): string {
+  return path.join(
+    path.dirname(absolute),
+    `.${path.basename(absolute)}.harness-tmp-${crypto.randomBytes(6).toString("hex")}`,
+  );
+}
+
+/** Synchronous twin of writeFileAtomic — for deinit and the init seed, which are synchronous. */
+export function writeFileAtomicSync(absolute: string, content: string, mode?: number): void {
+  let finalMode = mode;
+  if (finalMode === undefined) {
+    try {
+      finalMode = statSync(absolute).mode & 0o7777;
+    } catch {
+      // new file — platform default (umask) applies
+    }
+  }
+  const tmp = atomicTempPath(absolute);
+  try {
+    writeFileSync(tmp, content, "utf8");
+    if (finalMode !== undefined) chmodSync(tmp, finalMode);
+    renameSync(tmp, absolute);
+  } catch (err) {
+    rmSync(tmp, { force: true });
     throw err;
   }
 }

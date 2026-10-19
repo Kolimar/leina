@@ -17,11 +17,13 @@
 //   Removes ONLY sync-generated artifacts, driven by the committed lockfile —
 //   the same orphan semantics as the writer's cleanup (owned files deleted
 //   when untouched, managed blocks stripped when their interior is untouched,
-//   json-merge harness entries stripped so nothing dangles at deleted files).
+//   json-merge harness entries stripped so nothing dangles at deleted files;
+//   user JSON is otherwise left as it is, and every rewrite is atomic).
 //   The user's `.harness/rules/` and `.harness/state/` are never touched; the
-//   config seeded by init is removed only while still pristine.
+//   config init wrote is removed only while it is still exactly that content
+//   (provenance hash in `.leina/`), then an emptied `.harness/` is pruned.
 
-import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { runSync } from "../harness/sync.ts";
 import { presetRuleOverrides, type RulePreset } from "../harness/recipes.ts";
@@ -31,6 +33,7 @@ import {
   LOCKFILE_REL,
   OUTSIDE_REPO_DETAIL,
   parseLockfile,
+  writeFileAtomicSync,
   type Lockfile,
   type LockfileArtifact,
 } from "../harness/adapters/writer.ts";
@@ -108,6 +111,38 @@ function unionPlatforms(...lists: (readonly string[])[]): string[] {
 }
 
 /**
+ * Fresh seed only: platforms and/or a preset's rule overrides. `generic`
+ * disables the leina-coupled builtin rules; `leina-native` (and no preset)
+ * leaves the pristine `{}` so the full suite governs. Its provenance is
+ * recorded so deinit can tell it from a config the user has since edited.
+ */
+function seedConfig(
+  project: string,
+  configPath: string,
+  platforms: readonly string[],
+  preset: RulePreset | undefined,
+  ruleOverrides: Record<string, { enabled: false }>,
+  written: string[],
+): void {
+  const overrideCount = Object.keys(ruleOverrides).length;
+  const seedObj: Record<string, unknown> = {};
+  if (platforms.length > 0) seedObj.platforms = platforms;
+  if (overrideCount > 0) seedObj.rules = ruleOverrides;
+  const seed = Object.keys(seedObj).length > 0 ? `${JSON.stringify(seedObj, null, 2)}\n` : HARNESS_MINIMAL_CONFIG;
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileAtomicSync(configPath, seed);
+  recordConfigSeed(project, seed);
+  const parts: string[] = [];
+  if (platforms.length > 0) parts.push(`platforms: ${platforms.join(", ")}`);
+  if (overrideCount > 0) parts.push(`preset ${preset} disables ${overrideCount} leina-* rule(s)`);
+  written.push(
+    parts.length > 0
+      ? `.harness/config.json (created — ${parts.join("; ")})`
+      : ".harness/config.json (created — builtin rules govern by default)",
+  );
+}
+
+/**
  * Persist the chosen platforms INTO the config (create or union-merge) so the
  * config stays the single source of truth: running sync with explicit
  * platforms that the config does not record would make the very next plain
@@ -119,7 +154,7 @@ function unionPlatforms(...lists: (readonly string[])[]): string[] {
  * could not be honored (malformed / not an object): nothing is written.
  */
 function persistPlatforms(
-  configPath: string | undefined,
+  project: string,
   platforms: readonly string[],
   inherited: readonly string[],
   preset: RulePreset | undefined,
@@ -128,30 +163,14 @@ function persistPlatforms(
   failures: string[],
 ): boolean {
   const overrideCount = Object.keys(ruleOverrides).length;
+  const configPath = containedArtifactPath(project, CONFIG_REL);
   if (configPath === undefined) {
     failures.push(`${CONFIG_REL}: ${OUTSIDE_REPO_DETAIL}`);
     return false;
   }
   if (!existsSync(configPath)) {
-    mkdirSync(dirname(configPath), { recursive: true });
-    // Fresh seed only: platforms and/or a preset's rule overrides. `generic`
-    // disables the leina-coupled builtin rules; `leina-native` (and no preset)
-    // leaves the pristine `{}` so the full suite governs.
     const seedPlatforms = platforms.length > 0 ? unionPlatforms(platforms, inherited) : [];
-    const seedObj: Record<string, unknown> = {};
-    if (seedPlatforms.length > 0) seedObj.platforms = seedPlatforms;
-    if (overrideCount > 0) seedObj.rules = ruleOverrides;
-    const seed =
-      Object.keys(seedObj).length > 0 ? `${JSON.stringify(seedObj, null, 2)}\n` : HARNESS_MINIMAL_CONFIG;
-    writeFileSync(configPath, seed);
-    const parts: string[] = [];
-    if (seedPlatforms.length > 0) parts.push(`platforms: ${seedPlatforms.join(", ")}`);
-    if (overrideCount > 0) parts.push(`preset ${preset} disables ${overrideCount} leina-* rule(s)`);
-    written.push(
-      parts.length > 0
-        ? `.harness/config.json (created — ${parts.join("; ")})`
-        : ".harness/config.json (created — builtin rules govern by default)",
-    );
+    seedConfig(project, configPath, seedPlatforms, preset, ruleOverrides, written);
     return true;
   }
   // Config already exists: the preset is an init-time seed choice, so it is not
@@ -163,9 +182,10 @@ function persistPlatforms(
   }
   if (platforms.length === 0) return true; // nothing to merge — existing config governs
 
+  const raw = readFileSync(configPath, "utf8");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(configPath, "utf8"));
+    parsed = JSON.parse(raw);
   } catch (err) {
     failures.push(`.harness/config.json: invalid JSON — platforms not merged (${errMsg(err)})`);
     return false;
@@ -182,9 +202,43 @@ function persistPlatforms(
     existing.length > 0 ? unionPlatforms(existing, platforms) : unionPlatforms(platforms, inherited);
   if (merged.length === existing.length) return true; // already recorded
   config.platforms = merged;
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  const next = `${JSON.stringify(config, null, 2)}\n`;
+  writeFileAtomicSync(configPath, next);
+  // Still init's own file (untouched since init wrote it) → it stays init's;
+  // a user's config that init merely merged into never becomes init's.
+  if (isInitWrittenConfig(project, raw)) recordConfigSeed(project, next);
   written.push(`.harness/config.json (platforms merged: ${merged.join(", ")})`);
   return true;
+}
+
+/**
+ * Provenance of `.harness/config.json`: the sha256 of the content init last
+ * wrote, kept in leina's git-ignored per-repo dir. deinit removes the config
+ * only while it still hashes to this — a config the user edited since, or one
+ * init merely merged platforms into, is the user's and stays.
+ */
+const CONFIG_SEED_REL = ".leina/harness-config.sha256";
+
+/** Best-effort bookkeeping: losing it only means deinit keeps the config. */
+function recordConfigSeed(project: string, content: string): void {
+  const seedPath = containedArtifactPath(project, CONFIG_SEED_REL);
+  if (seedPath === undefined) return;
+  try {
+    mkdirSync(dirname(seedPath), { recursive: true });
+    writeFileAtomicSync(seedPath, `${sha256(content)}\n`);
+  } catch {
+    /* deinit will simply keep the config */
+  }
+}
+
+function isInitWrittenConfig(project: string, content: string): boolean {
+  const seedPath = containedArtifactPath(project, CONFIG_SEED_REL);
+  if (seedPath === undefined) return false;
+  try {
+    return readFileSync(seedPath, "utf8").trim() === sha256(content);
+  } catch {
+    return false;
+  }
 }
 
 /** Idempotent harness bootstrap for `leina init` (FULL and LIGHT). */
@@ -202,10 +256,9 @@ export async function bootstrapHarness(
   // `leina-native` (and the default: no preset) seeds none, so the full suite governs.
   const ruleOverrides = opts.preset ? await presetRuleOverrides(opts.preset) : {};
 
-  const configPath = containedArtifactPath(project, CONFIG_REL);
   try {
     const inherited = platforms.length > 0 ? await autoSelectedPlatforms(project) : [];
-    persistPlatforms(configPath, platforms, inherited, opts.preset, ruleOverrides, written, failures);
+    persistPlatforms(project, platforms, inherited, opts.preset, ruleOverrides, written, failures);
   } catch (err) {
     failures.push(`.harness/config.json: ${errMsg(err)}`);
   }
@@ -241,9 +294,10 @@ export interface HarnessDeinitResult {
 }
 
 /**
- * True only for the empty `{}` seed. A config carrying `platforms` encodes the
- * user's host choice (possibly hand-curated since) — deinit must never guess
- * that a non-empty config is disposable, so anything beyond `{}` stays.
+ * True for an empty `{}` config — disposable whoever wrote it (it is what an
+ * absent config means), and how repos bootstrapped before the provenance
+ * record are recognized. Anything richer is removed only when
+ * isInitWrittenConfig vouches for it.
  */
 function isPristineBootstrapConfig(raw: string): boolean {
   try {
@@ -322,7 +376,7 @@ function removeArtifact(
         rmSync(absolute);
         removed.push(`${artifact.path} (file removed — contained only the harness block)`);
       } else {
-        writeFileSync(absolute, content);
+        writeFileAtomicSync(absolute, content);
         removed.push(`${artifact.path} (harness block removed)`);
       }
       return;
@@ -359,7 +413,7 @@ function stripJsonMergeArtifact(
     pruneEmptyParents(project, absolute);
     removed.push(`${artifact.path} (file removed — held only harness entries)`);
   } else {
-    writeFileSync(absolute, result.content);
+    writeFileAtomicSync(absolute, result.content);
     removed.push(`${artifact.path} (harness entries removed)`);
   }
 }
@@ -383,17 +437,23 @@ export function deinitHarness(project: string): HarnessDeinitResult {
     }
   }
 
-  // The config seeded by init is ours to remove — but only the empty `{}`
-  // seed; a config recording platforms (or anything else) is the user's
-  // host choice and stays.
+  // The config is ours to remove only while it is exactly what init wrote
+  // (or an empty `{}`); once the user edited it, it is theirs and stays.
   const configPath = containedArtifactPath(project, CONFIG_REL);
   try {
-    if (configPath !== undefined && existsSync(configPath) && isPristineBootstrapConfig(readFileSync(configPath, "utf8"))) {
+    const raw = configPath !== undefined && existsSync(configPath) ? readFileSync(configPath, "utf8") : undefined;
+    if (configPath !== undefined && raw !== undefined && (isPristineBootstrapConfig(raw) || isInitWrittenConfig(project, raw))) {
       rmSync(configPath);
-      removed.push(".harness/config.json (pristine bootstrap — removed)");
+      removed.push(".harness/config.json (written by init, unchanged since — removed)");
     }
   } catch (err) {
     failures.push(`.harness/config.json: ${errMsg(err)}`);
+  }
+  try {
+    const seedPath = containedArtifactPath(project, CONFIG_SEED_REL);
+    if (seedPath !== undefined) rmSync(seedPath, { force: true });
+  } catch {
+    /* bookkeeping only */
   }
 
   // Drop .harness/ only when now empty — user rules/state keep it alive.
