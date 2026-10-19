@@ -39,8 +39,9 @@ flowchart LR
     c["3. SCOPE-AWARE<br/>if consent != enabled<br/>or untrusted → silent no-op"]
 ```
 
-1. **Advisory only.** The gate never returns `block`. At most it writes a `reason` to `stderr` as
-   a one-time nudge; the agent **always** proceeds. (The harness enforcement branch that shares
+1. **Advisory only.** The gate never returns `block`. At most it hands the agent a one-time
+   nudge, in the channel its host actually shows (see [the output protocol](#the-output-protocol-per-host));
+   the agent **always** proceeds. (The harness enforcement branch that shares
    the `agent-hook` entry point *can* block, in a trusted workspace — that is the inspector's
    job, see [the harness](./07-harness.md).)
 2. **Fail-open.** Empty/invalid stdin, missing fields, fs errors, graph unavailable →
@@ -53,6 +54,28 @@ flowchart LR
    the gate returns silently: no context injection, no advisories, no background graph
    build. This way the global hook doesn't bother other repos, and the `leina-setup` skill
    asks only once in `unknown` repos.
+
+---
+
+## The output protocol per host
+
+A nudge nobody reads is noise. Each managed entry says which host runs it
+(`agent-hook <Event> --host claude|devin`; an entry without the flag counts as Claude Code when
+`CLAUDE_PROJECT_DIR` is set, as Devin otherwise), and the gate answers in that host's
+documented channel:
+
+| What | Claude Code | Devin |
+|------|-------------|-------|
+| `SessionStart` / `UserPromptSubmit` injection | `hookSpecificOutput.additionalContext` (stdout JSON) | same |
+| `PreToolUse` tip (`git commit`, `grep`) | `additionalContext`, next to the tool result | `stderr` |
+| `PostToolUse` native-search tip | `additionalContext` | `additionalContext` (documented for `PostToolUse`) |
+| `Stop` save nudge | `additionalContext` — the conversation continues so the agent can save | `stderr` |
+| harness `Stop` yield (retry cap reached) | `systemMessage`, shown to the user | `stderr` |
+
+Claude Code never shows the agent a hook's `stderr` when the hook exits 0, which is why nothing
+advisory travels there for it. Because a `Stop` nudge **continues** the conversation in Claude
+Code, it is bounded: never on a stop that a Stop hook already continued
+(`stop_hook_active: true`) and at most once per session.
 
 ---
 
@@ -99,13 +122,15 @@ If everything fails, it falls back to a static text that reminds the agent to ru
 
 ## The markers: per-session state
 
-The concierge carries two little flags in `<cwd>/.leina/`, which are **cleared on SessionStart**
+The concierge carries a few little flags in `<cwd>/.leina/`, which are **cleared on SessionStart**
 (per-session semantics) and put back up when appropriate:
 
 | Marker | File | Who writes it | What it's for |
 |--------|---------|------------------|----------|
 | **load** | `session.memory-loaded` | `PostToolUse` when an `exec` runs `memory (context\|search\|verified)`; or a successful injection | cuts off the advice cold once memory has already been loaded |
 | **save** | `session.memory-saved` | `PostToolUse` when an `exec` runs `memory (save\|session\|update)` | read by `Stop` to decide whether to remind you to save |
+| **stop nudge** | `session.stop-nudge-shown` | `Stop` after it nudged | keeps the save nudge to once per session |
+| **search tip** | `session.native-search-nudge-shown` | `PostToolUse` after the native-search tip | keeps that tip to once per session |
 
 The save marker excludes `session-start` with a negative lookahead in the regex (you don't want
 opening a session to count as "already saved").
@@ -136,15 +161,15 @@ sequenceDiagram
     alt load marker present
         G-->>D: silence (memory already loaded)
     else absent
-        G-->>D: advisory tip (stderr)
+        G-->>D: advisory tip (host channel)
     end
 
     D->>G: Stop
-    G->>Disk: does the save marker exist?
-    alt absent
-        G-->>D: nudge "run memory session" (stderr)
+    G->>Disk: save marker or stop-nudge marker present?
+    alt both absent (and not stop_hook_active)
+        G-->>D: nudge "run memory session" (host channel)
+        G->>Disk: writes stop-nudge marker
     end
-    Note over G: stdout ALWAYS empty on Stop
 ```
 
 Details per event:
@@ -163,8 +188,8 @@ Details per event:
   [Search and queries](./03-busqueda-y-consultas.md#the-freshness-gate)). Devin project files
   written before 3.0 ran `leina refresh` on every `edit`/`write`; re-running `init` or
   `repair` strips that entry.
-- **Stop**: if the save marker is missing, it emits the nudge via `stderr`. **stdout is always
-  empty.** It never blocks (exit 0 on every branch).
+- **Stop**: if the save marker is missing, it emits the save nudge once per session (never when
+  `stop_hook_active` is true), in the host's channel. It never blocks (exit 0 on every branch).
 
 ---
 

@@ -32,8 +32,9 @@ live graph on save, and `memory verified` re-checks them (drift detection).
 **Always-on injection**: the `SessionStart` hook automatically injects the top-10 memory
 observations + graph stats into the agent's context — no manual `memory context` call needed
 at session start. `PostCompaction` re-injects the same context after compaction events.
-`Stop` emits a one-time stderr advisory to run `leina memory session <dir>` if no save
-was detected this session (advisory only — never blocks, stdout always empty).
+`Stop` emits a once-per-session advisory to run `leina memory session <dir>` if no save
+was detected this session (advisory only — never blocks; Claude Code receives it as Stop
+`additionalContext`, Devin on stderr).
 
 **Run `leina memory context <dir>`** for mid-session supplementary reloads or targeted
 searches. **Run `leina memory save` proactively** after architectural decisions, bug
@@ -175,9 +176,10 @@ because a user-global hook fires in every Devin project on the machine.
 - **PostCompaction**: re-injects context after compaction (same as SessionStart but does NOT
   reset the markers first — re-arms the load marker). `summary` field is intentionally ignored.
 - **Stop**: advisory nudge to persist session memory. Checks `<cwd>/.leina/session.memory-saved`
-  (`SAVE_MARKER_REL` in `src/cli/agent-gate.ts`); emits `STOP_SAVE_NUDGE` on stderr (naming
-  `leina memory session` and `leina memory save`) when the marker is absent.
-  stdout is ALWAYS empty. Never blocks (exit 0 on all paths).
+  (`SAVE_MARKER_REL` in `src/cli/agent-gate.ts`); emits `STOP_SAVE_NUDGE` (naming
+  `leina memory session` and `leina memory save`) when the marker is absent — at most once per
+  session (`STOP_NUDGE_MARKER_REL`) and never when the payload has `stop_hook_active: true`.
+  Never blocks (exit 0 on all paths).
 - Load marker is per-project at `<cwd>/.leina/session.memory-loaded` — `PostToolUse` on
   an `exec` whose command runs `leina memory (context|search|verified)` writes it
   (`MEMORY_LOAD_CMD_RE` in `src/cli/agent-gate.ts`); marker is re-written on successful injection, never on
@@ -188,8 +190,11 @@ because a user-global hook fires in every Devin project on the machine.
   SessionStart alongside the load marker (per-session semantics). Only the Stop branch reads it.
 
 **Advisory only.** The advisory gate (`runAgentGate`) **never** returns `exit 2` /
-`{"decision":"block"}` — a non-empty `reason` is emitted on stderr as a one-time nudge, and
-the agent always proceeds. Honest scope: this is a workflow nudge, not a security control,
+`{"decision":"block"}` — a non-empty `reason` is a one-time nudge, and the agent always
+proceeds. It goes out in the channel the host shows the agent (`emitAdvisoryText`): Claude
+Code never sees a hook's stderr on exit 0, so for `--host claude` every advisory is
+`hookSpecificOutput.additionalContext` JSON on stdout; Devin documents additionalContext for
+PostToolUse (used there) and keeps the stderr nudge for PreToolUse/Stop. Honest scope: this is a workflow nudge, not a security control,
 and never an obstacle to the user. The harness enforcement branch that runs first on the
 same entry point (`runHarnessAgentGate`) is the exception, and only in a trusted workspace:
 it always refuses writes to the harness rules/config/lockfile and to `$LEINA_HOME/harness`

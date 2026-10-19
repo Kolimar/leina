@@ -904,7 +904,11 @@ Los instaladores escriben `--host` en cada entrada (elige el protocolo de salida
 `--scope user` en la copia user-global; una entrada sin `--host` se trata como Claude Code
 cuando `CLAUDE_PROJECT_DIR` está definida y como Devin en caso contrario. Events:
 `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`.
-La gate advisory nunca bloquea. **Scope-aware**: la gate es un no-op silencioso a menos que
+La gate advisory nunca bloquea; responde por el canal que documenta el host — para Claude Code
+cada advisory es JSON `hookSpecificOutput.additionalContext` por stdout (Claude Code nunca
+muestra el stderr de un hook que sale con 0), Devin recibe additionalContext en `PostToolUse` y
+stderr en el resto. El empujón de guardado de `Stop` sale como mucho una vez por sesión y nunca
+si el payload trae `stop_hook_active: true`. **Scope-aware**: la gate es un no-op silencioso a menos que
 el consent flag del repo sea `enabled` **y** el workspace sea de confianza en esta máquina
 (ver *Confianza del workspace* arriba), así que un hook user-global se mantiene callado en
 repos que no optaron in (`unknown`/`disabled`) o que solo traen un consent flag commiteado.

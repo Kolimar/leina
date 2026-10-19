@@ -45,14 +45,17 @@ export async function handleAgentHook(rest: string[]): Promise<never> {
   // (.harness/state/current/contract.json) or strictness "strict", PreToolUse edit/bash and
   // Stop may BLOCK (exit 2 / decision:block). Guided mode without a contract leaves the
   // advisory behaviour below untouched, byte for byte, except for that integrity seal.
-  const eventName = parseAgentHookArgs(rest, process.env).event;
+  const { event: eventName, host } = parseAgentHookArgs(rest, process.env);
   // Resolve the project root from Devin's documented DEVIN_PROJECT_DIR env var (fallback to
   // process.cwd()) — the hook payload itself never carries a cwd. See resolveHookProjectRoot.
   const rawStdin = readStdin();
   const root = resolveHookProjectRoot(process.env, process.cwd());
-  const harness = await runHarnessAgentGate(rawStdin, root, eventName);
+  const harness = await runHarnessAgentGate(rawStdin, root, eventName, host);
   if (harness.handled) process.exit(harness.exitCode);
-  runAgentGate(rawStdin, root, eventName, harness.sessionContext);
+  runAgentGate(rawStdin, root, eventName, {
+    ...(harness.sessionContext !== undefined ? { harnessSessionContext: harness.sessionContext } : {}),
+    host,
+  });
   process.exit(0);
 }
 

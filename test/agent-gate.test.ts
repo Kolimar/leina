@@ -24,6 +24,7 @@ import {
   GREP_GATE_MESSAGE,
   NATIVE_NUDGE_MARKER_REL,
   NATIVE_SEARCH_NUDGE,
+  STOP_NUDGE_MARKER_REL,
   type AgentHookPayload,
 } from "../src/cli/agent-gate.ts";
 import { SQLiteMemoryRepository as MemoryStore } from "../src/infrastructure/sqlite/memory-repository.ts";
@@ -1086,16 +1087,23 @@ test("(S5) decideAgentGate PreToolUse read → reason = '' regardless of marker 
 
 const NUDGE_REL = NATIVE_NUDGE_MARKER_REL;
 
-test("(C-Gap2) PostToolUse grep: memory-loaded present + nudge absent → advisory on stderr + nudge marker written; stdout empty; exit 0", () => {
+/** The additionalContext of a single hookSpecificOutput JSON object on stdout. */
+function additionalContextOf(stdout: string, event: string): string {
+  const parsed = JSON.parse(stdout) as { hookSpecificOutput?: { hookEventName?: string; additionalContext?: string } };
+  assert.equal(parsed.hookSpecificOutput?.hookEventName, event);
+  return parsed.hookSpecificOutput?.additionalContext ?? "";
+}
+
+test("(C-Gap2) PostToolUse grep: memory-loaded present + nudge absent → PostToolUse additionalContext + nudge marker written; stderr empty; exit 0", () => {
   const cwd = freshCwd();
   // Simulate memory already loaded this session (Gap 2: the advisory must fire anyway)
   writeFileSync(join(cwd, MARKER_REL), "memory-loaded\n");
   const payload = JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "grep" });
   const { result, stdout, stderr } = withCapturedIO(() => runAgentGate(payload, cwd));
   assert.equal(result, undefined);
-  assert.equal(stdout, "", "stdout always empty on native nudge path");
-  assert.ok(stderr.length > 0, "advisory emitted on stderr");
-  assert.match(stderr, /leina query|leina affected|leina memory search/);
+  // Devin documents additionalContext for PostToolUse — the channel the agent reads.
+  assert.match(additionalContextOf(stdout, "PostToolUse"), /leina query|leina affected|leina memory search/);
+  assert.equal(stderr, "");
   assert.equal(existsSync(join(cwd, NUDGE_REL)), true, "nudge marker written");
 });
 
@@ -1109,24 +1117,23 @@ test("(C-oneshot) PostToolUse grep: nudge-shown present → stderr empty; stdout
   assert.equal(stderr, "");
 });
 
-test("(C-read) PostToolUse read: nudge absent (memory-loaded present) → advisory on stderr; exit 0", () => {
+test("(C-read) PostToolUse read: nudge absent (memory-loaded present) → advisory as additionalContext; exit 0", () => {
   const cwd = freshCwd();
   writeFileSync(join(cwd, MARKER_REL), "memory-loaded\n");
   const payload = JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "read" });
   const { result, stdout, stderr } = withCapturedIO(() => runAgentGate(payload, cwd));
   assert.equal(result, undefined);
-  assert.equal(stdout, "", "stdout always empty");
-  assert.ok(stderr.length > 0, "advisory emitted on stderr");
-  assert.match(stderr, /leina/);
+  assert.match(additionalContextOf(stdout, "PostToolUse"), /leina/);
+  assert.equal(stderr, "");
 });
 
-test("(C-glob) PostToolUse glob: nudge absent → advisory on stderr + nudge marker written; exit 0", () => {
+test("(C-glob) PostToolUse glob: nudge absent → advisory as additionalContext + nudge marker written; exit 0", () => {
   const cwd = freshCwd();
   const payload = JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "glob" });
   const { result, stdout, stderr } = withCapturedIO(() => runAgentGate(payload, cwd));
   assert.equal(result, undefined);
-  assert.equal(stdout, "", "stdout always empty");
-  assert.ok(stderr.length > 0, "advisory emitted");
+  assert.ok(additionalContextOf(stdout, "PostToolUse").length > 0, "advisory emitted");
+  assert.equal(stderr, "");
   assert.equal(existsSync(join(cwd, NUDGE_REL)), true, "nudge marker written");
 });
 
@@ -1351,3 +1358,62 @@ test("(G2-2) legacy migration: after init writes consent=enabled, gate activates
   }
 });
 
+
+// ---------------------------------------------------------------------------
+// Claude Code output protocol: exit-0 stderr is never shown to Claude, so every advisory
+// travels as hookSpecificOutput.additionalContext on stdout (one JSON object per call).
+// ---------------------------------------------------------------------------
+
+test("(claude-proto-1) PreToolUse advisory (Bash git commit / grep) → additionalContext, stderr empty", () => {
+  const cwd = freshCwd();
+  for (const command of ["git commit -m wip", "rg foo src"]) {
+    const payload = JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+    const { stdout, stderr } = withCapturedIO(() => runAgentGate(payload, cwd, undefined, { host: "claude" }));
+    assert.match(additionalContextOf(stdout, "PreToolUse"), /leina/, command);
+    assert.equal(stderr, "", "nothing on stderr for Claude Code");
+  }
+});
+
+test("(claude-proto-2) native search nudge → PostToolUse additionalContext for Claude Code too", () => {
+  const cwd = freshCwd();
+  const payload = JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "Grep" });
+  const { stdout, stderr } = withCapturedIO(() => runAgentGate(payload, cwd, undefined, { host: "claude" }));
+  assert.match(additionalContextOf(stdout, "PostToolUse"), /leina query/);
+  assert.equal(stderr, "");
+});
+
+test("(claude-proto-3) Stop nudge → Stop additionalContext, once per session, never when stop_hook_active", () => {
+  const cwd = freshCwd();
+  const stop = (extra: Record<string, unknown> = {}) =>
+    withCapturedIO(() =>
+      runAgentGate(JSON.stringify({ hook_event_name: "Stop", ...extra }), cwd, undefined, { host: "claude" }),
+    );
+  const continued = stop({ stop_hook_active: true });
+  assert.equal(continued.stdout, "", "a stop already continued by a Stop hook is never nudged again");
+  const first = stop({ stop_hook_active: false });
+  assert.match(additionalContextOf(first.stdout, "Stop"), /leina memory session/);
+  assert.equal(first.stderr, "");
+  assert.equal(existsSync(join(cwd, STOP_NUDGE_MARKER_REL)), true, "one-shot marker written");
+  const second = stop({ stop_hook_active: false });
+  assert.equal(second.stdout, "", "at most once per session");
+  assert.equal(second.stderr, "");
+});
+
+test("(claude-proto-4) Devin keeps stderr for the Stop nudge, also once per session", () => {
+  const cwd = freshCwd();
+  const stop = () => withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: "Stop" }), cwd));
+  const first = stop();
+  assert.equal(first.stdout, "");
+  assert.match(first.stderr, /leina memory session/);
+  const second = stop();
+  assert.equal(second.stderr, "", "one-shot");
+});
+
+test("(claude-proto-5) SessionStart clears the one-shot Stop marker with the other session markers", () => {
+  const cwd = freshCwd();
+  writeFileSync(join(cwd, STOP_NUDGE_MARKER_REL), "x\n");
+  withTempHome(() => {
+    withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: "SessionStart" }), cwd));
+  });
+  assert.equal(existsSync(join(cwd, STOP_NUDGE_MARKER_REL)), false);
+});

@@ -846,7 +846,11 @@ alias — pre-3.0 `.devin/hooks.v1.json` installs invoke it). The installers wri
 every entry (it selects the host's output protocol) and `--scope user` on the user-global copy;
 an entry without `--host` is treated as Claude Code when `CLAUDE_PROJECT_DIR` is set and as
 Devin otherwise. Events: `PreToolUse`, `PostToolUse`,
-`UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`. The advisory gate never blocks.
+`UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`. The advisory gate never blocks; it
+answers in the host's documented channel — for Claude Code every advisory is
+`hookSpecificOutput.additionalContext` JSON on stdout (Claude Code never shows a hook's stderr
+on exit 0), Devin gets additionalContext on `PostToolUse` and stderr elsewhere. The `Stop` save
+nudge fires at most once per session and never when the payload says `stop_hook_active: true`.
 **Scope-aware**: the gate is a silent no-op unless the repo's consent flag is `enabled` **and**
 the workspace is trusted on this machine (see *Workspace trust* above), so a user-global hook
 stays quiet in repos that haven't opted in (`unknown`/`disabled`) or that only carry a

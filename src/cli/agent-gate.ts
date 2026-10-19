@@ -16,9 +16,11 @@
 // already-emitted `.devin/hooks.v1.json` files invoke it by that name.
 //
 // Behaviour: ADVISORY only. The gate never returns exit 2 / block:true. A non-empty `reason`
-// means "emit as a stderr nudge so the agent sees it in tool output"; nothing is blocked. The
-// per-session marker short-circuits the advisory once a memory tool has been called, so a
-// well-behaved agent sees the nudge at most once per fresh session.
+// is delivered in the channel the host shows the agent (emitAdvisoryText): Claude Code never
+// shows a hook's stderr on exit 0, so there every advisory is `additionalContext` JSON on
+// stdout; Devin reads additionalContext on PostToolUse and keeps the stderr nudge elsewhere.
+// Nothing is blocked. The per-session marker short-circuits the advisory once a memory tool
+// has been called, so a well-behaved agent sees the nudge at most once per fresh session.
 //
 // ALWAYS-ON CONTEXT: At SessionStart and PostCompaction, the gate actively injects real project
 // memory observations + graph stats into the agent's additionalContext. The session marker is
@@ -198,6 +200,10 @@ export const SAVE_MARKER_REL = ".leina/session.memory-saved";
 // Reset at SessionStart alongside the other two; PostCompaction does NOT reset it.
 export const NATIVE_NUDGE_MARKER_REL = ".leina/session.native-search-nudge-shown";
 
+// Marker for the one-shot Stop save nudge: Claude Code continues the conversation on Stop
+// additionalContext, so the nudge must not fire again on every later stop of the session.
+export const STOP_NUDGE_MARKER_REL = ".leina/session.stop-nudge-shown";
+
 // Retrospective advisory emitted the first time a native grep/read/glob tool fires (Palanca C).
 // Acknowledges the tool already ran (valid for locating specific content), then steers toward
 // the graph CLI for structural questions. English; one-shot per session; never blocks.
@@ -341,12 +347,23 @@ function normalizeHostToolNames(payload: AgentHookPayload): void {
   if (mapped !== undefined) payload.tool_name = mapped;
 }
 
+export interface AgentGateOptions {
+  /**
+   * Harness context (contract status + intake rules) to merge into the SessionStart
+   * injection — see runHarnessAgentGate.
+   */
+  harnessSessionContext?: string;
+  /** The host that fired the hook (selects the output protocol). Default: devin. */
+  host?: HookHost;
+}
+
 export function runAgentGate(
   rawStdin: string,
   cwd: string,
   fallbackEvent?: string,
-  harnessSessionContext?: string,
+  opts: AgentGateOptions = {},
 ): void {
+  const host = opts.host ?? "devin";
   // Scope guard: silent no-op unless consent=enabled. A user-global hook fires in every Devin
   // project on the machine; this keeps it quiet in repos without explicit consent (including
   // legacy repos with .devin/hooks.v1.json but no consent flag — those resolve to "unknown").
@@ -369,7 +386,7 @@ export function runAgentGate(
   // the exact case where memory was already loaded yet the agent still used grep natively).
   if (event === "PostToolUse" &&
       (payload.tool_name === "grep" || payload.tool_name === "read" || payload.tool_name === "glob")) {
-    emitNativeSearchNudge(cwd);
+    emitNativeSearchNudge(cwd, host);
     return;
   }
 
@@ -388,7 +405,7 @@ export function runAgentGate(
   // SessionStart (only deleted here); load marker is re-armed when injection succeeds.
   if (event === "SessionStart") {
     maybeSelfHealGraph(cwd);
-    emitInjectedContext(cwd, markerPath, saveMarkerPath, "SessionStart", true, harnessSessionContext);
+    emitInjectedContext(cwd, markerPath, saveMarkerPath, "SessionStart", true, opts.harnessSessionContext);
     return;
   }
 
@@ -400,10 +417,11 @@ export function runAgentGate(
     return;
   }
 
-  // Stop: advisory nudge to persist session memory if the save marker is absent.
-  // NFR-1: stdout MUST be empty. Advisory only — never blocks. Fail-open on fs errors.
+  // Stop: advisory nudge to persist session memory if the save marker is absent — at most
+  // once per session, and never on a stop that a Stop hook already continued. Advisory
+  // only — never blocks. Fail-open on fs errors.
   if (event === "Stop") {
-    emitStopNudge(saveMarkerPath);
+    emitStopNudge(cwd, payload, saveMarkerPath, host);
     return;
   }
 
@@ -416,7 +434,27 @@ export function runAgentGate(
     return;
   }
 
-  emitAdvisory(payload, markerPath);
+  emitAdvisory(payload, markerPath, host);
+}
+
+/**
+ * Deliver an advisory to the agent in the channel its host actually reads.
+ *
+ * Claude Code: "Claude never sees stderr from a hook that exits 0" (hooks reference), so every
+ * advisory goes out as `hookSpecificOutput.additionalContext` on stdout — documented for
+ * PreToolUse/PostToolUse (shown next to the tool result) and for Stop (non-error feedback;
+ * the conversation continues so Claude can act on it).
+ * Devin: its hooks overview documents additionalContext for UserPromptSubmit, SessionStart
+ * and PostToolUse only, so PostToolUse uses it and PreToolUse/Stop keep the stderr nudge.
+ * One JSON object per invocation at most — each event path emits a single advisory.
+ */
+function emitAdvisoryText(host: HookHost, event: string, text: string): void {
+  if (host === "claude" || event === "PostToolUse") {
+    const out = { hookSpecificOutput: { hookEventName: event, additionalContext: text } };
+    process.stdout.write(`${JSON.stringify(out)}\n`);
+    return;
+  }
+  process.stderr.write(`${text}\n`);
 }
 
 // Parse + validate the hook payload, applying the CLI-arg fallback event. Fails OPEN
@@ -478,10 +516,12 @@ function emitInjectedContext(
     } catch {
       /* fail open */
     }
-    try {
-      rmSync(join(cwd, NATIVE_NUDGE_MARKER_REL), { force: true });
-    } catch {
-      /* fail open */
+    for (const rel of [NATIVE_NUDGE_MARKER_REL, STOP_NUDGE_MARKER_REL]) {
+      try {
+        rmSync(join(cwd, rel), { force: true });
+      } catch {
+        /* fail open */
+      }
     }
   }
   const { text, delivered } = buildActiveContext(cwd);
@@ -502,27 +542,36 @@ function emitInjectedContext(
   if (delivered) writeMarker(markerPath);
 }
 
-// Palanca C: emit NATIVE_SEARCH_NUDGE on stderr the first time a native grep/read/glob fires
-// per session. One-shot via NATIVE_NUDGE_MARKER_REL. stdout ALWAYS empty. Fail-open.
-function emitNativeSearchNudge(cwd: string): void {
+// Palanca C: emit NATIVE_SEARCH_NUDGE the first time a native grep/read/glob fires per
+// session, as PostToolUse additionalContext (both hosts document it). One-shot via
+// NATIVE_NUDGE_MARKER_REL. Fail-open.
+function emitNativeSearchNudge(cwd: string, host: HookHost): void {
   const nudgePath = join(cwd, NATIVE_NUDGE_MARKER_REL);
-  try {
-    if (existsSync(nudgePath)) return;
-  } catch {
-    /* fail open: treat as absent */
-  }
-  process.stderr.write(`${NATIVE_SEARCH_NUDGE}\n`);
+  if (markerPresent(nudgePath)) return;
+  emitAdvisoryText(host, "PostToolUse", NATIVE_SEARCH_NUDGE);
   writeMarker(nudgePath);
 }
 
-function emitStopNudge(saveMarkerPath: string): void {
-  let saved = false;
+/** existsSync that fails open (an unreadable marker counts as absent). */
+function markerPresent(path: string): boolean {
   try {
-    saved = existsSync(saveMarkerPath);
+    return existsSync(path);
   } catch {
-    /* fail open: read error → treat as absent → emit nudge */
+    return false;
   }
-  if (!saved) process.stderr.write(`${STOP_SAVE_NUDGE}\n`); // NEVER writes to stdout
+}
+
+// Stop: remind the agent to persist the session when nothing was saved. Claude Code feeds
+// Stop additionalContext back to the model and CONTINUES the conversation, so the nudge is
+// bounded: never on a stop that a Stop hook already continued (`stop_hook_active: true`,
+// documented by Claude Code; Devin does not send it) and at most once per session
+// (STOP_NUDGE_MARKER_REL, reset with the other markers on a new session).
+function emitStopNudge(cwd: string, payload: AgentHookPayload, saveMarkerPath: string, host: HookHost): void {
+  if (payload.stop_hook_active === true) return;
+  const nudgedPath = join(cwd, STOP_NUDGE_MARKER_REL);
+  if (markerPresent(saveMarkerPath) || markerPresent(nudgedPath)) return;
+  emitAdvisoryText(host, "Stop", STOP_SAVE_NUDGE);
+  writeMarker(nudgedPath);
 }
 
 // ===========================================================================
@@ -651,6 +700,7 @@ async function harnessStop(
   cwd: string,
   payload: AgentHookPayload,
   hooks: HooksModule,
+  host: HookHost,
 ): Promise<HarnessAgentGateResult> {
   const decision = await hooks.decideStop(
     cwd,
@@ -664,8 +714,11 @@ async function harnessStop(
     return { handled: true, exitCode: 0 };
   }
   if (decision.kind === "yield") {
-    // Retry cap exhausted or engine error: cede honestly, never claim success.
-    process.stderr.write(`${decision.message}\n`);
+    // Retry cap exhausted or engine error: cede honestly, never claim success. The stop is
+    // allowed, so the message is for the human: Claude Code shows `systemMessage` to the
+    // user (a stderr line on exit 0 would be invisible); Devin keeps stderr.
+    if (host === "claude") process.stdout.write(`${JSON.stringify({ systemMessage: decision.message })}\n`);
+    else process.stderr.write(`${decision.message}\n`);
     return { handled: true, exitCode: 0 };
   }
   return HARNESS_NOT_HANDLED; // verify green → the advisory stop nudge still runs
@@ -681,6 +734,7 @@ export async function runHarnessAgentGate(
   rawStdin: string,
   cwd: string,
   fallbackEvent?: string,
+  host: HookHost = "devin",
 ): Promise<HarnessAgentGateResult> {
   if (!isWorkspaceTrusted(cwd)) return HARNESS_NOT_HANDLED;
 
@@ -699,7 +753,7 @@ export async function runHarnessAgentGate(
       return event === "PreToolUse" ? await harnessIntegritySeal(cwd, payload, hooks) : HARNESS_NOT_HANDLED;
     }
     if (event === "PreToolUse") return await harnessPreToolUse(cwd, payload, hooks);
-    if (event === "Stop") return await harnessStop(cwd, payload, hooks);
+    if (event === "Stop") return await harnessStop(cwd, payload, hooks, host);
     if (event === "UserPromptSubmit") {
       // A new turn opens a new stop chain (see decideStop); the advisory
       // injection still owns the event.
@@ -715,16 +769,9 @@ export async function runHarnessAgentGate(
   return HARNESS_NOT_HANDLED;
 }
 
-function emitAdvisory(payload: AgentHookPayload, markerPath: string): void {
-  let markerExists = false;
-  try {
-    markerExists = existsSync(markerPath);
-  } catch {
-    /* fail open: treat as absent */
-  }
-  const decision = decideAgentGate(payload, markerExists);
-  // Advisory-only: emit the nudge on stderr (so the agent sees it in tool output / logs)
-  // when there's a reason. No stdout JSON block envelope — that was the hard-block protocol
-  // and Devin would interpret it as "stop".
-  if (decision.reason) process.stderr.write(`${decision.reason}\n`);
+function emitAdvisory(payload: AgentHookPayload, markerPath: string, host: HookHost): void {
+  const decision = decideAgentGate(payload, markerPresent(markerPath));
+  // Advisory-only: never a block envelope ({"decision":"block"} / exit 2) — just the nudge,
+  // in the channel the host shows the agent (see emitAdvisoryText).
+  if (decision.reason) emitAdvisoryText(host, payload.hook_event_name ?? "PreToolUse", decision.reason);
 }

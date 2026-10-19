@@ -125,7 +125,7 @@ interface GateRun {
   stderr: string;
 }
 
-async function gate(payload: unknown, event?: string): Promise<GateRun> {
+async function gate(payload: unknown, event?: string, host?: "claude" | "devin"): Promise<GateRun> {
   const outChunks: string[] = [];
   const errChunks: string[] = [];
   const origOut = process.stdout.write.bind(process.stdout);
@@ -139,7 +139,7 @@ async function gate(payload: unknown, event?: string): Promise<GateRun> {
     return true;
   });
   try {
-    const result = await runHarnessAgentGate(JSON.stringify(payload), repo.root, event);
+    const result = await runHarnessAgentGate(JSON.stringify(payload), repo.root, event, host);
     return { result, stdout: outChunks.join(""), stderr: errChunks.join("") };
   } finally {
     process.stdout.write = origOut;
@@ -414,6 +414,18 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
     assert.equal(run.stdout, "");
     assert.match(run.stderr, /allowing stop so a human can look/);
     assert.match(run.stderr, /Do NOT treat this task as complete/);
+  });
+
+  it("stop: a yield in Claude Code reaches the user as systemMessage (exit-0 stderr is invisible there)", async () => {
+    await writeFailingRule();
+    await newContract({ maxRetries: 1 });
+    await repo.write(".harness/state/current/retries.json", JSON.stringify({ count: 1 }));
+    const run = await gate(STOP, undefined, "claude");
+    assert.deepEqual(run.result, { handled: true, exitCode: 0 });
+    assert.equal(run.stderr, "");
+    const out = JSON.parse(run.stdout) as { systemMessage?: string; decision?: string };
+    assert.equal(out.decision, undefined, "a yield never blocks");
+    assert.match(out.systemMessage ?? "", /Do NOT treat this task as complete/);
   });
 
   it("stop: all gates green → not handled (advisory save-nudge still owns the event)", async () => {

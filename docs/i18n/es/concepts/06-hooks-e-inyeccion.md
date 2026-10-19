@@ -38,8 +38,9 @@ flowchart LR
     c["3. SCOPE-AWARE<br/>si consent != enabled<br/>o sin confianza → no-op silencioso"]
 ```
 
-1. **Advisory only.** El gate nunca devuelve `block`. Como mucho escribe una `reason` en
-   `stderr` como empujón de una sola vez; el agente **siempre** procede. (La rama de exigencia
+1. **Advisory only.** El gate nunca devuelve `block`. Como mucho le da al agente un empujón de
+   una sola vez, por el canal que su host realmente muestra (ver
+   [el protocolo de salida](#el-protocolo-de-salida-por-host)); el agente **siempre** procede. (La rama de exigencia
    del harness que comparte el punto de entrada `agent-hook` *sí* puede bloquear, en un
    workspace de confianza — ese es el trabajo del inspector, ver [el harness](./07-harness.md).)
 2. **Fail-open.** stdin vacío/inválido, campos faltantes, errores de fs, grafo no disponible →
@@ -52,6 +53,28 @@ flowchart LR
    Si no, el gate retorna en silencio: sin inyección de contexto, sin advisories, sin build del
    grafo en segundo plano. Así el hook global no molesta en repos ajenos, y el skill
    `leina-setup` pregunta una sola vez en los repos `unknown`.
+
+---
+
+## El protocolo de salida por host
+
+Un empujón que nadie lee es ruido. Cada entrada gestionada dice qué host la corre
+(`agent-hook <Event> --host claude|devin`; una entrada sin el flag cuenta como Claude Code si
+`CLAUDE_PROJECT_DIR` está definida, y como Devin si no), y el gate responde por el canal que ese
+host documenta:
+
+| Qué | Claude Code | Devin |
+|-----|-------------|-------|
+| inyección de `SessionStart` / `UserPromptSubmit` | `hookSpecificOutput.additionalContext` (JSON por stdout) | igual |
+| consejo de `PreToolUse` (`git commit`, `grep`) | `additionalContext`, junto al resultado de la tool | `stderr` |
+| consejo de `PostToolUse` tras búsqueda nativa | `additionalContext` | `additionalContext` (documentado para `PostToolUse`) |
+| empujón de guardado en `Stop` | `additionalContext` — la conversación sigue para que el agente guarde | `stderr` |
+| yield del `Stop` del harness (tope de reintentos) | `systemMessage`, que ve el usuario | `stderr` |
+
+Claude Code nunca le muestra al agente el `stderr` de un hook que sale con 0; por eso para él
+nada advisory viaja por ahí. Como un empujón de `Stop` **continúa** la conversación en Claude
+Code, está acotado: nunca en un stop que un Stop hook ya continuó (`stop_hook_active: true`) y
+como mucho una vez por sesión.
 
 ---
 
@@ -98,13 +121,15 @@ flag `delivered` que el gate usa para decidir si re-armar el marker de carga.
 
 ## Los markers: el estado por-sesión
 
-El conserje lleva dos banderitas en `<cwd>/.leina/`, que se **borran al SessionStart**
+El conserje lleva unas pocas banderitas en `<cwd>/.leina/`, que se **borran al SessionStart**
 (semántica por-sesión) y se vuelven a poner cuando corresponde:
 
 | Marker | Archivo | Quién lo escribe | Para qué |
 |--------|---------|------------------|----------|
 | **load** | `session.memory-loaded` | `PostToolUse` cuando un `exec` corre `memory (context\|search\|verified)`; o la inyección exitosa | corta en seco los consejos una vez que la memoria ya se cargó |
 | **save** | `session.memory-saved` | `PostToolUse` cuando un `exec` corre `memory (save\|session\|update)` | lo lee `Stop` para decidir si recordar guardar |
+| **stop nudge** | `session.stop-nudge-shown` | `Stop` después de empujar | deja el empujón de guardado en una vez por sesión |
+| **search tip** | `session.native-search-nudge-shown` | `PostToolUse` después del consejo de búsqueda nativa | deja ese consejo en una vez por sesión |
 
 El marker de save excluye el propio arranque de sesión (`session-start`): abrir una sesión no
 cuenta como "ya guardaste".
@@ -135,15 +160,15 @@ sequenceDiagram
     alt marker load presente
         G-->>D: silencio (ya se cargó memoria)
     else ausente
-        G-->>D: consejo advisory (stderr)
+        G-->>D: consejo advisory (canal del host)
     end
 
     D->>G: Stop
-    G->>Disk: ¿existe marker save?
-    alt ausente
-        G-->>D: nudge "corré memory session" (stderr)
+    G->>Disk: ¿existe el marker save o el de stop nudge?
+    alt ambos ausentes (y no stop_hook_active)
+        G-->>D: nudge "corré memory session" (canal del host)
+        G->>Disk: escribe el marker de stop nudge
     end
-    Note over G: stdout SIEMPRE vacío en Stop
 ```
 
 Detalles por evento:
@@ -162,8 +187,8 @@ Detalles por evento:
   [Búsqueda y consultas](./03-busqueda-y-consultas.md#el-freshness-gate)). Los archivos de
   proyecto de Devin escritos antes de 3.0 corrían `leina refresh` en cada `edit`/`write`; volver
   a correr `init` o `repair` elimina esa entrada.
-- **Stop**: si falta el marker save, emite el nudge por `stderr`. **stdout siempre vacío.**
-  Nunca bloquea (exit 0 en todas las ramas).
+- **Stop**: si falta el marker save, emite el empujón de guardado una vez por sesión (nunca con
+  `stop_hook_active` en true), por el canal del host. Nunca bloquea (exit 0 en todas las ramas).
 
 ---
 
