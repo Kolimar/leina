@@ -22,7 +22,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { safeGitOutput } from "../../infrastructure/install/safe-exec.ts";
 import { readPackageVersion } from "../../version.ts";
-import { exceedsSourceCap, listConfigFiles, listSourceFiles } from "./sources.ts";
+import { exceedsSourceCap, listConfigFiles, listProjectFiles } from "./sources.ts";
 
 // 2: per-file entries went from a bare mtime number to { mtime, hash }, commitSha added.
 // 3: leinaVersion, extractorSchema, configs and degraded added. A manifest of another
@@ -272,7 +272,9 @@ export function isStale(root: string, files?: string[]): StaleResult {
   if (!manifest) return { stale: true, reason: "no-manifest" };
 
   const r = resolvePath(root);
-  const current = files ?? listSourceFiles(root);
+  // ONE listing (one `git ls-files`) yields both the sources and the configs.
+  const project = files ? null : listProjectFiles(root);
+  const current = files ?? project?.sources ?? [];
   const currentRel = new Map<string, string>();
   for (const abs of current) currentRel.set(toRel(r, abs), abs);
 
@@ -285,7 +287,7 @@ export function isStale(root: string, files?: string[]): StaleResult {
     if (result) return result;
   }
 
-  return configChange(r, manifest, listConfigFiles(root)) ?? { stale: false, reason: "fresh" };
+  return configChange(r, manifest, project?.configs ?? listConfigFiles(root)) ?? { stale: false, reason: "fresh" };
 }
 
 // Added: a current source the manifest never recorded — unless it is above the size
