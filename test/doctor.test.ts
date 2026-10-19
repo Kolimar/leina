@@ -18,6 +18,7 @@ import { GITIGNORE_START } from "../src/application/install/gitignore.ts";
 import { DEVIN_MANAGED_EVENTS } from "../src/application/install/devin-hooks.ts";
 import { serializeSelection } from "../src/application/install/catalog.ts";
 import { shareSelectionFile } from "../src/infrastructure/install/share-paths.ts";
+import { trustWorkspace, untrustWorkspace } from "../src/application/install/trust.ts";
 
 function withTmpHome<T>(fn: (homeDir: string) => T): T {
   const home = mkdtempSync(join(tmpdir(), "leina-doctor-"));
@@ -129,6 +130,40 @@ test("(doc-d) init'd project (no MCP): AGENTS/.gitignore/.devin checks pass; unb
     // Project key detected (plain dir or git-root — either way ok since this is a test fixture).
     assert.ok(find(report.results, g, "project key") !== undefined, "project key check present");
     assert.equal(report.exitCode, 1);
+  });
+});
+
+// Workspace trust lives OUT of the repo ($LEINA_HOME/trust/): consent alone is not enough.
+test("(doc-trust-a) consent enabled but no trust record → warn telling to re-run leina init", () => {
+  withTmpHome((home) => {
+    const root = makeInitProject(home);
+    mkdirSync(join(root, ".leina"), { recursive: true });
+    writeFileSync(join(root, ".leina", "consent"), "enabled");
+    const check = find(runDoctor("0.8.0-test", root).results, "project", "workspace trust");
+    assert.equal(check?.status, "warn");
+    assert.match(check?.detail ?? "", /not trusted/);
+    assert.match(check?.detail ?? "", /leina init/);
+  });
+});
+
+test("(doc-trust-b) trusted workspace → ok; deinit opt-out / never initialized → info", () => {
+  withTmpHome((home) => {
+    const root = makeInitProject(home);
+    mkdirSync(join(root, ".leina"), { recursive: true });
+    writeFileSync(join(root, ".leina", "consent"), "enabled");
+    trustWorkspace(root);
+    assert.equal(find(runDoctor("0.8.0-test", root).results, "project", "workspace trust")?.status, "ok");
+
+    writeFileSync(join(root, ".leina", "consent"), "disabled");
+    const disabled = find(runDoctor("0.8.0-test", root).results, "project", "workspace trust");
+    assert.equal(disabled?.status, "info");
+    assert.match(disabled?.detail ?? "", /disabled/);
+
+    rmSync(join(root, ".leina"), { recursive: true, force: true });
+    untrustWorkspace(root);
+    const fresh = find(runDoctor("0.8.0-test", root).results, "project", "workspace trust");
+    assert.equal(fresh?.status, "info");
+    assert.match(fresh?.detail ?? "", /leina init/);
   });
 });
 

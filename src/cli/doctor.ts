@@ -6,7 +6,7 @@
 // CheckResult[] so a future `--json` mode is a formatting change, not a rewrite.
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { fts5Available, FTS5_MIN_NODE_MAJOR } from "../infrastructure/sqlite/schema.ts";
@@ -38,6 +38,8 @@ import { isStale } from "../application/graph/manifest.ts";
 import { PROTOCOL_START } from "../application/install/protocol.ts";
 import { GITIGNORE_START } from "../application/install/gitignore.ts";
 import { DEVIN_MANAGED_EVENTS } from "../application/install/devin-hooks.ts";
+import { readConsentFlag } from "../application/install/consent.ts";
+import { isWorkspaceTrusted } from "../application/install/trust.ts";
 import { readPackageVersion } from "../version.ts";
 import { deriveProjectKey, AmbiguousProjectError } from "../application/project/detect-key.ts";
 import { buildRepoIdentity } from "../application/project/identity.ts";
@@ -358,6 +360,9 @@ function checkProject(out: CheckResult[], root: string): void {
   // .gitignore managed block (keeps .leina/ runtime data out of git).
   checkGitignore(out, g, root);
 
+  // Out-of-repo workspace trust (gates harness hooks / automated verify).
+  checkWorkspaceTrust(out, g, root);
+
   // .devin/config.json and .devin/hooks.v1.json are Devin-specific — only check them when
   // the user actually selected the devin host (same host-neutral pattern as checkSymlinks
   // via inspectHostLinks). A Claude-Code-only project must not see `.devin/*` warnings.
@@ -430,6 +435,30 @@ function checkGitignore(out: CheckResult[], g: string, root: string): void {
     gitignoreDetail = "missing — run init";
   }
   out.push({ group: g, label: ".gitignore", status: gitignoreStatus, detail: gitignoreDetail });
+}
+
+// Workspace trust: the harness hooks, automated verify (Stop hook, MCP) and project-layer
+// executable gates only run in a workspace trusted on THIS machine — a record under
+// $LEINA_HOME/trust/ written by `leina init`, never the repo's own .leina/consent. A
+// repo with consent but no record (cloned with a committed flag, moved, or initialized
+// before the trust store existed) is the case worth a warning.
+function checkWorkspaceTrust(out: CheckResult[], g: string, root: string): void {
+  const consent = readConsentFlag(root);
+  const label = "workspace trust";
+  if (consent === "disabled") {
+    out.push({ group: g, label, status: "info", detail: "consent disabled — harness hooks and automated verify are off ('leina init' re-enables)" });
+  } else if (isWorkspaceTrusted(root)) {
+    out.push({ group: g, label, status: "ok", detail: "trusted on this machine — harness hooks and automated verify active" });
+  } else if (consent === "enabled") {
+    out.push({
+      group: g,
+      label,
+      status: "warn",
+      detail: `consent enabled but the workspace is not trusted on this machine — harness hooks, automated verify and project executable gates stay off; re-run 'leina init ${resolvePath(root)}'`,
+    });
+  } else {
+    out.push({ group: g, label, status: "info", detail: `not trusted — harness hooks and automated verify stay off until 'leina init ${resolvePath(root)}'` });
+  }
 }
 
 // Global memory DB presence (no PRAGMA read — would create WAL side effects).
