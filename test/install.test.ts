@@ -3,7 +3,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROTOCOL_BODY, PROTOCOL_END, PROTOCOL_START } from "../src/application/install/protocol.ts";
@@ -90,18 +91,40 @@ test(".gitignore merge does not treat a path containing the marker text as the m
   assert.equal(merged.split("\n").filter((l) => l.trim() === GITIGNORE_START).length, 1);
 });
 
-test("(gitignore-bare-1) a bare .leina line before the block becomes .leina/* so the negations work", () => {
-  for (const bare of [".leina", ".leina/", "/.leina", "/.leina/", "  .leina/  "]) {
+test("(gitignore-bare-1) a bare .leina line before the block ignores the contents instead, keeping its reach", () => {
+  const cases: [string, string][] = [
+    [".leina", "**/.leina/*"],
+    [".leina/", "**/.leina/*"],
+    ["  .leina/  ", "**/.leina/*"],
+    ["/.leina", "/.leina/*"],
+    ["/.leina/", "/.leina/*"],
+  ];
+  for (const [bare, rewritten] of cases) {
     const user = `node_modules/\n${bare}\ndist/\n`;
     const once = mergeGitignore(user);
     const lines = once.split("\n");
     assert.ok(!lines.some((l) => [".leina", ".leina/", "/.leina", "/.leina/"].includes(l.trim())), `${bare} rewritten`);
-    assert.deepEqual(lines.slice(0, 3), ["node_modules/", ".leina/*", "dist/"], "rewritten in place");
+    assert.deepEqual(lines.slice(0, 3), ["node_modules/", rewritten, "dist/"], "rewritten in place");
     assert.equal(mergeGitignore(once), once, "idempotent");
   }
   // Also when the managed block already exists below it (the usual hand-edited repo).
   const withBlock = mergeGitignore(`.leina/\n${GITIGNORE_START}\nold\n${GITIGNORE_END}\n`);
-  assert.equal(withBlock.split("\n")[0], ".leina/*");
+  assert.equal(withBlock.split("\n")[0], "**/.leina/*");
+});
+
+test("(gitignore-bare-4) git honours the rewrite: nested .leina dirs stay ignored, the root config is committable", () => {
+  const dir = mkdtempSync(join(tmpdir(), "leina-gitignore-bare-"));
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    writeFileSync(join(dir, ".gitignore"), mergeGitignore(".leina/\n"));
+    const ignored = (rel: string): boolean =>
+      spawnSync("git", ["check-ignore", "-q", rel], { cwd: dir }).status === 0;
+    assert.equal(ignored(".leina/config.json"), false, "root config.json re-included by the block");
+    assert.equal(ignored(".leina/graph.db"), true, "root runtime data still ignored");
+    assert.equal(ignored("pkg/fixture/.leina/graph.db"), true, "nested .leina/ still ignored, as the bare line did");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("(gitignore-bare-2) a bare .leina line AFTER the block is dropped (it would re-hide config.json)", () => {

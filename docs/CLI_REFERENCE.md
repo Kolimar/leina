@@ -842,7 +842,8 @@ never installs something the user never asked for:
   consent is not `disabled` — a `deinit` opt-out is always respected. The original profile
   (Devin/Windsurf) is preserved. Hook files the repo already carries are rewritten for this
   install even outside the host selection, and the `.gitignore` writer turns a bare `.leina/`
-  line (which hides the committable `.leina` files) into `.leina/*`.
+  line (which hides the committable `.leina` files) into `**/.leina/*` — same reach, nested
+  `.leina/` dirs stay ignored — or an anchored `/.leina/` into `/.leina/*`.
 
 Never touches `graph.db` / `memory.db`, and deliberately never grants workspace trust (only
 an explicit `init` does). Ends by re-running doctor; remaining failures drive a non-zero exit.

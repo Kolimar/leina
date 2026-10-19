@@ -202,7 +202,7 @@ test("(rep-f) repair points stale hook wiring at this install and un-hides the c
     const claude = readFileSync(join(dir, ".claude", "settings.json"), "utf8");
     assert.ok(!claude.includes(stale), "Claude Code project hooks rewritten");
     assert.match(claude, /agent-hook Stop --host claude/);
-    assert.equal(readFileSync(gi, "utf8").split("\n")[0], ".leina/*", "bare .leina/ line rewritten");
+    assert.equal(readFileSync(gi, "utf8").split("\n")[0], "**/.leina/*", "bare .leina/ line rewritten");
   } finally {
     cleanup();
     rmSync(dir, { recursive: true, force: true });

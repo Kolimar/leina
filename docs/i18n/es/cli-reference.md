@@ -898,7 +898,8 @@ una instalación previa** — nunca instala algo que el usuario nunca pidió:
   respeta. El profile original (Devin/Windsurf) se preserva. Los archivos de hooks que el repo
   ya tiene se reescriben para esta instalación aunque estén fuera de la selección de hosts, y
   el writer del `.gitignore` convierte una línea `.leina/` suelta (que oculta los archivos
-  commiteables de `.leina`) en `.leina/*`.
+  commiteables de `.leina`) en `**/.leina/*` — mismo alcance, los dirs `.leina/` anidados
+  siguen ignorados — o una `/.leina/` anclada en `/.leina/*`.
 
 Nunca toca `graph.db` / `memory.db`, y a propósito nunca otorga la confianza del workspace
 (solo un `init` explícito lo hace). Termina volviendo a correr doctor; los fails restantes

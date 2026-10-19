@@ -21,22 +21,32 @@ export const GITIGNORE_BODY =
   ".leina/*\n!.leina/config.json\n!.leina/memory-export.jsonl\n.harness/state/";
 
 /** A user line that ignores the whole `.leina` dir — which no later negation can undo. */
-const BARE_LEINA_LINES = new Set([".leina", ".leina/", "/.leina", "/.leina/"]);
+/** Bare `.leina` ignore lines → the rewrite that keeps their reach (see fixBareLeinaLines). */
+const BARE_LEINA_LINES = new Map([
+  [".leina", "**/.leina/*"],
+  [".leina/", "**/.leina/*"],
+  ["/.leina", "/.leina/*"],
+  ["/.leina/", "/.leina/*"],
+]);
 
 function isBareLeinaLine(line: string): boolean {
   return BARE_LEINA_LINES.has(line.trim());
 }
 
-/**
- * Fix bare `.leina` ignore lines OUTSIDE our block. Git never re-includes a file whose parent
- * directory is excluded, so a bare `.leina/` (a common hand-written line) silently hides the
- * committable `.leina/config.json` and `.leina/memory-export.jsonl` despite the block's
- * negations. Before the block such a line becomes `.leina/*` (same runtime-data ignore,
- * negations work again); after the block it is dropped — there a `.leina/*` would re-hide
- * what the block re-includes, and the block already ignores the rest.
- */
+// Fix bare `.leina` ignore lines OUTSIDE our block. Git never re-includes a file whose parent
+// directory is excluded, so a bare `.leina/` (a common hand-written line) silently hides the
+// committable `.leina/config.json` and `.leina/memory-export.jsonl` despite the block's
+// negations. Before the block such a line is rewritten to ignore the CONTENTS instead of the
+// directory, keeping its reach: an unanchored `.leina/` matched at any depth, so it becomes
+// `**/.leina/*` (nested `.leina/` dirs — fixtures, sub-packages — stay ignored); an anchored
+// `/.leina/` becomes `/.leina/*`. Either way the block's negations work again. After the block
+// such a line is dropped — there it would re-hide what the block re-includes, and the block
+// already ignores the rest.
 function fixBareLeinaLines(before: string[], after: string[]): [string[], string[]] {
-  return [before.map((l) => (isBareLeinaLine(l) ? ".leina/*" : l)), after.filter((l) => !isBareLeinaLine(l))];
+  return [
+    before.map((l) => BARE_LEINA_LINES.get(l.trim()) ?? l),
+    after.filter((l) => !isBareLeinaLine(l)),
+  ];
 }
 
 export function mergeGitignore(existing: string | null): string {
