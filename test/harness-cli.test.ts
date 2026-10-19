@@ -39,6 +39,9 @@ beforeEach(async () => {
   restoreHome = isolateLeinaHome(path.join(repo.root, "no-user-config"));
   await repo.write(".harness/config.json", FIXTURE_CONFIG);
   await repo.write("src/app.ts", "export const app = 1;\n");
+  // Workspace trust: project-layer js/command gates only execute in repos with
+  // explicit consent (see test/harness-workspace-trust.test.ts for the matrix).
+  await repo.write(".leina/consent", "enabled");
   repo.git("add", ".");
   repo.git("commit", "-m", "init");
 });

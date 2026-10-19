@@ -4,7 +4,7 @@
 // on a blocking rule counts as a blocking failure downstream.
 
 import vm from "node:vm";
-import { type Gate, type Rule, gatesOf } from "../../../domain/harness/model.ts";
+import { type Gate, type Rule, type RuleLayer, gatesOf } from "../../../domain/harness/model.ts";
 import { anyFileMatches } from "../../../domain/harness/glob.ts";
 import { runCommandGate } from "./command.ts";
 import { runFileGate } from "./file.ts";
@@ -101,8 +101,38 @@ export function matchLinesBounded(
   }
 }
 
-export function plannedRuns(rules: Rule[]): GateRun[] {
-  const runs: GateRun[] = [];
+// ---------------------------------------------------------------------------
+// Workspace trust — executable gates (js: dynamic import, command: `sh -c`)
+// run arbitrary code. When they come from a PROJECT-layer rule they travel
+// with the repo, so a cloned hostile repo could otherwise reach silent code
+// execution through the Stop hook's verify run (a force-committed
+// .harness/state/current/contract.json plus a project rule is all it takes).
+// The policy below lets the composition point (runVerify) gate those on the
+// repo's explicit consent. Builtin/user rules are trusted (they come from the
+// installed package or the user's own home); non-executable gate types
+// (file/diff/diff-content/checklist) only inspect state and always run.
+// ---------------------------------------------------------------------------
+
+const EXECUTABLE_GATE_TYPES: ReadonlySet<Gate["type"]> = new Set(["js", "command"]);
+
+export interface GateExecutionPolicy {
+  /**
+   * Whether js/command gates declared by 'project'-layer rules may execute.
+   * Derived from the repo's explicit trust (`leina init` → consent enabled).
+   * When false those gates are SKIPPED with a visible result — they neither
+   * run nor fail verify on their own. Omitting the policy entirely (unit
+   * tests, direct engine callers) keeps the historical run-everything shape.
+   */
+  allowProjectExecutableGates: boolean;
+}
+
+/** GateRun plus the layer of the rule that declared it (trust decisions). */
+export interface PlannedGateRun extends GateRun {
+  ruleLayer: RuleLayer;
+}
+
+export function plannedRuns(rules: Rule[]): PlannedGateRun[] {
+  const runs: PlannedGateRun[] = [];
   for (const rule of rules) {
     gatesOf(rule).forEach((gate, gateIndex) => {
       runs.push({
@@ -113,13 +143,18 @@ export function plannedRuns(rules: Rule[]): GateRun[] {
         gateIndex,
         remediation: rule.body,
         ruleSourcePath: rule.sourcePath,
+        ruleLayer: rule.layer,
       });
     });
   }
   return runs;
 }
 
-async function executeRun(run: GateRun, ctx: GateContext): Promise<GateRunResult> {
+async function executeRun(
+  run: PlannedGateRun,
+  ctx: GateContext,
+  policy?: GateExecutionPolicy,
+): Promise<GateRunResult> {
   const started = Date.now();
   const base = {
     ruleId: run.ruleId,
@@ -128,6 +163,22 @@ async function executeRun(run: GateRun, ctx: GateContext): Promise<GateRunResult
     gateType: run.gate.type,
     gateIndex: run.gateIndex,
   };
+
+  if (
+    policy !== undefined &&
+    !policy.allowProjectExecutableGates &&
+    run.ruleLayer === "project" &&
+    EXECUTABLE_GATE_TYPES.has(run.gate.type)
+  ) {
+    return {
+      ...base,
+      status: "skip",
+      detail:
+        "skipped: executable gate (js/command) from untrusted 'project' layer rule — " +
+        "run 'leina init' to trust this repo",
+      durationMs: Date.now() - started,
+    };
+  }
 
   if (run.gate.onlyIfChanged && !anyFileMatches(ctx.changedFiles, run.gate.onlyIfChanged)) {
     return {
@@ -162,7 +213,12 @@ async function executeRun(run: GateRun, ctx: GateContext): Promise<GateRunResult
   };
 }
 
-export async function runGates(rules: Rule[], ctx: GateContext, parallelism = 4): Promise<GateRunResult[]> {
+export async function runGates(
+  rules: Rule[],
+  ctx: GateContext,
+  parallelism = 4,
+  policy?: GateExecutionPolicy,
+): Promise<GateRunResult[]> {
   const runs = plannedRuns(rules);
   const parallel = runs.filter((r) => r.gate.serial !== true);
   const serial = runs.filter((r) => r.gate.serial === true);
@@ -174,13 +230,13 @@ export async function runGates(rules: Rule[], ctx: GateContext, parallelism = 4)
     for (;;) {
       const run = queue.shift();
       if (!run) return;
-      results.set(run, await executeRun(run, ctx));
+      results.set(run, await executeRun(run, ctx, policy));
     }
   });
   await Promise.all(workers);
 
   for (const run of serial) {
-    results.set(run, await executeRun(run, ctx));
+    results.set(run, await executeRun(run, ctx, policy));
   }
 
   // Preserve planning order for stable reports.
