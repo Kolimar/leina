@@ -10,10 +10,11 @@
 
 import * as clack from "@clack/prompts";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, join } from "node:path";
 import { readPackageVersion } from "../../version.ts";
 import { runDoctor } from "../doctor.ts";
 import { fail, readIfExists } from "../io.ts";
+import { existingDir, optionalDir } from "../project-args.ts";
 import { isStale, readManifest } from "../../application/graph/manifest.ts";
 import { loadFreshnessConfig } from "../../infrastructure/config/freshness.ts";
 import { loadServeConfig } from "../../infrastructure/config/serve.ts";
@@ -708,8 +709,9 @@ export async function handleTui(rest: string[]): Promise<void> {
         "repair, doctor, env <set|list|unset|exec>, deactivate, disable.",
     );
   }
-  const positional = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
-  const project = resolvePath(positional ?? ".");
+  // Taken as given, like `init`/`deinit` (the menu's project actions): an existing directory,
+  // never resolved upwards.
+  const project = existingDir(optionalDir("tui", rest) ?? ".");
   const catalog = loadCatalog();
   const version = readPackageVersion();
 
