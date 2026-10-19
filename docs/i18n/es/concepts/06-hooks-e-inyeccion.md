@@ -132,8 +132,11 @@ flag `delivered` que el gate usa para decidir si re-armar el marker de carga.
 
 ## Los markers: el estado por-sesión
 
-El conserje lleva unas pocas banderitas en `<cwd>/.leina/`, que se **borran al SessionStart**
-(semántica por-sesión) y se vuelven a poner cuando corresponde:
+El conserje lleva unas pocas banderitas en `<cwd>/.leina/`, que se **borran cuando empieza una
+sesión nueva** (semántica por-sesión) y se vuelven a poner cuando corresponde. Una sesión nueva es
+un `SessionStart` con `source` `startup` o `clear` — o sin `source` (Devin). Claude Code también
+dispara `SessionStart` en `resume` y `compact`: esos inyectan contexto pero conservan los
+markers, porque la conversación (y lo que ya cargó, guardó y se le dijo) sigue.
 
 | Marker | Archivo | Quién lo escribe | Para qué |
 |--------|---------|------------------|----------|
@@ -141,6 +144,7 @@ El conserje lleva unas pocas banderitas en `<cwd>/.leina/`, que se **borran al S
 | **save** | `session.memory-saved` | `PostToolUse` cuando un `exec` corre `memory (save\|session\|update)` | lo lee `Stop` para decidir si recordar guardar |
 | **stop nudge** | `session.stop-nudge-shown` | `Stop` después de empujar | deja el empujón de guardado en una vez por sesión |
 | **search tip** | `session.native-search-nudge-shown` | `PostToolUse` después del consejo de búsqueda nativa | deja ese consejo en una vez por sesión |
+| **fallback** | `session.context-fallback-shown` | toda inyección que cayó al texto estático | evita que `UserPromptSubmit` repita ese texto en cada prompt |
 
 El marker de save excluye el propio arranque de sesión (`session-start`): abrir una sesión no
 cuenta como "ya guardaste".
@@ -184,13 +188,14 @@ sequenceDiagram
 
 Detalles por evento:
 
-- **SessionStart**: borra ambos markers e inyecta contexto; re-arma el marker load si la entrega
-  fue exitosa.
+- **SessionStart**: en una sesión nueva (`startup`/`clear`/sin `source`) borra los markers;
+  siempre inyecta contexto; re-arma el marker load si la entrega fue exitosa.
 - **PostCompaction**: re-inyecta igual que SessionStart pero **sin** resetear los markers (el
   campo `summary` se ignora a propósito; la re-inyección es incondicional).
 - **UserPromptSubmit**: si el marker load ya existe → silencio total (la inyección ya pasó). Si
-  no, inyecta por `stdout` y escribe el marker. Sin advisory por stderr (la inyección lo
-  reemplaza).
+  no, inyecta por `stdout` y escribe el marker. Cuando la inyección solo puede dar el texto
+  estático de respaldo, ese texto sale una vez por sesión (el marker fallback), no en cada
+  prompt. Sin advisory por stderr (la inyección lo reemplaza).
 - **PreToolUse**: con `git commit` emite un consejo de cargar memoria; con `grep`/`rg`/`find`
   emite un consejo de usar `leina query`/`affected`. Si el marker load existe, calla.
 - **PostToolUse**: escribe el marker load o save según el comando `exec`. Nunca reconstruye

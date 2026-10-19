@@ -173,6 +173,11 @@ export interface AgentHookPayload {
   tool_input?: { command?: unknown; [k: string]: unknown };
   /** Claude Code Stop payloads: true when a Stop hook already blocked once. */
   stop_hook_active?: unknown;
+  /**
+   * Claude Code SessionStart: why the session started — "startup", "resume", "clear" or
+   * "compact". Devin sends none. Only a fresh conversation resets the per-session markers.
+   */
+  source?: unknown;
   /** PostCompaction summary text — present but intentionally ignored; re-injection is unconditional. */
   summary?: string | null;
 }
@@ -214,6 +219,22 @@ export const NATIVE_NUDGE_MARKER_REL = ".leina/session.native-search-nudge-shown
 // Marker for the one-shot Stop save nudge: Claude Code continues the conversation on Stop
 // additionalContext, so the nudge must not fire again on every later stop of the session.
 export const STOP_NUDGE_MARKER_REL = ".leina/session.stop-nudge-shown";
+
+// Marker for the static fallback context (SESSION_START_CONTEXT, emitted when the real
+// injection could not be built): once the agent has seen it this session, UserPromptSubmit
+// stops repeating it on every prompt.
+export const FALLBACK_MARKER_REL = ".leina/session.context-fallback-shown";
+
+/**
+ * Does this SessionStart open a NEW conversation? Claude Code says why it fired: "startup"
+ * and "clear" start from an empty conversation, while "resume" and "compact" continue one
+ * whose memory loads/saves and one-time nudges already happened. Devin sends no `source`,
+ * so its SessionStart is always a new session (its PostCompaction is a separate event).
+ */
+export function isNewSession(payload: AgentHookPayload): boolean {
+  const { source } = payload;
+  return typeof source !== "string" || source === "startup" || source === "clear";
+}
 
 // Retrospective advisory emitted the first time a native grep/read/glob tool fires (Palanca C).
 // Acknowledges the tool already ran (valid for locating specific content), then steers toward
@@ -411,12 +432,14 @@ export function runAgentGate(
     return;
   }
 
-  // SessionStart: reset BOTH markers (load + save) before injection runs. Per-session semantics:
-  // a fresh session starts as "not loaded, not saved". Save marker is NEVER re-written at
-  // SessionStart (only deleted here); load marker is re-armed when injection succeeds.
+  // SessionStart: a NEW session (startup/clear, or no source — Devin) resets the per-session
+  // markers before injection runs: it starts as "not loaded, not saved", nudges unshown. A
+  // resumed or compacted session keeps them — it is the same conversation. Save marker is
+  // NEVER re-written at SessionStart (only deleted here); load marker is re-armed when
+  // injection succeeds. Injection itself runs on every SessionStart.
   if (event === "SessionStart") {
     maybeSelfHealGraph(cwd);
-    emitInjectedContext(cwd, markerPath, saveMarkerPath, "SessionStart", true, opts.harnessSessionContext);
+    emitInjectedContext(cwd, markerPath, saveMarkerPath, "SessionStart", isNewSession(payload), opts.harnessSessionContext);
     return;
   }
 
@@ -438,8 +461,9 @@ export function runAgentGate(
 
   // UserPromptSubmit: active injection (one-shot, guarded by marker). If the marker is already
   // present (memory already loaded this session) → total silence. If absent → inject
-  // additionalContext on stdout + write marker on delivery. No stderr advisory — the
-  // stdout injection replaces it.
+  // additionalContext on stdout + write marker on delivery. The static fallback (injection
+  // could not be built) goes out at most once per session. No stderr advisory — the stdout
+  // injection replaces it.
   if (event === "UserPromptSubmit") {
     emitUpsInjection(cwd, markerPath, saveMarkerPath);
     return;
@@ -493,15 +517,12 @@ function handleMemoryMarkerWrites(postCmd: string, markerPath: string, saveMarke
 }
 
 // UserPromptSubmit injection wrapper. Guard: if the session marker is already present, return
-// silently (injection already happened this session). If absent, delegate to emitInjectedContext
-// with resetMarkers=false — injects additionalContext on stdout and re-arms the marker on
-// delivery. Total silence when marker is present (stdout and stderr both empty).
+// silently (injection already happened this session); likewise once the static fallback was
+// shown this session (FALLBACK_MARKER_REL) — repeating it on every prompt is noise. Otherwise
+// delegate to emitInjectedContext with resetMarkers=false — injects additionalContext on stdout
+// and re-arms the marker on delivery. Total silence when a marker is present.
 function emitUpsInjection(cwd: string, markerPath: string, saveMarkerPath: string): void {
-  try {
-    if (existsSync(markerPath)) return; // marker present → total silence
-  } catch {
-    /* fail open: treat as absent and proceed to inject */
-  }
+  if (markerPresent(markerPath) || markerPresent(join(cwd, FALLBACK_MARKER_REL))) return;
   emitInjectedContext(cwd, markerPath, saveMarkerPath, "UserPromptSubmit", false);
 }
 
@@ -527,7 +548,7 @@ function emitInjectedContext(
     } catch {
       /* fail open */
     }
-    for (const rel of [NATIVE_NUDGE_MARKER_REL, STOP_NUDGE_MARKER_REL]) {
+    for (const rel of [NATIVE_NUDGE_MARKER_REL, STOP_NUDGE_MARKER_REL, FALLBACK_MARKER_REL]) {
       try {
         rmSync(join(cwd, rel), { force: true });
       } catch {
@@ -550,7 +571,7 @@ function emitInjectedContext(
     },
   };
   process.stdout.write(`${JSON.stringify(out)}\n`);
-  if (delivered) writeMarker(markerPath);
+  writeMarker(delivered ? markerPath : join(cwd, FALLBACK_MARKER_REL));
 }
 
 // Palanca C: emit NATIVE_SEARCH_NUDGE the first time a native grep/read/glob fires per

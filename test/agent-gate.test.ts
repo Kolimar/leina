@@ -25,6 +25,8 @@ import {
   NATIVE_NUDGE_MARKER_REL,
   NATIVE_SEARCH_NUDGE,
   STOP_NUDGE_MARKER_REL,
+  FALLBACK_MARKER_REL,
+  isNewSession,
   type AgentHookPayload,
 } from "../src/cli/agent-gate.ts";
 import { SQLiteMemoryRepository as MemoryStore } from "../src/infrastructure/sqlite/memory-repository.ts";
@@ -1416,4 +1418,62 @@ test("(claude-proto-5) SessionStart clears the one-shot Stop marker with the oth
     withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: "SessionStart" }), cwd));
   });
   assert.equal(existsSync(join(cwd, STOP_NUDGE_MARKER_REL)), false);
+});
+
+// ---------------------------------------------------------------------------
+// Session boundaries: only a NEW conversation (Claude Code source startup/clear, or a
+// Devin SessionStart without source) resets the per-session markers; resume/compact keep
+// them. The static fallback context goes out at most once per session.
+// ---------------------------------------------------------------------------
+
+test("(session-1) isNewSession: startup/clear/absent are new; resume/compact are not", () => {
+  assert.equal(isNewSession({ hook_event_name: "SessionStart" }), true, "Devin sends no source");
+  assert.equal(isNewSession({ hook_event_name: "SessionStart", source: "startup" }), true);
+  assert.equal(isNewSession({ hook_event_name: "SessionStart", source: "clear" }), true);
+  assert.equal(isNewSession({ hook_event_name: "SessionStart", source: "resume" }), false);
+  assert.equal(isNewSession({ hook_event_name: "SessionStart", source: "compact" }), false);
+});
+
+test("(session-2) SessionStart on resume/compact keeps the save and one-shot markers; startup clears them", () => {
+  const cwd = freshCwd();
+  const rels = [SAVE_MARKER_REL, STOP_NUDGE_MARKER_REL, NATIVE_NUDGE_MARKER_REL];
+  for (const rel of rels) writeFileSync(join(cwd, rel), "x\n");
+  const start = (source: string) =>
+    withTempHome(() =>
+      withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: "SessionStart", source }), cwd, undefined, { host: "claude" })),
+    );
+  for (const source of ["resume", "compact"]) {
+    const { stdout } = start(source);
+    assert.match(additionalContextOf(stdout, "SessionStart"), /./, `${source} still injects context`);
+    for (const rel of rels) assert.equal(existsSync(join(cwd, rel)), true, `${source} keeps ${rel}`);
+  }
+  start("startup");
+  for (const rel of rels) assert.equal(existsSync(join(cwd, rel)), false, `startup clears ${rel}`);
+});
+
+test("(session-3) the UserPromptSubmit fallback context is delivered at most once per session", () => {
+  // Ambiguous workspace (two child repos) → buildActiveContext cannot derive a key → fallback.
+  const cwd = mkdtempSync(join(tmpdir(), "leina-gate-ups-once-"));
+  mkdirSync(join(cwd, ".leina"), { recursive: true });
+  writeFileSync(join(cwd, ".leina", "consent"), "enabled");
+  trustDir(cwd);
+  for (const child of ["repo-x", "repo-y"]) mkdirSync(join(cwd, child, ".git"), { recursive: true });
+  const ups = () => withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: "UserPromptSubmit" }), cwd));
+  try {
+    withTempHome(() => {
+      const first = ups();
+      assert.equal(additionalContextOf(first.stdout, "UserPromptSubmit"), SESSION_START_CONTEXT);
+      assert.equal(existsSync(join(cwd, FALLBACK_MARKER_REL)), true, "fallback marker written");
+      assert.equal(existsSync(join(cwd, MARKER_REL)), false, "load marker still not written");
+      const second = ups();
+      assert.equal(second.stdout, "", "no repeat on the next prompt");
+      assert.equal(second.stderr, "");
+      // A new session shows the fallback once more (at SessionStart), and UPS stays quiet.
+      withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: "SessionStart", source: "clear" }), cwd));
+      assert.equal(existsSync(join(cwd, FALLBACK_MARKER_REL)), true, "SessionStart's own fallback counts as shown");
+      assert.equal(ups().stdout, "", "so the first prompt after it stays quiet");
+    });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });

@@ -133,8 +133,11 @@ If everything fails, it falls back to a static text that reminds the agent to ru
 
 ## The markers: per-session state
 
-The concierge carries a few little flags in `<cwd>/.leina/`, which are **cleared on SessionStart**
-(per-session semantics) and put back up when appropriate:
+The concierge carries a few little flags in `<cwd>/.leina/`, which are **cleared when a new
+session starts** (per-session semantics) and put back up when appropriate. A new session is a
+`SessionStart` whose `source` is `startup` or `clear` — or one without `source` (Devin). Claude
+Code also fires `SessionStart` on `resume` and `compact`: those inject context but keep the
+markers, because the conversation (and what it already loaded, saved and was told) goes on.
 
 | Marker | File | Who writes it | What it's for |
 |--------|---------|------------------|----------|
@@ -142,6 +145,7 @@ The concierge carries a few little flags in `<cwd>/.leina/`, which are **cleared
 | **save** | `session.memory-saved` | `PostToolUse` when an `exec` runs `memory (save\|session\|update)` | read by `Stop` to decide whether to remind you to save |
 | **stop nudge** | `session.stop-nudge-shown` | `Stop` after it nudged | keeps the save nudge to once per session |
 | **search tip** | `session.native-search-nudge-shown` | `PostToolUse` after the native-search tip | keeps that tip to once per session |
+| **fallback** | `session.context-fallback-shown` | any injection that fell back to the static text | keeps `UserPromptSubmit` from repeating that text on every prompt |
 
 The save marker excludes `session-start` with a negative lookahead in the regex (you don't want
 opening a session to count as "already saved").
@@ -185,13 +189,14 @@ sequenceDiagram
 
 Details per event:
 
-- **SessionStart**: clears both markers and injects context; re-arms the load marker if the
-  delivery succeeded.
+- **SessionStart**: on a new session (`startup`/`clear`/no `source`) clears the markers; always
+  injects context; re-arms the load marker if the delivery succeeded.
 - **PostCompaction**: re-injects just like SessionStart but **without** resetting the markers (the
   `summary` field is deliberately ignored; the re-injection is unconditional).
 - **UserPromptSubmit**: if the load marker already exists → total silence (the injection already
-  happened). If not, it injects via `stdout` and writes the marker. No stderr advisory (the
-  injection replaces it).
+  happened). If not, it injects via `stdout` and writes the marker. When the injection can only
+  produce the static fallback text, that text goes out once per session (the fallback marker),
+  not on every prompt. No stderr advisory (the injection replaces it).
 - **PreToolUse**: with `git commit` it emits a tip to load memory; with `grep`/`rg`/`find` it
   emits a tip to use `leina query`/`affected`. If the load marker exists, it stays quiet.
 - **PostToolUse**: writes the load or save marker depending on the `exec` command. It never

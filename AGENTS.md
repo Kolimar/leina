@@ -169,10 +169,13 @@ because a user-global hook fires in every Devin project on the machine.
 
 - Subcommand: `leina agent-hook <Event>` (compat alias: `devin-hook`), payload on stdin. Managed events:
   `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`.
-- **SessionStart**: deletes **both** markers (`session.memory-loaded` + `session.memory-saved`),
-  calls `buildActiveContext(cwd)` → injects real memory observations + graph stats as
+- **SessionStart**: on a NEW session (`isNewSession`: payload `source` is `startup`/`clear`, or
+  absent as on Devin) deletes the per-session markers (`session.memory-loaded`,
+  `session.memory-saved` and the one-shot nudge/fallback markers); `resume`/`compact` keep them.
+  Always calls `buildActiveContext(cwd)` → injects real memory observations + graph stats as
   `additionalContext` (including end-of-session save reminder); re-writes load marker if
-  delivered=true, falls back to SESSION_START_CONTEXT (static advisory) if injection fails.
+  delivered=true, falls back to SESSION_START_CONTEXT (static advisory) if injection fails —
+  `UserPromptSubmit` delivers that fallback at most once per session (`FALLBACK_MARKER_REL`).
 - **PostCompaction**: re-injects context after compaction (same as SessionStart but does NOT
   reset the markers first — re-arms the load marker). `summary` field is intentionally ignored.
 - **Stop**: advisory nudge to persist session memory. Checks `<cwd>/.leina/session.memory-saved`
