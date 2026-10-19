@@ -15,6 +15,7 @@
 // Failures never break a build: reads degrade to "no cache", writes are dropped.
 
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { GraphEdge, GraphNode } from "../../domain/graph/model.ts";
@@ -61,7 +62,10 @@ export class TsExtractCache {
 
   /** `key` identifies everything a cached result assumes beyond the files themselves. */
   constructor(root: string, key: string) {
-    this.key = `${TS_EXTRACT_CACHE_FORMAT}\u0000${key}`;
+    // Stored as a hex digest: Node 22's node:sqlite binds text only up to the first NUL,
+    // so a raw key with a separator (or a caller's binary-ish key) would come back cut
+    // short, never match, and silently turn every build into a full extraction.
+    this.key = createHash("sha256").update(`${TS_EXTRACT_CACHE_FORMAT}\n${key}`).digest("hex");
     try {
       const p = extractCachePath(root);
       mkdirSync(dirname(p), { recursive: true });

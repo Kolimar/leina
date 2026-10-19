@@ -320,3 +320,26 @@ test("(inc-9) buildGraph: an incremental rebuild stores exactly what a fresh bui
   assert.deepStrictEqual(inc.nodes, full.nodes);
   assert.deepStrictEqual(inc.edges, full.edges);
 });
+
+test("(cache-1) a cache key with a NUL survives the round trip (Node 22 binds text up to the first NUL)", async () => {
+  const { TsExtractCache } = await import("../src/infrastructure/sqlite/ts-extract-cache.ts");
+  const root = mkdtempSync(join(SANDBOX, "cache-key-"));
+  const key = "v1\u0000/some/root\u0000opts";
+  const writer = new TsExtractCache(root, key);
+  writer.write({
+    replaceAll: true,
+    files: new Map([["a.ts", { hash: "h", shape: "s", global: false, specs: [], result: { nodes: [], edges: [] } }]]),
+    removed: [],
+    aux: new Map(),
+  });
+  writer.close();
+  const reader = new TsExtractCache(root, key);
+  const other = new TsExtractCache(root, "v1\u0000/some/root\u0000other");
+  try {
+    assert.deepStrictEqual([...(reader.snapshot()?.files.keys() ?? [])], ["a.ts"]);
+    assert.equal(other.snapshot(), null);
+  } finally {
+    reader.close();
+    other.close();
+  }
+});
