@@ -35,6 +35,9 @@ export interface BuildReport {
   /** Sources above MAX_SOURCE_BYTES, skipped (relative POSIX paths); not in filesScanned. */
   oversizeSkipped: string[];
   semanticViaTreesitter: number; // C#/Java handled syntactically (sidecar would upgrade)
+  /** Reduced-precision paths extractors fell back to (deduplicated, one line each); also
+   *  recorded in the manifest for `leina status`. The CLI prints them once per explicit build. */
+  degraded: string[];
   nodes: number;
   edges: number;
   /** Wall-clock per stage — always collected (a handful of Date.now() calls); the CLI
@@ -64,6 +67,15 @@ interface ExtractionAcc {
   extracted: number;
   semanticViaTreesitter: number;
   handled: Set<string>;
+  degraded: Set<string>;
+  quiet: boolean;
+}
+
+export interface BuildOptions {
+  /** Print nothing on stderr except failures (extractor crashes). For builds nobody asked
+   *  for explicitly — the read path's stale auto-rebuild, the MCP server — where per-build
+   *  chatter is noise; the report still carries the diagnostics' outcome (degraded). */
+  quiet?: boolean;
 }
 
 /** Run a single extractor over its candidate files; null on unexpected throw. */
@@ -109,10 +121,14 @@ async function processExtractor(
   const result = await runExtractor(ext, root, cand);
   if (!result) return;
 
-  // Log de mensajes informativos del extractor
-  for (const d of result.diagnostics) {
-    console.error(`  · [${ext.id}] ${d}`);
+  // Log de mensajes informativos del extractor (silenciados en un build quiet)
+  if (!acc.quiet) {
+    for (const d of result.diagnostics) {
+      console.error(`  · [${ext.id}] ${d}`);
+    }
   }
+  // Degradations are not printed here: the caller prints each once (or records them).
+  for (const d of result.degraded ?? []) acc.degraded.add(d);
 
   // Acumular nodos/edges
   acc.allNodes.push(...result.nodes);
@@ -132,12 +148,15 @@ export async function buildGraph(
   root: string,
   store: GraphRepository,
   registry: GraphExtractor[],
+  opts: BuildOptions = {},
 ): Promise<BuildReport> {
   const t0 = Date.now();
+  const quiet = opts.quiet === true;
   // Oversize sources are never extracted nor written to the manifest (sources.ts).
   const { kept: files, oversize } = partitionBySize(listSourceFiles(root));
   const oversizeSkipped = oversize.map((o) => relative(resolve(root), o.file).split(sep).join("/"));
   oversize.forEach((o, i) => {
+    if (quiet) return; // still listed in report.oversizeSkipped
     const mib = (o.bytes / (1024 * 1024)).toFixed(1);
     console.error(
       `  · [build] skipped ${oversizeSkipped[i]} (${mib} MiB > ${MAX_SOURCE_BYTES / (1024 * 1024)} MiB source size cap)`,
@@ -153,6 +172,8 @@ export async function buildGraph(
     extracted: 0,
     semanticViaTreesitter: 0,
     handled: new Set<string>(),
+    degraded: new Set<string>(),
+    quiet,
   };
 
   for (const ext of registry) {
@@ -203,6 +224,7 @@ export async function buildGraph(
     filesExtracted: acc.extracted,
     oversizeSkipped,
     semanticViaTreesitter: acc.semanticViaTreesitter,
+    degraded: [...acc.degraded],
     nodes: clean.nodes.length,
     edges: clean.edges.length,
     timings: {

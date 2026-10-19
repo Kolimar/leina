@@ -223,7 +223,9 @@ export function buildGraphShared(root: string): Promise<BuildReport> {
     const registry = await buildDefaultRegistry();
     const w = openGraphRepo(root);
     try {
-      return await buildGraph(root, w, registry);
+      // quiet: a read-path auto-rebuild or an MCP build — nobody asked to watch it, so no
+      // per-build diagnostics or nudges on stderr (the report still carries `degraded`).
+      return await buildGraph(root, w, registry, { quiet: true });
     } finally {
       w.close();
     }

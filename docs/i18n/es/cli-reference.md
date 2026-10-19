@@ -38,6 +38,14 @@ stderr; quedan listados en `oversizeSkipped` del reporte del build) y el chequeo
 los ignora igual, así que un archivo generado o vendorizado enorme no puede agotar la memoria
 ni dejar el grafo permanentemente stale.
 
+Cuando parte del proyecto se extrae con precisión reducida — C#/Java sin sidecar de compilador,
+Go/Rust/Python sin indexador SCIP, YAML sin su gramática — `build`/`refresh` imprimen una línea
+`note:` por caso en stderr después de `Done.`, nombrando el comando que lo mejora. Solo cuenta el
+código de producto: un lenguaje que solo aparece bajo rutas de tests, fixtures, vendor o ejemplos
+no recibe nota. Un auto-rebuild por
+staleness en el camino de lectura imprime solo su línea `rebuilding ...` — ni notas ni
+diagnósticos de extractores.
+
 `build` y `refresh` rechazan un `<dir>` que no existe o no es un directorio: salen con `1` y
 `cannot build the graph: no such directory: <abs>`, sin crear, construir ni registrar nada
 (antes un argumento mal escrito creaba el directorio y registraba un proyecto vacío).

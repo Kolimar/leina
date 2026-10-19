@@ -34,6 +34,14 @@ export interface GraphExtractionResult {
   imports?: ImportBinding[];
   /** Mensajes informativos (advisory); p.ej. "ts-morph failed → tree-sitter". */
   diagnostics: string[];
+  /**
+   * Reduced-precision paths this extraction fell back to, one user-facing line each
+   * ("csharp: 12 file(s) via tree-sitter (syntactic) — run `leina sidecar build csharp` …").
+   * Not diagnostics: buildGraph collects them into the report and the manifest, the CLI
+   * prints each ONCE on an explicit build/refresh, and `leina status` shows them. An
+   * extractor reports one only when it is actionable — never for test/fixture/vendor paths.
+   */
+  degraded?: string[];
   /** Duración de la extracción en milisegundos. */
   durationMs: number;
   /** Errores no fatales — si está vacío, el extractor manejó sus archivos candidatos. */

@@ -20,9 +20,10 @@
 // cli/handlers/system.ts's `leina scip` group, deliberately separate from
 // `leina sidecar`).
 
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { GraphExtractionResult, GraphExtractor, VerificationCheck } from "../../../domain/graph/extractor.ts";
+import { isAuxiliarySourcePath } from "../../../application/graph/detect.ts";
 import { resolveScipIndexer, runScipIndexer, scipExtensionsFor, type ScipLang } from "./scip-indexer.ts";
 
 // src/infrastructure/extractors/semantic/ → up 4 → package root → test/fixtures/scip/<lang>
@@ -93,15 +94,17 @@ export class ScipExtractor implements GraphExtractor {
     }
 
     if (!resolveScipIndexer(this.lang)) {
-      console.error(
-        `  · ${this.lang} files detected — run \`leina scip install ${this.lang}\` ` +
-          `for compiler-grade precision; using tree-sitter.`,
-      );
+      // Only product code makes "install an indexer" actionable — a lone fixture or vendored
+      // file of this language says nothing about the project.
+      const primary = langFiles.filter((f) => !isAuxiliarySourcePath(relative(root, f))).length;
       return {
         ...base,
         nodes: [],
         edges: [],
-        diagnostics: [`${this.lang} SCIP indexer not found; using tree-sitter`],
+        diagnostics: [],
+        degraded: primary > 0
+          ? [`${this.lang}: ${primary} file(s) via tree-sitter (syntactic) — run \`leina scip install ${this.lang}\` for compiler-grade precision`]
+          : [],
         durationMs: 0,
         errors: [`scip indexer not found for ${this.lang}`],
       };
@@ -115,32 +118,31 @@ export class ScipExtractor implements GraphExtractor {
           ...base,
           nodes: [],
           edges: [],
-          diagnostics: [`${this.lang} SCIP indexer returned no index`],
+          diagnostics: [],
+          degraded: [`${this.lang}: SCIP indexer produced no index; ${langFiles.length} file(s) via tree-sitter`],
           durationMs: Date.now() - start,
           errors: [`scip indexer failed for ${this.lang}`],
         };
       }
-      // Positive confirmation, same rationale as SidecarExtractor: silence here would
-      // read as "tree-sitter again" — one line confirms the compiler-grade path is live.
-      console.error(
-        `  · [${this.id}] ${langFiles.length} ${this.lang} file(s) via SCIP compiler-grade index`,
-      );
       return {
         ...base,
         nodes: res.nodes,
         edges: res.edges,
-        diagnostics: [],
+        // Positive confirmation, same rationale as SidecarExtractor: silence here would
+        // read as "tree-sitter again" — one line confirms the compiler-grade path is live.
+        diagnostics: [`${langFiles.length} ${this.lang} file(s) via SCIP compiler-grade index`],
         durationMs: Date.now() - start,
         errors: [],
       };
     } catch (err) {
       const msg = (err as Error).message;
-      console.error(`  ! ${this.lang} SCIP indexer failed, using tree-sitter: ${msg}`);
+      const line = msg.split("\n").find((l) => l.trim() !== "")?.trim() ?? msg;
       return {
         ...base,
         nodes: [],
         edges: [],
-        diagnostics: [`${this.lang} SCIP indexer failed: ${msg}`],
+        diagnostics: [],
+        degraded: [`${this.lang}: SCIP indexer failed (${line.slice(0, 200)}); ${langFiles.length} file(s) via tree-sitter`],
         durationMs: Date.now() - start,
         errors: [msg],
       };

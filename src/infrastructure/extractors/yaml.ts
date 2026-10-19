@@ -52,11 +52,6 @@ interface YamlGrammar {
 let runtimeReady: Promise<void> | null = null;
 const grammars = new Map<string, Promise<YamlGrammar>>();
 
-/** True when the user asked for verbose/profiling output — gates debug-only diagnostics. */
-function isVerboseBuild(): boolean {
-  return process.argv.includes("-v") || process.argv.includes("--profile") || process.env.LEINA_VERBOSE === "1";
-}
-
 function defaultYamlWasmPath(): string {
   return join(WASMS_DIR, YAML_WASM_FILE);
 }
@@ -784,10 +779,11 @@ export class YamlInfraExtractor implements GraphExtractor {
       extractYamlFile(file, root, grammar, nodes, edges, errors);
     }
     // Set by a failed load, or by the first parse that threw: every file after it (and with a
-    // failed load, every file) took the line-based path.
-    if (grammar.reason !== null && files.length > 0 && isVerboseBuild()) {
-      diagnostics.push(`yaml-infra: ${grammar.reason} — using the line-based fallback`);
-    }
+    // failed load, every file) took the line-based path — a broken install, reported once.
+    const degraded =
+      grammar.reason !== null && files.length > 0
+        ? [`yaml: ${files.length} file(s) via the line-based fallback (${grammar.reason}) — reinstall leina and run \`leina doctor\``]
+        : [];
 
     return {
       schemaVersion: 1,
@@ -795,6 +791,7 @@ export class YamlInfraExtractor implements GraphExtractor {
       nodes,
       edges,
       diagnostics,
+      degraded,
       durationMs: Date.now() - start,
       errors,
     };

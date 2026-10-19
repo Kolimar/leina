@@ -109,28 +109,44 @@ export function runSemanticSidecar(
 // GraphExtractor adapter — wraps runSemanticSidecarProject en el puerto de dominio.
 // ---------------------------------------------------------------------------
 
-import { join, dirname } from "node:path";
+import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isAuxiliarySourcePath } from "../../../application/graph/detect.ts";
 import { buildSidecar, missingTools } from "./sidecar-build.ts";
 import type { GraphExtractor, GraphExtractionResult, VerificationCheck } from "../../../domain/graph/extractor.ts";
 
 // Ruta al directorio de fixtures de prueba: src/infrastructure/extractors/semantic/ → arriba 4 → paquete root → test/fixtures/<lang>
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
-function ensureSidecarAdapter(lang: SemanticLang): boolean {
-  if (isSidecarConfigured(lang)) return true;
+/**
+ * Make the sidecar available: configured already, or built on first use when
+ * LEINA_BUILD_SIDECARS is set. When it is not ready, `degraded` carries the note to report —
+ * empty when there is nothing actionable to say.
+ */
+function ensureSidecarAdapter(lang: SemanticLang, root: string, langFiles: string[]): { ready: boolean; degraded: string[] } {
+  if (isSidecarConfigured(lang)) return { ready: true, degraded: [] };
   if (process.env.LEINA_BUILD_SIDECARS) {
+    // Progress line, not a nudge: the build below takes minutes and would otherwise be silent.
     console.error(`  · building ${lang} semantic sidecar (first use)...`);
     const res = buildSidecar(lang);
-    if (res.ok) return true;
-    console.error(`  ! ${lang} sidecar build failed (${res.error}); using tree-sitter.`);
-    return false;
+    if (res.ok) return { ready: true, degraded: [] };
+    return { ready: false, degraded: [`${lang}: sidecar build failed (${firstLine(res.error ?? "unknown error")}); ${langFiles.length} file(s) via tree-sitter`] };
   }
-  console.error(
-    `  · ${lang} files detected — run \`leina sidecar build ${lang}\` ` +
-      `(or set LEINA_BUILD_SIDECARS=1) for compiler-grade precision; using tree-sitter.`,
-  );
-  return false;
+  const primary = langFiles.filter((f) => !isAuxiliarySourcePath(relative(root, f))).length;
+  return {
+    ready: false,
+    // Only product code makes the advice actionable — a C#/Java file under test/fixtures/
+    // or vendor/ says nothing about the project needing a compiler sidecar.
+    degraded: primary > 0
+      ? [`${lang}: ${primary} file(s) via tree-sitter (syntactic) — run \`leina sidecar build ${lang}\` for compiler-grade precision`]
+      : [],
+  };
+}
+
+/** First line of a tool's error output, capped — a degradation note is one line. */
+function firstLine(msg: string): string {
+  const line = msg.split("\n").find((l) => l.trim() !== "")?.trim() ?? msg;
+  return line.length > 200 ? `${line.slice(0, 197)}...` : line;
 }
 
 export class SidecarExtractor implements GraphExtractor {
@@ -202,12 +218,14 @@ export class SidecarExtractor implements GraphExtractor {
       return { ...base, nodes: [], edges: [], diagnostics: [], durationMs: 0, errors: [`no ${this.lang} files in candidate list`] };
     }
 
-    if (!ensureSidecarAdapter(this.lang)) {
+    const adapter = ensureSidecarAdapter(this.lang, root, langFiles);
+    if (!adapter.ready) {
       return {
         ...base,
         nodes: [],
         edges: [],
-        diagnostics: [`${this.lang} sidecar not configured; using tree-sitter`],
+        diagnostics: [],
+        degraded: adapter.degraded,
         durationMs: 0,
         errors: [`sidecar not configured for ${this.lang}`],
       };
@@ -221,32 +239,30 @@ export class SidecarExtractor implements GraphExtractor {
           ...base,
           nodes: [],
           edges: [],
-          diagnostics: [`${this.lang} sidecar returned null`],
+          diagnostics: [],
+          degraded: [`${this.lang}: sidecar returned no result; ${langFiles.length} file(s) via tree-sitter`],
           durationMs: Date.now() - start,
           errors: [`sidecar returned null for ${this.lang}`],
         };
       }
-      // Positive confirmation: the fallback path announces itself, so silence here reads
-      // as "tree-sitter again". One line tells the user the compiler-grade path is live.
-      console.error(
-        `  · [${this.id}] ${langFiles.length} ${this.lang} file(s) via compiler-grade sidecar`,
-      );
       return {
         ...base,
         nodes: res.nodes,
         edges: res.edges,
-        diagnostics: [],
+        // Positive confirmation (printed with the other diagnostics on an explicit build):
+        // without it, silence would read as "tree-sitter again".
+        diagnostics: [`${langFiles.length} ${this.lang} file(s) via compiler-grade sidecar`],
         durationMs: Date.now() - start,
         errors: [],
       };
     } catch (err) {
       const msg = (err as Error).message;
-      console.error(`  ! ${this.lang} sidecar failed, using tree-sitter: ${msg}`);
       return {
         ...base,
         nodes: [],
         edges: [],
-        diagnostics: [`${this.lang} sidecar failed: ${msg}`],
+        diagnostics: [],
+        degraded: [`${this.lang}: compiler sidecar failed (${firstLine(msg)}); ${langFiles.length} file(s) via tree-sitter`],
         durationMs: Date.now() - start,
         errors: [msg],
       };

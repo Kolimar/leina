@@ -35,6 +35,13 @@ stderr; listed in the build report's `oversizeSkipped`) and the freshness check 
 the same way, so a huge generated or vendored file can neither exhaust memory nor keep the
 graph permanently stale.
 
+When part of the project is extracted with reduced precision — C#/Java without a compiler
+sidecar, Go/Rust/Python without a SCIP indexer, YAML without its grammar — `build`/`refresh`
+print one `note:` line per case on stderr after `Done.`, naming the command that upgrades it.
+Only product code counts: a language that appears only under test, fixture, vendor or example
+paths gets no note. A stale auto-rebuild on
+the read path prints only its `rebuilding ...` line — no notes, no extractor diagnostics.
+
 `build` and `refresh` refuse a `<dir>` that does not exist or is not a directory: they exit `1`
 with `cannot build the graph: no such directory: <abs>` and create, build and register nothing
 (previously a mistyped argument created the directory and registered an empty project).

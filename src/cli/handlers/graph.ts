@@ -40,6 +40,16 @@ function printBuildProfile(t: import("../../application/graph/build.ts").BuildTi
   console.log(`  manifest         ${String(t.manifestMs).padStart(6)}ms`);
 }
 
+// The closing summary of an explicit build/refresh: counts on stdout, then each reduced-
+// precision path ONCE on stderr (extractors no longer print their own nudges).
+function printBuildDone(report: import("../../application/graph/build.ts").BuildReport): void {
+  console.log(
+    `Done. ${report.nodes} nodes, ${report.edges} edges from ` +
+      `${report.filesExtracted}/${report.filesScanned} files.`,
+  );
+  for (const note of report.degraded) console.error(`  note: ${note}`);
+}
+
 // Opportunistic upsert into the global project registry (~/.leina/projects.json), the
 // data source for the `graph serve` project selector. Fail-open: project-key ambiguity
 // or a registry write failure must never fail the build/refresh command itself.
@@ -87,13 +97,7 @@ export async function handleBuild(rest: string[]): Promise<void> {
       console.log(`  exported ${out}`);
     }
     store.close();
-    console.log(
-      `Done. ${report.nodes} nodes, ${report.edges} edges from ` +
-        `${report.filesExtracted}/${report.filesScanned} files.${ 
-        report.semanticViaTreesitter
-          ? `  (${report.semanticViaTreesitter} C#/Java files via tree-sitter; configure a sidecar for compiler-grade precision)`
-          : ""}`,
-    );
+    printBuildDone(report);
     await emitEvent(
       openEventSink(),
       makeLeinaEvent("graph.built", {
@@ -121,10 +125,7 @@ export async function handleRefresh(rest: string[]): Promise<void> {
     console.log(`Rebuilding graph for ${resolvePath(root)} ...`);
     const report = await buildGraph(root, store, registry);
     store.close();
-    console.log(
-      `Done. ${report.nodes} nodes, ${report.edges} edges from ` +
-        `${report.filesExtracted}/${report.filesScanned} files.`,
-    );
+    printBuildDone(report);
     await emitEvent(
       openEventSink(),
       makeLeinaEvent("graph.built", {

@@ -325,16 +325,15 @@ services:
         image: postgres
 `);
   try {
-    process.env.LEINA_VERBOSE = "1"; // a fallback would announce itself in diagnostics
     const ext = new YamlInfraExtractor("test");
     const flow = await ext.extract(tmp, [dcFile]);
-    assert.deepEqual(flow.diagnostics, [], `no fallback: ${JSON.stringify(flow.diagnostics)}`);
+    assert.deepEqual(flow.degraded, [], "the grammar is healthy: no fallback");
     assert.deepEqual(flow.errors, []);
     assert.deepEqual(flow.nodes.filter((n) => n.kind === "service").map((n) => n.label), ["web"]);
     assert.equal(flow.edges.filter((e) => e.relation === "deploys").length, 1);
 
     const block = await ext.extract(tmp, [dc2]);
-    assert.deepEqual(block.diagnostics, []);
+    assert.deepEqual(block.degraded, []);
     assert.deepEqual(block.nodes.filter((n) => n.kind === "service").map((n) => n.label).sort(), ["api", "db"]);
     const deploys = block.edges.filter((e) => e.relation === "deploys");
     assert.equal(deploys.length, 1, "long-form depends_on yields one deploys edge (api → db)");
@@ -396,19 +395,20 @@ test("(yie-d6a) sin -v/LEINA_VERBOSE, diagnostics viene vacío (grammar sano o r
   }
 });
 
-test("(yie-d6b) con LEINA_VERBOSE=1 y un grammar que no carga, el diagnóstico nombra el fallback", async () => {
+test("(yie-d6b) un grammar que no carga se reporta UNA vez como degradación (no como diagnóstico)", async () => {
   const { YamlInfraExtractor } = await import("../src/infrastructure/extractors/yaml.ts");
-  const tmp = mkdtempSync(join(tmpdir(), "yaml-ext-d6-verbose-"));
-  const cfgFile = join(tmp, "cfg.yaml");
-  writeFileSync(cfgFile, "key: value\n");
+  const tmp = mkdtempSync(join(tmpdir(), "yaml-ext-d6-degraded-"));
+  const a = join(tmp, "a.yaml");
+  const b = join(tmp, "b.yaml");
+  writeFileSync(a, "key: value\n");
+  writeFileSync(b, "other: value\n");
   try {
-    process.env.LEINA_VERBOSE = "1";
-    const ext = new YamlInfraExtractor("test", { wasmPath: brokenWasm(tmp) });
-    const result = await ext.extract(tmp, [cfgFile]);
-    assert.equal(result.diagnostics.length, 1);
-    assert.match(result.diagnostics[0]!, /failed to load .*line-based fallback/);
+    const broken = await new YamlInfraExtractor("test", { wasmPath: brokenWasm(tmp) }).extract(tmp, [a, b]);
+    assert.equal(broken.degraded?.length, 1, "one note for the whole run, not one per file");
+    assert.match(broken.degraded[0]!, /^yaml: 2 file\(s\) via the line-based fallback \(tree-sitter-yaml\.wasm failed to load/);
+    const healthy = await new YamlInfraExtractor("test").extract(tmp, [a, b]);
+    assert.deepEqual(healthy.degraded, []);
   } finally {
-    delete process.env.LEINA_VERBOSE;
     rmSync(tmp, { recursive: true, force: true });
   }
 });
