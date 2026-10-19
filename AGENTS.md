@@ -118,7 +118,7 @@ match while the code is dozens of commits behind).
 - After editing anything under `src/`, run `npm run build` (`tsc -p tsconfig.build.json`)
   so `dist/` — and therefore the linked global binary — picks up the change. The link does
   NOT recompile on its own.
-- `dist/cli/index.js` is intentionally tiny (~2.5 KB): it is the thin entry that lazy-imports
+- `dist/cli/index.js` is intentionally tiny (under 1 KB): it is the thin entry that lazy-imports
   the heavy extractor stack. A small size is expected, not a broken build.
 - Verify the link resolves to the repo: `readlink -f "$(which leina)"` should land in
   this repo's `dist/cli/index.js`, and `npm ls -g --depth=0 | grep leina` should show a

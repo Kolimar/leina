@@ -36,9 +36,11 @@ infrastructure/  adapters (SQLite, tree-sitter, filesystem, sidecars)
 cli/             driving adapter: dispatcher + handlers + composition root (wiring.ts)
 ```
 
-Start with [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) — every command documents the
-implementation entry point behind it, and the *Implementation map* table at the bottom is
-the fastest way to find the file you need. The layer rules are enforced twice: by
+Start with [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) for what each command does. To
+find the code behind one, follow the dispatcher: `src/cli/main.ts` routes every command to a
+handler in `src/cli/handlers/<family>.ts` (`graph.ts`, `memory.ts`, `harness.ts`, `install.ts`,
+…), which calls the use-cases under `src/application/`. `npm run cli -- query src "<question>"`
+answers the same question from leina's own graph. The layer rules are enforced twice: by
 `test/architecture.test.ts` and by the `no-restricted-imports` blocks in
 `eslint.config.js` — a dependency pointing the wrong way fails both. If you change one
 enforcement, change the other.

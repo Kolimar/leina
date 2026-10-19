@@ -36,9 +36,12 @@ infrastructure/  adapters (SQLite, tree-sitter, filesystem, sidecars)
 cli/             driving adapter: dispatcher + handlers + composition root (wiring.ts)
 ```
 
-Empezá por [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) — cada comando documenta el
-punto de entrada de implementación que hay detrás, y la tabla *Implementation map* al final
-es la forma más rápida de encontrar el archivo que necesitás. Las reglas de capas se hacen
+Empezá por [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) para saber qué hace cada comando.
+Para encontrar el código detrás de uno, seguí el dispatcher: `src/cli/main.ts` enruta cada
+comando a un handler en `src/cli/handlers/<familia>.ts` (`graph.ts`, `memory.ts`, `harness.ts`,
+`install.ts`, …), que llama a los use-cases de `src/application/`.
+`npm run cli -- query src "<pregunta>"` responde lo mismo desde el grafo del propio leina.
+Las reglas de capas se hacen
 cumplir dos veces: por `test/architecture.test.ts` y por los bloques `no-restricted-imports`
 en `eslint.config.js` — una dependencia que apunta en el sentido equivocado falla en ambos.
 Si cambiás uno de los dos mecanismos de control, cambiá el otro.
