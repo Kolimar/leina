@@ -50,6 +50,7 @@ import { registerMcpGlobal, unregisterMcpGlobal } from "../../infrastructure/ins
 import { printMcpResults } from "./mcp-admin.ts";
 import { AGENT_HOOK_MARK, claudeHooksJson, removeClaudeHooks } from "../../application/install/claude-hooks.ts";
 import { bootstrapHarness, deinitHarness } from "../../application/install/harness-init.ts";
+import { isRulePreset } from "../../application/harness/recipes.ts";
 
 type CliBase = ReturnType<typeof deriveCliCommand>;
 
@@ -553,6 +554,7 @@ export async function handleInit(rest: string[]): Promise<void> {
   const profileFlag = optFlag(rest, "--profile", undefined);
   const freshness   = optFlag(rest, "--freshness", "auto");
   const nameArg     = optFlag(rest, "--name", undefined);
+  const harnessPresetFlag = optFlag(rest, "--harness-preset", undefined);
   const doBuild     = hasFlag(rest, "--build");
   const doMcp       = hasFlag(rest, "--mcp");
   const doClaudeHooks = hasFlag(rest, "--claude-hooks");
@@ -566,6 +568,11 @@ export async function handleInit(rest: string[]): Promise<void> {
   if (nameArg?.trim().length === 0) {
     fail(`--name must not be empty`);
   }
+  if (harnessPresetFlag !== undefined && !isRulePreset(harnessPresetFlag)) {
+    fail(`unknown --harness-preset "${harnessPresetFlag}" (expected: generic | leina-native)`);
+  }
+  // Narrowed to `RulePreset | undefined` by the guard above (fail() returns never).
+  const harnessPreset = harnessPresetFlag;
 
   // The hooks call back into THIS CLI on disk (absolute node + cli entry), so they work
   // regardless of PATH. This is the only launch form we emit now — there is no MCP server.
@@ -598,7 +605,7 @@ export async function handleInit(rest: string[]): Promise<void> {
   if (mode === "light" && hosts.length > 0) {
     written.push(`harness: LIGHT init does not wire new platforms — --hosts (${hosts.join(", ")}) not applied to the harness`);
   }
-  const harness = await bootstrapHarness(project, mode === "full" ? hosts : []);
+  const harness = await bootstrapHarness(project, mode === "full" ? hosts : [], { preset: harnessPreset });
   written.push(...harness.written);
   failures.push(...harness.failures);
 

@@ -21,6 +21,7 @@
 import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { runSync } from "../harness/sync.ts";
+import { presetRuleOverrides, type RulePreset } from "../harness/recipes.ts";
 import { HARNESS_DIR } from "../harness/config-io.ts";
 import { lockfilePath, parseLockfile, type Lockfile, type LockfileArtifact } from "../harness/adapters/writer.ts";
 import { blockHandEdited, removeManagedBlock, sha256 } from "../harness/adapters/managed-block.ts";
@@ -83,20 +84,39 @@ export interface HarnessBootstrapResult {
 function persistPlatforms(
   configPath: string,
   platforms: readonly string[],
+  preset: RulePreset | undefined,
+  ruleOverrides: Record<string, { enabled: false }>,
   written: string[],
   failures: string[],
 ): boolean {
+  const overrideCount = Object.keys(ruleOverrides).length;
   if (!existsSync(configPath)) {
     mkdirSync(dirname(configPath), { recursive: true });
+    // Fresh seed only: platforms and/or a preset's rule overrides. `generic`
+    // disables the leina-coupled builtin rules; `leina-native` (and no preset)
+    // leaves the pristine `{}` so the full suite governs.
+    const seedObj: Record<string, unknown> = {};
+    if (platforms.length > 0) seedObj.platforms = platforms;
+    if (overrideCount > 0) seedObj.rules = ruleOverrides;
     const seed =
-      platforms.length > 0 ? `${JSON.stringify({ platforms }, null, 2)}\n` : HARNESS_MINIMAL_CONFIG;
+      Object.keys(seedObj).length > 0 ? `${JSON.stringify(seedObj, null, 2)}\n` : HARNESS_MINIMAL_CONFIG;
     writeFileSync(configPath, seed);
+    const parts: string[] = [];
+    if (platforms.length > 0) parts.push(`platforms: ${platforms.join(", ")}`);
+    if (overrideCount > 0) parts.push(`preset ${preset} disables ${overrideCount} leina-* rule(s)`);
     written.push(
-      platforms.length > 0
-        ? `.harness/config.json (created — platforms: ${platforms.join(", ")})`
+      parts.length > 0
+        ? `.harness/config.json (created — ${parts.join("; ")})`
         : ".harness/config.json (created — builtin rules govern by default)",
     );
     return true;
+  }
+  // Config already exists: the preset is an init-time seed choice, so it is not
+  // retro-applied here (that would clobber a user's own rule overrides).
+  if (preset !== undefined && overrideCount > 0) {
+    written.push(
+      `harness: --harness-preset ${preset} ignored — .harness/config.json already exists (its rules govern)`,
+    );
   }
   if (platforms.length === 0) return true; // nothing to merge — existing config governs
 
@@ -127,14 +147,19 @@ function persistPlatforms(
 export async function bootstrapHarness(
   project: string,
   hosts: readonly string[] = [],
+  opts: { preset?: RulePreset } = {},
 ): Promise<HarnessBootstrapResult> {
   const written: string[] = [];
   const failures: string[] = [];
   const platforms = bootstrapPlatforms(project, hosts, failures);
 
+  // `generic` seeds rule overrides that disable the leina-coupled builtin rules;
+  // `leina-native` (and the default: no preset) seeds none, so the full suite governs.
+  const ruleOverrides = opts.preset ? await presetRuleOverrides(opts.preset) : {};
+
   const configPath = join(project, HARNESS_DIR, "config.json");
   try {
-    persistPlatforms(configPath, platforms, written, failures);
+    persistPlatforms(configPath, platforms, opts.preset, ruleOverrides, written, failures);
   } catch (err) {
     failures.push(`.harness/config.json: ${errMsg(err)}`);
   }

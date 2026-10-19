@@ -167,3 +167,37 @@ The leina-specific builtin rules (`leina-memory-first`, `leina-graph-consult`,
 `leina-graph-fresh`, `leina-session-summary`) close the loop with the other two
 employees: the inspector requires the agent to consult the librarian before starting,
 keep the cartographer's map fresh, and leave the logbook entry before signing off.
+
+## Rule presets — `generic` vs `leina-native`
+
+Those four leina-coupled rules are **blocking by default**, and they only pass when leina
+itself is adopted in the repo (graph built, memory in use). A team that wants the harness
+for its *generic* value — tests-pass, no-secrets, diff-in-scope, lint-clean — should not
+inherit four rules that fail unless they also run leina commands. Hence two presets
+(defined in `application/harness/recipes.ts`):
+
+| preset | what governs | `.harness/config.json` |
+|---|---|---|
+| `leina-native` | the full builtin suite, **including** the four `leina-*` rules — the historical default | `{}` (the same pristine seed `leina init` writes) |
+| `generic` | only the host-agnostic rules (`tests-pass`, `no-secrets`, `diff-in-scope`, `lint-clean`, `typecheck`, `no-skipped-tests`, `plan-before-code`, `criteria-checklist`, `contract-interview`, `changelog-updated`) — **no rule requires a leina command** | the config below |
+
+A preset never edits the rule files — it is realized entirely through config overrides
+(the project layer may disable builtin rules; only *user-local* layers are barred from
+weakening, see the enforceability invariant). The `generic` preset is exactly:
+
+```json
+{
+  "rules": {
+    "harness/leina-graph-consult": { "enabled": false },
+    "harness/leina-graph-fresh": { "enabled": false },
+    "harness/leina-memory-first": { "enabled": false },
+    "harness/leina-session-summary": { "enabled": false }
+  }
+}
+```
+
+`presetConfig("generic")` in `application/harness/recipes.ts` generates this file — it
+derives the `leina-*` list by scanning the builtin rules at call time, so a new
+leina-coupled rule automatically joins the preset's exclusion list. To adopt the
+`generic` preset today, write that JSON as your `.harness/config.json`; keep (or reset
+to) `{}` for `leina-native`.

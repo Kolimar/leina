@@ -169,3 +169,38 @@ Las rules builtin específicas de leina (`leina-memory-first`, `leina-graph-cons
 `leina-graph-fresh`, `leina-session-summary`) cierran el círculo con los otros dos
 empleados: el inspector exige que el agente consulte al bibliotecario antes de empezar,
 mantenga fresco el mapa del cartógrafo y deje la entrada en la bitácora antes de firmar.
+
+## Presets de rules — `generic` vs `leina-native`
+
+Esas cuatro rules acopladas a leina son **blocking por defecto**, y solo pasan cuando
+leina mismo está adoptado en el repo (grafo construido, memoria en uso). Un equipo que
+quiere el harness por su valor *genérico* — tests-pass, no-secrets, diff-in-scope,
+lint-clean — no debería heredar cuatro rules que fallan salvo que además corra comandos
+leina. De ahí los dos presets (definidos en `application/harness/recipes.ts`):
+
+| preset | qué gobierna | `.harness/config.json` |
+|---|---|---|
+| `leina-native` | la suite builtin completa, **incluyendo** las cuatro rules `leina-*` — el default histórico | `{}` (la misma semilla prístina que escribe `leina init`) |
+| `generic` | solo las rules agnósticas del host (`tests-pass`, `no-secrets`, `diff-in-scope`, `lint-clean`, `typecheck`, `no-skipped-tests`, `plan-before-code`, `criteria-checklist`, `contract-interview`, `changelog-updated`) — **ninguna rule exige un comando leina** | la config de abajo |
+
+Un preset nunca edita los archivos de rules — se realiza por completo mediante overrides
+de config (la capa de proyecto puede deshabilitar rules builtin; solo las capas
+*user-local* tienen prohibido debilitar, ver la invariante de exigibilidad). El preset
+`generic` es exactamente:
+
+```json
+{
+  "rules": {
+    "harness/leina-graph-consult": { "enabled": false },
+    "harness/leina-graph-fresh": { "enabled": false },
+    "harness/leina-memory-first": { "enabled": false },
+    "harness/leina-session-summary": { "enabled": false }
+  }
+}
+```
+
+`presetConfig("generic")` en `application/harness/recipes.ts` genera este archivo —
+deriva la lista `leina-*` escaneando las rules builtin al momento de la llamada, así que
+una nueva rule acoplada a leina se suma automáticamente a la lista de exclusión del
+preset. Para adoptar el preset `generic` hoy, escribí ese JSON como tu
+`.harness/config.json`; mantené (o volvé a) `{}` para `leina-native`.

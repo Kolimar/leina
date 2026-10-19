@@ -950,6 +950,55 @@ test("(i-h8) hasHookWiring sees claude-only wiring (repair evidence / tui badge)
   }
 });
 
+// --harness-preset (leina-rules-coupling): a generic adopter can seed the harness
+// WITHOUT the leina-* rules, while the default keeps them.
+test("(i-hp1) --harness-preset generic seeds a config disabling only the leina-* rules", () => {
+  const dir = tmpProject();
+  try {
+    runInit(dir, "--profile", "devin", "--harness-preset", "generic");
+    const cfg = JSON.parse(readFileSync(join(dir, ".harness", "config.json"), "utf8")) as {
+      rules?: Record<string, { enabled?: boolean }>;
+    };
+    const ids = Object.keys(cfg.rules ?? {});
+    assert.ok(ids.length > 0, "generic preset disables at least one rule");
+    for (const id of ids) {
+      assert.ok(id.slice(id.lastIndexOf("/") + 1).startsWith("leina-"), `only leina-* disabled: ${id}`);
+      assert.equal(cfg.rules?.[id]?.enabled, false);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(i-hp2) default init leaves the leina-* rules governing (no rule overrides)", () => {
+  const dir = tmpProject();
+  try {
+    runInit(dir, "--profile", "devin");
+    const cfg = JSON.parse(readFileSync(join(dir, ".harness", "config.json"), "utf8")) as {
+      rules?: unknown;
+    };
+    assert.equal(cfg.rules, undefined, "no preset ⇒ full builtin suite governs");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(i-hp3) an unknown --harness-preset fails with an actionable message", () => {
+  const dir = tmpProject();
+  try {
+    const res = spawnSync(
+      process.execPath,
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir,
+        "--hosts", "devin", "--profile", "devin", "--harness-preset", "bogus"],
+      { encoding: "utf8", env: TEST_ENV },
+    );
+    assert.notEqual(res.status, 0, "non-zero exit");
+    assert.match(`${res.stderr}${res.stdout}`, /harness-preset/, "names the offending flag");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test.after(() => {
   try {
     rmSync(TEMP_HOME, { recursive: true, force: true });
