@@ -142,7 +142,7 @@ test("arch-rule-1: src/domain/** has no imports from application/, infrastructur
 //
 // These heavy libraries are ONLY permitted as static imports in:
 //   src/extractors/treesitter.ts        (web-tree-sitter)
-//   src/extractors/semantic/tsmorph.ts  (ts-morph)
+//   src/extractors/semantic/tsmorph.ts  (ts-morph, plus its ts-*.ts helper modules)
 //
 // All other files that need the extractor stack MUST use dynamic
 // `await import(...)` to avoid pulling the libraries into the startup
@@ -161,6 +161,8 @@ test("arch-rule-2: web-tree-sitter and ts-morph are not statically imported outs
   const allowedPaths = new Set([
     "infrastructure/extractors/treesitter.ts",
     "infrastructure/extractors/semantic/tsmorph.ts",
+    "infrastructure/extractors/semantic/ts-defs.ts",
+    "infrastructure/extractors/semantic/ts-file-extract.ts",
     "infrastructure/extractors/yaml.ts",
   ]);
 
