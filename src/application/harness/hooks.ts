@@ -21,6 +21,7 @@ import { ensureStateDir, loadContract, stateDir } from "./contract-io.ts";
 import { filterRules, loadResolvedRules } from "./resolver.ts";
 import { readJsonIfExists } from "./io.ts";
 import { worktreeMatches } from "./freshness.ts";
+import { gitCommitOrPush, shellWriteTargets } from "./shell-words.ts";
 import { runVerify } from "./verify.ts";
 import { renderFeedback } from "./gates/report.ts";
 
@@ -277,161 +278,33 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
   return ALLOW;
 }
 
-interface ShellToken {
-  text: string;
-  /** Any character of this token came from inside quotes. */
-  quoted: boolean;
-}
-
-/**
- * Minimal quote-aware split: segments on UNQUOTED `&&`/`||`/`;`/`|`/newline,
- * tokens on unquoted whitespace. Not a shell parser — no expansion, no
- * subshell tracking — just enough structure for the guards below.
- */
-function shellSegments(command: string): ShellToken[][] {
-  const segments: ShellToken[][] = [];
-  let tokens: ShellToken[] = [];
-  let current = "";
-  let quoted = false;
-  let mode: '"' | "'" | undefined;
-
-  const pushToken = () => {
-    if (current.length > 0 || quoted) tokens.push({ text: current, quoted });
-    current = "";
-    quoted = false;
-  };
-  const pushSegment = () => {
-    pushToken();
-    if (tokens.length > 0) segments.push(tokens);
-    tokens = [];
-  };
-
-  for (let i = 0; i < command.length; i += 1) {
-    const ch = command[i]!;
-    if (mode === "'") {
-      if (ch === "'") mode = undefined;
-      else current += ch;
-      continue;
-    }
-    if (mode === '"') {
-      if (ch === '"') mode = undefined;
-      else if (ch === "\\" && i + 1 < command.length) current += command[(i += 1)];
-      else current += ch;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      mode = ch;
-      quoted = true;
-      continue;
-    }
-    if (ch === "\\" && i + 1 < command.length) {
-      current += command[(i += 1)];
-      continue;
-    }
-    if (ch === "&" && command[i + 1] === "&") {
-      pushSegment();
-      i += 1;
-      continue;
-    }
-    if (ch === "|") {
-      pushSegment();
-      if (command[i + 1] === "|") i += 1;
-      continue;
-    }
-    if (ch === ";" || ch === "\n") {
-      pushSegment();
-      continue;
-    }
-    if (/\s/.test(ch)) {
-      pushToken();
-      continue;
-    }
-    current += ch;
-  }
-  pushSegment();
-  return segments;
-}
-
-const SHELL_WRAPPERS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
-const OUTPUT_ONLY = new Set(["echo", "printf"]);
-
-function basenameOf(program: string): string {
-  const slash = program.lastIndexOf("/");
-  return slash === -1 ? program : program.slice(slash + 1);
-}
-
-/**
- * Best-effort git commit/push detection: per pipeline segment, an UNQUOTED
- * `git` program token whose first non-flag argument is `commit`/`push`
- * (quoted or not — the shell would still run it). Recurses into `sh -c '…'`
- * payloads; skips `echo`/`printf` segments (their arguments are data).
- *
- * This is NOT a shell parser: variable expansion (`git $x`), command
- * substitution and exotic nesting evade it. The harness is a guardrail
- * against accidents, not a sandbox against an adversarial agent — see
- * docs/concepts/07-harness.md.
- */
-/**
- * Within a single shell segment, find the git subcommand (commit/push) if the
- * segment invokes `git` directly. Skips git's own global flags (some consume a
- * value); stops at the first non-flag token — that is the subcommand.
- */
-function gitSubcommandOf(tokens: ShellToken[]): "commit" | "push" | undefined {
-  const gitIdx = tokens.findIndex((t) => !t.quoted && (t.text === "git" || t.text.endsWith("/git")));
-  if (gitIdx === -1) return undefined;
-  for (let i = gitIdx + 1; i < tokens.length; i += 1) {
-    const t = tokens[i]!;
-    if (!t.quoted && (t.text === "-c" || t.text === "-C" || t.text === "--git-dir" || t.text === "--work-tree")) {
-      i += 1; // these global flags consume a value
-      continue;
-    }
-    if (!t.quoted && t.text.startsWith("-")) continue; // other global flags
-    if (t.text === "commit" || t.text === "push") return t.text;
-    break; // some other subcommand — this segment is not a commit/push
-  }
-  return undefined;
-}
-
-function gitCommitOrPush(command: string, depth = 0): "commit" | "push" | undefined {
-  if (depth > 3) return undefined;
-  for (const tokens of shellSegments(command)) {
-    const first = tokens[0];
-    if (first !== undefined && !first.quoted && OUTPUT_ONLY.has(basenameOf(first.text))) continue;
-    if (first !== undefined && !first.quoted && SHELL_WRAPPERS.has(basenameOf(first.text))) {
-      const payload = tokens.slice(1).find((t) => t.quoted);
-      if (payload) {
-        const inner = gitCommitOrPush(payload.text, depth + 1);
-        if (inner !== undefined) return inner;
-      }
-    }
-    const sub = gitSubcommandOf(tokens);
-    if (sub !== undefined) return sub;
-  }
-  return undefined;
-}
-
 /**
  * Enforcement-integrity paths (see decidePreEdit) reached through the shell:
- * the same escape hatch through another door. Blocks commands that BOTH
- * mention an integrity path (anything under .harness/ except state/) AND look
- * like a write — a redirection or a mutating program anywhere in the command.
- * Read-only mentions (cat, grep, diff …) stay allowed. Best-effort by the
- * same honesty rule as gitCommitOrPush: this raises the bar for accidents,
- * it does not make the files unwritable for a determined agent.
+ * the same escape hatch through another door. Blocks a command when one of
+ * the paths it WRITES (shellWriteTargets: redirection targets and writer
+ * operands — rm, mv, tee, cp's destination, sed -i, git checkout …) is an
+ * integrity path: anything under .harness/ except state/, or the user-level
+ * harness / trust store. A read that merely mentions one (cat, grep, diff,
+ * cp's source) stays allowed, even next to an unrelated redirection.
+ * Best-effort by the same honesty rule as gitCommitOrPush (shell-words.ts):
+ * this raises the bar for accidents, it does not make the files unwritable
+ * for a determined agent.
  */
-const INTEGRITY_PATH_RE = /\.harness(?!\/state\b)[\w./-]*/;
+const HARNESS_PATH_RE = /(?:^|\/)\.harness(?:\/|$)/;
+const HARNESS_STATE_RE = /(?:^|\/)\.harness\/state(?:\/|$)/;
 // The user-level harness and trust store (see userIntegrityDirs) in the forms a
 // command usually spells them: ~/.leina/…, $LEINA_HOME/…, ${LEINA_HOME}/….
-const USER_INTEGRITY_PATH_RE = /(?:\.leina|\$\{?LEINA_HOME\}?)\/(?:harness|trust)\b[\w./-]*/;
-const WRITE_HINT_RE = /(?:>|\b(?:tee|sed|mv|cp|rm|dd|truncate|ln|install|rsync|chmod|chown|sponge)\b)/;
+const USER_INTEGRITY_PATH_RE = /(?:\.leina|\$\{?LEINA_HOME\}?)\/(?:harness|trust)\b/;
+
+function isIntegrityPath(target: string): boolean {
+  const norm = path.posix.normalize(target.replaceAll("\\", "/"));
+  if (HARNESS_PATH_RE.test(norm) && !HARNESS_STATE_RE.test(norm)) return true;
+  if (USER_INTEGRITY_PATH_RE.test(norm)) return true;
+  return userIntegrityDirs().some((dir) => norm === dir || norm.startsWith(`${dir}/`));
+}
 
 function writesIntegrityPaths(command: string): string | undefined {
-  const match =
-    INTEGRITY_PATH_RE.exec(command)?.[0] ??
-    USER_INTEGRITY_PATH_RE.exec(command)?.[0] ??
-    userIntegrityDirs().find((dir) => command.includes(dir));
-  if (match === undefined) return undefined;
-  return WRITE_HINT_RE.test(command) ? match : undefined;
+  return shellWriteTargets(command).find(isIntegrityPath);
 }
 
 interface PersistedSummary {

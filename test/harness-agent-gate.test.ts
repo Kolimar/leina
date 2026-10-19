@@ -296,6 +296,24 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
     }
   });
 
+  it("(shell-commit-1) pre-bash: commits behind &, subshells, substitutions and redirections are caught", async () => {
+    await writeFreshVerifyReport(repo.root, 1);
+    for (const command of [
+      "git status & git commit -am x",
+      "(git commit -am x)",
+      "cd src && (git add . && git commit -m x)",
+      "$(git commit -am x)",
+      "echo `git commit -am x`",
+      "{ git commit -am x; }",
+      "npm test; git commit -am x",
+      "git commit -m x 2>&1 | tail -5",
+      "git status &>/dev/null && git push origin main",
+    ]) {
+      const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+      assert.deepEqual(run.result, { handled: true, exitCode: 2 }, command);
+    }
+  });
+
   it("pre-bash: shell writes to harness rules/config/lockfile are blocked in guided mode", async () => {
     for (const command of [
       "echo hacked > .harness/rules/tests-pass.md",
@@ -303,6 +321,25 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
       "rm -rf .harness",
       "cp /tmp/x .harness/harness.lock.json",
       "tee .harness/rules/new.md",
+      // (shell-integrity-2) every writer form still caught after the per-segment rework
+      "printf '{}' | tee .harness/config.json",
+      "echo x >.harness/rules/a.md",
+      "echo x 2>.harness/rules/a.md",
+      "cat > .harness/config.json <<'EOF'",
+      "cd .harness && echo x > config.json",
+      "cd .harness/rules; rm tests-pass.md",
+      "sh -c 'echo x > .harness/config.json'",
+      "eval 'rm .harness/config.json'",
+      "git checkout -- .harness/config.json",
+      "git rm .harness/rules/tests-pass.md",
+      "dd if=/dev/zero of=.harness/config.json",
+      "sudo rm .harness/config.json",
+      "LC_ALL=C truncate -s0 .harness/config.json",
+      "touch .harness/rules/new.md",
+      "ln -sf /tmp/x .harness/rules/x.md",
+      "mv /tmp/x .harness/config.json",
+      "perl -pi -e s/a/b/ .harness/config.json",
+      "rm .harness/state/../config.json",
     ]) {
       const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
       assert.deepEqual(run.result, { handled: true, exitCode: 2 }, command);
@@ -316,6 +353,15 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
       "grep -r blocking .harness/rules",
       "echo done > .harness/state/current/plan.md",
       "ls .harness/state/history",
+      // (shell-integrity-1) read-only mentions next to an unrelated write hint
+      "cat .harness/config.json 2>/dev/null",
+      "grep foo .harness/rules > /tmp/out.txt",
+      "npm install && cat .harness/config.json",
+      "git commit -m 'docs: .harness/rules -> x'",
+      "cp .harness/config.json /tmp/backup.json",
+      "diff .harness/config.json /tmp/x.json > /tmp/d.txt",
+      "sed -n 1,5p .harness/config.json",
+      "rm -rf .harness/state/history",
     ]) {
       const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
       assert.deepEqual(run.result, { handled: false, exitCode: 0 }, command);
