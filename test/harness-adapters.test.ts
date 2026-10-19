@@ -10,7 +10,9 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   type Recipe,
   type Rule,
@@ -426,6 +428,83 @@ describe("opencode adapter", () => {
     assert.ok(plugin.content.includes('await import("node:child_process")'));
     assert.ok(plugin.content.includes('execFileSync("leina", [...["harness","hook"], event]'));
     assert.ok(plugin.content.includes('"tool.execute.before"'));
+  });
+});
+
+// The generated plugin, loaded and driven the way OpenCode does: only the
+// hook's documented block status (exit 2) may block a tool call.
+describe("opencode plugin runtime", () => {
+  let dir: string;
+  let restoreWarn: () => void;
+  let warnings: string[];
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "leina-opencode-plugin-"));
+    // Fake hook CLI: exits with the status named in its own sibling file.
+    await fs.writeFile(
+      path.join(dir, "fake-hook.mjs"),
+      'import fs from "node:fs";\n' +
+        'const status = Number(fs.readFileSync(new URL("./status", import.meta.url), "utf8"));\n' +
+        'process.stderr.write(`hook said no (${process.argv[2]})`);\n' +
+        // exitCode, not exit(): stderr to a pipe is async on macOS.
+        "process.exitCode = status;\n",
+    );
+    warnings = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => void warnings.push(args.map(String).join(" "));
+    restoreWarn = () => {
+      console.warn = original;
+    };
+  });
+
+  afterEach(async () => {
+    restoreWarn();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  type BeforeHook = (input: { tool: string }, output: { args: Record<string, unknown> }) => Promise<void>;
+
+  async function loadPlugin(hookCommand: string, name: string): Promise<BeforeHook> {
+    const bundle = { ...bundleWith([]), config: { ...defaultHarnessConfig(), hookCommand } };
+    const plugin = (await opencodeAdapter.generate(bundle, CTX)).files.find((f) => f.path.endsWith("harness.js"))!;
+    const file = path.join(dir, `${name}.mjs`);
+    await fs.writeFile(file, plugin.content);
+    const mod = (await import(pathToFileURL(file).href)) as {
+      HarnessPlugin: (ctx: { directory: string }) => Promise<Record<string, BeforeHook>>;
+    };
+    const hooks = await mod.HarnessPlugin({ directory: dir });
+    return hooks["tool.execute.before"]!;
+  }
+
+  const fakeHook = (): string => `node ${path.join(dir, "fake-hook.mjs")}`;
+
+  it("(oc-plugin-1) exit 2 blocks the tool call with the hook's message", async () => {
+    await fs.writeFile(path.join(dir, "status"), "2");
+    const before = await loadPlugin(fakeHook(), "p1");
+    await assert.rejects(before({ tool: "bash" }, { args: { command: "git commit -m x" } }), /hook said no \(pre-bash\)/);
+  });
+
+  it("(oc-plugin-2) a missing CLI (spawn ENOENT) warns and allows instead of blocking every edit", async () => {
+    const before = await loadPlugin("leina-definitely-not-installed-xyz harness hook", "p2");
+    await before({ tool: "edit" }, { args: { filePath: "src/a.ts" } });
+    await before({ tool: "bash" }, { args: { command: "ls" } });
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[0]!, /allowing/);
+  });
+
+  it("(oc-plugin-3) any other non-zero status is a malfunction, not a verdict: warn and allow", async () => {
+    await fs.writeFile(path.join(dir, "status"), "1");
+    const before = await loadPlugin(fakeHook(), "p3");
+    await before({ tool: "write" }, { args: { filePath: "src/a.ts" } });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /pre-edit/);
+  });
+
+  it("(oc-plugin-4) exit 0 allows silently", async () => {
+    await fs.writeFile(path.join(dir, "status"), "0");
+    const before = await loadPlugin(fakeHook(), "p4");
+    await before({ tool: "bash" }, { args: { command: "ls" } });
+    assert.deepEqual(warnings, []);
   });
 });
 
