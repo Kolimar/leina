@@ -55,7 +55,16 @@ Fuerza una reconstrucción ahora mismo, ignorando la freshness.
 
 ### `status <dir>`
 Reporta la freshness (`fresh`/`STALE` + motivo), la posture, la hora del último build y el
-recuento de archivos rastreados. No reconstruye.
+recuento de archivos rastreados, y después una línea `degraded: <nota>` por cada camino de
+precisión reducida del último build (las mismas notas que imprime `build`). No reconstruye.
+
+Además de que una fuente aparezca como `added:`, `removed:` o `touched:`, el grafo está stale
+cuando lo construyó otro leina — `leina upgraded (2.1.0 → 3.0.0)`, `leina downgraded (…)`,
+`extractor changed (schema 1 → 2)` — o cuando desde el build se agregó, quitó o editó una config
+de resolución: `config changed:<rel>` para `tsconfig*.json`, `jsconfig.json` o cualquier
+`package.json` (un mapa `paths` o un campo `exports` editado redirige imports sin tocar ninguna
+fuente). Igual que con las fuentes, un cambio solo de mtime en una config (checkout, guardar sin
+editar) no cuenta.
 
 ### `stats <dir>`
 Imprime el recuento de nodes, el recuento de edges y un desglose de confianza de edges.

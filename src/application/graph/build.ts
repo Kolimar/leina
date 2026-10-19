@@ -21,7 +21,7 @@ import type { GraphExtractor } from "../../domain/graph/extractor.ts";
 import { semanticLangOf } from "./detect.ts";
 import { resolve as resolveSymbols } from "./resolve.ts";
 import { dedup } from "./dedup.ts";
-import { listSourceFiles, MAX_SOURCE_BYTES, partitionBySize } from "./sources.ts";
+import { listProjectFiles, MAX_SOURCE_BYTES, partitionBySize } from "./sources.ts";
 import { writeManifest } from "./manifest.ts";
 import { detectCommunities } from "./community.ts";
 
@@ -153,7 +153,8 @@ export async function buildGraph(
   const t0 = Date.now();
   const quiet = opts.quiet === true;
   // Oversize sources are never extracted nor written to the manifest (sources.ts).
-  const { kept: files, oversize } = partitionBySize(listSourceFiles(root));
+  const project = listProjectFiles(root);
+  const { kept: files, oversize } = partitionBySize(project.sources);
   const oversizeSkipped = oversize.map((o) => relative(resolve(root), o.file).split(sep).join("/"));
   oversize.forEach((o, i) => {
     if (quiet) return; // still listed in report.oversizeSkipped
@@ -216,7 +217,7 @@ export async function buildGraph(
   // Record the source set + mtimes so the server can detect a stale graph and
   // self-refresh. Reuses the file list already computed above (no second walk).
   const tManifest = Date.now();
-  writeManifest(root, files);
+  writeManifest(root, files, { configs: project.configs, degraded: [...acc.degraded] });
   const manifestMs = Date.now() - tManifest;
 
   return {

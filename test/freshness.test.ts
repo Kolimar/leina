@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   mkdirSync,
   writeFileSync,
+  readFileSync,
   unlinkSync,
   utimesSync,
   rmSync,
@@ -20,7 +21,11 @@ import {
   readManifest,
   isStale,
   manifestPath,
+  fullExtractionReason,
+  graphStatus,
+  EXTRACTOR_SCHEMA_VERSION,
 } from "../src/application/graph/manifest.ts";
+import { readPackageVersion } from "../src/version.ts";
 import { loadFreshnessConfig } from "../src/infrastructure/config/freshness.ts";
 
 function freshRepo(): string {
@@ -185,7 +190,10 @@ test("manifest: written shape carries version, commitSha, hashes and POSIX relpa
     stamp(dir);
     const m = readManifest(dir);
     assert.ok(m);
-    assert.equal(m.manifestVersion, 2);
+    assert.equal(m.manifestVersion, 3);
+    assert.equal(typeof m.leinaVersion, "string");
+    assert.equal(m.extractorSchema, EXTRACTOR_SCHEMA_VERSION);
+    assert.deepEqual(m.degraded, []);
     assert.equal(m.fileCount, 2);
     assert.ok(m.builtAt > 0);
     // tmpdir is not a git repo → commitSha is null; in a repo it'd be a hex string.
@@ -194,6 +202,118 @@ test("manifest: written shape carries version, commitSha, hashes and POSIX relpa
     assert.ok("b.ts" in m.files);
     assert.equal(typeof m.files["a.ts"].hash, "string");
     assert.ok(m.files["a.ts"].hash.length === 64);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- build basis: leina version, extractor schema, resolution configs --------
+
+/** Rewrite fields of the stamped manifest in place (simulates one written by another leina). */
+function patchManifest(dir: string, patch: (m: Record<string, unknown>) => void): void {
+  const m = JSON.parse(readFileSync(manifestPath(dir), "utf8")) as Record<string, unknown>;
+  patch(m);
+  writeFileSync(manifestPath(dir), JSON.stringify(m), "utf8");
+}
+
+test("(basis-1) a graph stamped by an older leina (manifest v2) is stale: 'leina upgraded'", () => {
+  const dir = freshRepo();
+  try {
+    stamp(dir);
+    patchManifest(dir, (m) => {
+      m.manifestVersion = 2;
+      delete m.leinaVersion;
+      delete m.extractorSchema;
+      delete m.configs;
+    });
+    const r = isStale(dir);
+    assert.equal(r.stale, true);
+    assert.equal(r.reason, `leina upgraded (graph built by an older leina → ${readPackageVersion()})`);
+    assert.equal(readManifest(dir), null, "an old-format manifest is never read as current");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(basis-2) another leina version or extractor schema makes an untouched graph stale", () => {
+  const dir = freshRepo();
+  try {
+    stamp(dir);
+    patchManifest(dir, (m) => (m.leinaVersion = "0.0.1"));
+    assert.equal(isStale(dir).reason, `leina upgraded (0.0.1 → ${readPackageVersion()})`);
+    patchManifest(dir, (m) => (m.leinaVersion = "999.0.0"));
+    assert.equal(isStale(dir).reason, `leina downgraded (999.0.0 → ${readPackageVersion()})`);
+    patchManifest(dir, (m) => {
+      m.leinaVersion = readPackageVersion();
+      m.extractorSchema = EXTRACTOR_SCHEMA_VERSION - 1;
+    });
+    assert.equal(
+      isStale(dir).reason,
+      `extractor changed (schema ${EXTRACTOR_SCHEMA_VERSION - 1} → ${EXTRACTOR_SCHEMA_VERSION})`,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(basis-3) tsconfig/jsconfig/package.json edits, additions and removals make the graph stale", () => {
+  const dir = freshRepo();
+  try {
+    writeFileSync(join(dir, "tsconfig.json"), `{"compilerOptions":{"paths":{}}}\n`);
+    stamp(dir);
+    assert.equal(isStale(dir).reason, "fresh");
+
+    // mtime-only bump (checkout, save-without-edit): still fresh.
+    const later = new Date(Date.now() + 5000);
+    utimesSync(join(dir, "tsconfig.json"), later, later);
+    assert.equal(isStale(dir).reason, "fresh");
+
+    writeFileSync(join(dir, "tsconfig.json"), `{"compilerOptions":{"paths":{"@/*":["src/*"]}}}\n`);
+    utimesSync(join(dir, "tsconfig.json"), new Date(Date.now() + 10_000), new Date(Date.now() + 10_000));
+    assert.deepEqual(isStale(dir), { stale: true, reason: "config changed:tsconfig.json" });
+
+    stamp(dir);
+    mkdirSync(join(dir, "packages", "a"), { recursive: true });
+    writeFileSync(join(dir, "packages", "a", "package.json"), `{"name":"a"}\n`);
+    assert.deepEqual(isStale(dir), { stale: true, reason: "config changed:packages/a/package.json" });
+
+    stamp(dir);
+    unlinkSync(join(dir, "tsconfig.json"));
+    assert.deepEqual(isStale(dir), { stale: true, reason: "config changed:tsconfig.json" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(basis-4) fullExtractionReason: null when the basis matches, the reason otherwise", () => {
+  const dir = freshRepo();
+  try {
+    assert.equal(fullExtractionReason(dir), "no previous build");
+    writeFileSync(join(dir, "jsconfig.json"), "{}\n");
+    stamp(dir);
+    assert.equal(fullExtractionReason(dir), null);
+    // A plain source edit does not invalidate the basis — only that file's own result.
+    writeFileSync(join(dir, "a.ts"), "export const a = 42;\n");
+    assert.equal(fullExtractionReason(dir), null);
+
+    writeFileSync(join(dir, "jsconfig.json"), `{"compilerOptions":{"baseUrl":"."}}\n`);
+    utimesSync(join(dir, "jsconfig.json"), new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+    assert.equal(fullExtractionReason(dir), "config changed:jsconfig.json");
+
+    stamp(dir);
+    patchManifest(dir, (m) => (m.extractorSchema = -1));
+    assert.match(fullExtractionReason(dir) ?? "", /^extractor changed/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(basis-5) degraded notes are stamped and surface in graphStatus", () => {
+  const dir = freshRepo();
+  try {
+    writeManifest(dir, listSourceFiles(dir), { degraded: ["csharp: 3 file(s) via tree-sitter (syntactic)"] });
+    assert.deepEqual(graphStatus(dir).degraded, ["csharp: 3 file(s) via tree-sitter (syntactic)"]);
+    assert.equal(graphStatus(dir).stale, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

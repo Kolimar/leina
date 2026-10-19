@@ -147,22 +147,33 @@ The staleness check compares the current sources against the manifest and return
 
 ```mermaid
 flowchart TD
-    start["isStale(root)"] --> man{is there a<br/>valid manifest?}
-    man -->|no / old version| stale1["stale: 'no-manifest'"]
-    man -->|yes| added{new file<br/>not registered?}
+    start["isStale(root)"] --> man{is there a<br/>manifest?}
+    man -->|no / unreadable| stale1["stale: 'no-manifest'"]
+    man -->|yes| basis{built by this leina<br/>and extractor schema?}
+    basis -->|no| stale0["stale: 'leina upgraded (…)'<br/>/ 'extractor changed (…)'"]
+    basis -->|yes| added{new file<br/>not registered?}
     added -->|yes| stale2["stale: 'added:&lt;file&gt;'"]
     added -->|no| gone{file<br/>gone?}
     gone -->|yes| stale3["stale: 'removed:&lt;file&gt;'"]
     gone -->|no| mt{did mtime<br/>increase?}
-    mt -->|no| fresh["fresh ✅"]
+    mt -->|no| cfg{tsconfig / jsconfig /<br/>package.json changed?}
     mt -->|yes| hash{did the content<br/>hash change?}
-    hash -->|no| fresh
+    hash -->|no| cfg
     hash -->|yes| stale4["stale: 'touched:&lt;file&gt;'"]
+    cfg -->|no| fresh["fresh ✅"]
+    cfg -->|yes| stale5["stale: 'config changed:&lt;file&gt;'"]
 ```
 
 The fine detail: a newer `mtime` alone **isn't enough** to declare staleness. It's confirmed with the
 **content hash** (SHA-256). That way, a `git checkout` or a "save without editing" that only
 touches the `mtime` but leaves the content unchanged does **not** trigger an unnecessary rebuild.
+
+The manifest also records what the map was drawn **with**, not only from: the leina version, the
+extractor schema version and a fingerprint of every resolution config (`tsconfig*.json`,
+`jsconfig.json`, `package.json`). After an upgrade the map is stale even if no source changed —
+the new extractors may draw it differently — and an edited `paths` map or `exports` field is
+stale too, because it re-routes imports without touching any source. The same comparison is what
+tells an incremental build it must re-extract everything instead of reusing per-file results.
 
 ### Auto vs refuse: the *posture*
 

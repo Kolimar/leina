@@ -148,22 +148,34 @@ devuelve al **primer** signo de obsolescencia (para que la razón sea determinis
 
 ```mermaid
 flowchart TD
-    start["chequeo de frescura"] --> man{¿hay manifest<br/>válido?}
-    man -->|no / versión vieja| stale1["stale: 'no-manifest'"]
-    man -->|sí| added{¿archivo nuevo<br/>no registrado?}
+    start["chequeo de frescura"] --> man{¿hay<br/>manifest?}
+    man -->|no / ilegible| stale1["stale: 'no-manifest'"]
+    man -->|sí| basis{¿lo construyó este leina<br/>y este schema de extractor?}
+    basis -->|no| stale0["stale: 'leina upgraded (…)'<br/>/ 'extractor changed (…)'"]
+    basis -->|sí| added{¿archivo nuevo<br/>no registrado?}
     added -->|sí| stale2["stale: 'added:&lt;file&gt;'"]
     added -->|no| gone{¿archivo<br/>desaparecido?}
     gone -->|sí| stale3["stale: 'removed:&lt;file&gt;'"]
     gone -->|no| mt{¿mtime<br/>aumentó?}
-    mt -->|no| fresh["fresh ✅"]
+    mt -->|no| cfg{¿cambió tsconfig /<br/>jsconfig / package.json?}
     mt -->|sí| hash{¿el hash de<br/>contenido cambió?}
-    hash -->|no| fresh
+    hash -->|no| cfg
     hash -->|sí| stale4["stale: 'touched:&lt;file&gt;'"]
+    cfg -->|no| fresh["fresh ✅"]
+    cfg -->|sí| stale5["stale: 'config changed:&lt;file&gt;'"]
 ```
 
 El detalle fino: un `mtime` más nuevo **no alcanza** para declarar stale. Se confirma con el
 **hash de contenido** (SHA-256). Así, un `git checkout` o un "guardar sin editar" que solo
 mueve el `mtime` pero deja el contenido igual **no** dispara un rebuild innecesario.
+
+El manifest también registra **con qué** se dibujó el mapa, no solo a partir de qué: la versión de
+leina, la versión del schema de extractores y una huella de cada config de resolución
+(`tsconfig*.json`, `jsconfig.json`, `package.json`). Después de actualizar leina el mapa queda
+stale aunque no haya cambiado ninguna fuente — los extractores nuevos pueden dibujarlo distinto —, y
+un mapa `paths` o un campo `exports` editado también lo deja stale, porque redirige imports sin
+tocar ninguna fuente. Esa misma comparación es la que le indica a un build incremental que debe
+re-extraer todo en lugar de reutilizar resultados por archivo.
 
 ### Auto vs refuse: la *posture*
 

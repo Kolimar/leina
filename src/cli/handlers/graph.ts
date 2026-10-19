@@ -152,6 +152,8 @@ export function handleStatus(rest: string[]): void {
   console.log(`posture: ${posture}`);
   console.log(`built: ${built}`);
   if (manifest) console.log(`tracked files: ${manifest.fileCount}`);
+  // Reduced-precision paths of the last build (YAML fallback, C#/Java without a sidecar, …).
+  for (const note of manifest?.degraded ?? []) console.log(`degraded: ${note}`);
 }
 
 export function handleStats(rest: string[]): void {

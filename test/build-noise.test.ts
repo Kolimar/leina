@@ -137,6 +137,12 @@ test("(noise-4) explicit build prints each note once; a read-path auto-rebuild p
     assert.doesNotMatch(build.stdout, /C#\/Java|sidecar/, "the Done line no longer repeats it");
     assert.doesNotMatch(all, /files detected|indexer not found|not configured/);
 
+    // The note is recorded in the manifest, so `leina status` keeps showing it later.
+    const status = runCli(["status", root]);
+    assert.equal(status.code, 0, status.stderr);
+    assert.match(status.stdout, /^status: fresh \(fresh\)$/m);
+    assert.match(status.stdout, /^degraded: csharp: 1 file\(s\) via tree-sitter/m);
+
     write(root, "src/App.cs", "class App { void Run() {} void Stop() {} }\n");
     const query = runCli(["query", root, "Stop"]);
     assert.equal(query.code, 0, query.stderr);

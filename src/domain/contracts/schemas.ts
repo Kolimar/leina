@@ -34,6 +34,7 @@ export const graphStatusOutputSchema: JsonSchema = {
     commitSha: { type: "string" },
     builtAt: { type: "number" },
     fileCount: { type: "number" },
+    degraded: { type: "array" },
   },
 };
 

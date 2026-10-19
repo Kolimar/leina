@@ -51,7 +51,15 @@ Force a rebuild now, ignoring freshness. Prints node/edge/file counts.
 
 ### `status <dir>`
 Report freshness (`fresh`/`STALE` + reason), posture, last build time, and tracked file
-count. No rebuild.
+count, then one `degraded: <note>` line per reduced-precision path of the last build (the same
+notes `build` prints). No rebuild.
+
+Besides a source being `added:`, `removed:` or `touched:`, the graph is stale when it was built
+by another leina — `leina upgraded (2.1.0 → 3.0.0)`, `leina downgraded (…)`, `extractor changed
+(schema 1 → 2)` — or when a resolution config was added, removed or edited since the build:
+`config changed:<rel>` for `tsconfig*.json`, `jsconfig.json` or any `package.json` (an edited
+`paths` map or `exports` field re-routes imports without touching a source). As for sources, an
+mtime-only change of a config (checkout, save-without-edit) does not count.
 
 ### `stats <dir>`
 Print node count, edge count, and an edge confidence breakdown.
