@@ -1514,8 +1514,9 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   //   · VACUUM runs OUTSIDE any transaction (SQLite requires it) after the GC commit;
   //     busy_timeout=5000 lets it wait for concurrent readers. If it still fails
   //     (another process holds the db), the GC is already committed and NO rowids were
-  //     renumbered (VACUUM is atomic), so the FTS index is still valid — the error says
-  //     to just re-run compact later; the re-run is idempotent.
+  //     renumbered (VACUUM is atomic), so the FTS index is still valid — the report
+  //     keeps the removal counts and carries `vacuumError`; re-running compact later
+  //     finishes the job (the re-run is idempotent).
   //   · sessions purge severs cleanly: observations pointing at a purged session get
   //     session_id = NULL (the obs_au trigger re-indexes live rows with identical
   //     title/content — a semantic no-op), so no dangling session references remain.
@@ -1642,14 +1643,17 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     // VACUUM — outside any transaction, after the GC commit. Failure here (db busy
     // beyond busy_timeout) leaves a fully consistent db: rows already gone, rowids
     // unrenumbered (VACUUM is atomic), FTS valid — re-running compact finishes the job.
+    // The GC is committed, so its counts are returned (not thrown away with an error).
     try {
       this.db.exec("VACUUM");
     } catch (e) {
-      throw new Error(
-        `memory compact: removed ${removed.supersededRemoved} snapshot row(s) but VACUUM could not ` +
-          `run (${(e as Error).message}). The database is consistent; disk space was not reclaimed — ` +
-          `re-run compact when no other leina process is using the memory db.`,
-      );
+      return {
+        ...removed,
+        dbBytesBefore,
+        dbBytesAfter: this.dbSizeOnDisk(),
+        dryRun: false,
+        vacuumError: (e as Error).message,
+      };
     }
 
     // VACUUM may have renumbered observation rowids (see the invariants block above),

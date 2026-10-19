@@ -46,6 +46,12 @@ export interface CompactReport {
   /** On-disk size after VACUUM + checkpoint; equals dbBytesBefore on dry runs. */
   dbBytesAfter: number;
   dryRun: boolean;
+  /**
+   * Set when the GC committed but VACUUM could not run (e.g. another process grabbed the
+   * db in between). The removals above stand and the db is consistent; only the disk
+   * space was not given back — re-running compact later finishes the job.
+   */
+  vacuumError?: string;
 }
 
 /** Narrow port: a memory repository that supports physical compaction. */

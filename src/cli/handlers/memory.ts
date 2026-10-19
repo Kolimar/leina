@@ -11,7 +11,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { formatBatchResults } from "../../domain/shared/batch.ts";
 import { getVerifiedContext } from "../../application/memory/query.ts";
 import { reanchorObservations } from "../../application/memory/reanchor.ts";
-import { compactMemory } from "../../application/memory/compact.ts";
+import { compactMemory, type CompactReport } from "../../application/memory/compact.ts";
 import type {
   ExportedObservation,
   ImportReport,
@@ -383,21 +383,40 @@ function memCompact(rest: string[], dir: string): void {
   }
   const dryRun = hasFlag(rest, "--dry-run");
   const { store, close } = memOpenGuarded(dir);
+  let r: CompactReport;
   try {
-    const r = compactMemory(store, { keepPerTopic: keep, sessionsOlderThanDays: days, dryRun });
-    const verb = r.dryRun ? "[dry-run] would remove" : "removed";
-    const sessionsNote = days !== undefined ? `, ${r.sessionsRemoved} session(s)` : "";
-    console.log(
-      `compact: ${verb} ${r.supersededRemoved} superseded snapshot(s), ` +
-        `${r.anchorsRemoved} anchor row(s)${sessionsNote}`,
-    );
-    console.log(
-      r.dryRun
-        ? `db size: ${fmtBytes(r.dbBytesBefore)} (unchanged — dry run)`
-        : `db size: ${fmtBytes(r.dbBytesBefore)} -> ${fmtBytes(r.dbBytesAfter)}`,
-    );
-  } finally {
+    r = compactMemory(store, { keepPerTopic: keep, sessionsOlderThanDays: days, dryRun });
+  } catch (e) {
+    // Usually the GC transaction never started (another process held the write lock past
+    // busy_timeout) and nothing was written. A lock lost later — between VACUUM and the
+    // FTS rebuild — leaves the search index to rebuild, which a re-run also does, so the
+    // advice is the same either way: compact is safe to re-run.
     close();
+    const msg = (e as Error).message;
+    const busy = /\b(locked|busy)\b/i.test(msg)
+      ? " — another leina process is using the memory db; re-run compact once it is done (safe to re-run)"
+      : "";
+    fail(`memory compact: ${msg}${busy}`);
+  }
+  close();
+  const verb = r.dryRun ? "[dry-run] would remove" : "removed";
+  const sessionsNote = days !== undefined ? `, ${r.sessionsRemoved} session(s)` : "";
+  console.log(
+    `compact: ${verb} ${r.supersededRemoved} superseded snapshot(s), ` +
+      `${r.anchorsRemoved} anchor row(s)${sessionsNote}`,
+  );
+  console.log(
+    r.dryRun
+      ? `db size: ${fmtBytes(r.dbBytesBefore)} (unchanged — dry run)`
+      : `db size: ${fmtBytes(r.dbBytesBefore)} -> ${fmtBytes(r.dbBytesAfter)}`,
+  );
+  // The removals above are committed; only the space reclaim failed — report, don't hide.
+  if (r.vacuumError !== undefined) {
+    process.stderr.write(
+      `warning: memory compact: VACUUM could not run (${r.vacuumError}). The database is consistent; ` +
+        `disk space was not reclaimed — re-run 'leina memory compact' when no other leina process is using the memory db.\n`,
+    );
+    process.exitCode = 1;
   }
 }
 

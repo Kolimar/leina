@@ -2,9 +2,9 @@
 // FTS consistency across the VACUUM rowid renumbering, sessions purge, CLI surface.
 // Run: node --no-warnings --experimental-strip-types --test test/memory-compact.test.ts
 
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,8 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { SQLiteMemoryRepository as MemoryStore } from "../src/infrastructure/sqlite/memory-repository.ts";
 import { compactMemory } from "../src/application/memory/compact.ts";
+import { deriveProjectKey } from "../src/application/project/detect-key.ts";
+import { handleMemory } from "../src/cli/handlers/memory.ts";
 import { __setFts5ProbeForTests } from "../src/infrastructure/sqlite/schema.ts";
 import type { ExportedObservation } from "../src/domain/memory/model.ts";
 
@@ -472,6 +474,109 @@ test("(compact-13) CLI: sync → compact → sync keeps the compacted history go
     assert.equal(counts(join(home, "memory.db")).superseded, 0, "no snapshot resurrected in the db");
     assert.equal(lines(), 1, "the rewritten snapshot file no longer carries them");
   } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Failure reporting: a busy db must yield an actionable message, never a stack trace,
+// and a VACUUM that cannot run after the GC committed must not hide the removal counts.
+// ---------------------------------------------------------------------------
+
+// Make only `VACUUM` fail on every connection (the GC commit and FTS rebuild run as usual).
+function failVacuum(): () => void {
+  const exec = DatabaseSync.prototype.exec;
+  const m = mock.method(DatabaseSync.prototype, "exec", function (this: DatabaseSync, sql: string) {
+    if (sql.trim().toUpperCase() === "VACUUM") throw new Error("database is locked");
+    return exec.call(this, sql);
+  });
+  return () => m.mock.restore();
+}
+
+test("(compact-14) VACUUM failure after the GC commit returns the counts instead of throwing", () => {
+  const { store, path, dir } = tmpStore("vacuum-fail");
+  try {
+    for (let i = 1; i <= 3; i++) {
+      store.save({ title: `Rev ${i}`, content: `content v${i}`, type: "decision", topicKey: "t/vac" });
+    }
+    const restore = failVacuum();
+    let report;
+    try {
+      report = store.compact();
+    } finally {
+      restore();
+    }
+    assert.equal(report.supersededRemoved, 2, "removals are reported");
+    assert.match(report.vacuumError ?? "", /database is locked/);
+    assert.equal(counts(path).superseded, 0, "the GC stays committed");
+    assert.equal(store.search("content", { limit: 5 }).length, 1, "FTS still consistent");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(compact-15) CLI: a VACUUM failure prints the removal report first, then the warning (exit 1)", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-compact-vacfail-home-"));
+  const repoDir = mkdtempSync(join(tmpdir(), "leina-compact-vacfail-"));
+  const savedHome = process.env.LEINA_HOME;
+  const savedExit = process.exitCode;
+  process.env.LEINA_HOME = home;
+  const out: string[] = [];
+  const log = mock.method(console, "log", (...a: unknown[]) => { out.push(a.join(" ")); });
+  const err = mock.method(process.stderr, "write", (chunk: string | Uint8Array) => { out.push(`ERR ${String(chunk)}`); return true; });
+  const restore = failVacuum();
+  try {
+    const seed = new MemoryStore(join(home, "memory.db"), deriveProjectKey(repoDir).key);
+    for (let i = 1; i <= 3; i++) seed.save({ title: `T${i}`, content: `b${i}`, type: "manual", topicKey: "cli/vac" });
+    seed.close();
+
+    await handleMemory(["compact", repoDir]);
+    const removedAt = out.findIndex((l) => l.includes("compact: removed 2 superseded snapshot(s)"));
+    const warnAt = out.findIndex((l) => l.startsWith("ERR ") && l.includes("VACUUM could not run"));
+    assert.ok(removedAt >= 0, `removal counts printed: ${out.join(" | ")}`);
+    assert.ok(warnAt > removedAt, "the warning follows the counts");
+    assert.match(out[warnAt]!, /re-run .*compact/);
+    assert.equal(process.exitCode, 1, "non-zero exit");
+  } finally {
+    restore();
+    log.mock.restore();
+    err.mock.restore();
+    process.exitCode = savedExit;
+    if (savedHome === undefined) delete process.env.LEINA_HOME;
+    else process.env.LEINA_HOME = savedHome;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("(compact-16) CLI: a write-locked db fails compact (even --dry-run) with an actionable message, no stack trace", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-compact-locked-home-"));
+  const repoDir = mkdtempSync(join(tmpdir(), "leina-compact-locked-"));
+  const env = { ...process.env, LEINA_HOME: home };
+  let holder: ChildProcess | undefined;
+  try {
+    assert.equal(runCli(["memory", "save", repoDir, "--title", "T", "--content", "C"], env).code, 0);
+    // Another process holds the write lock well past compact's 5s busy_timeout.
+    const script =
+      `const { DatabaseSync } = require("node:sqlite");` +
+      `const db = new DatabaseSync(process.argv[1]); db.exec("BEGIN IMMEDIATE");` +
+      `process.stdout.write("held\\n"); setTimeout(() => {}, 30000);`;
+    const h = spawn(process.execPath, ["-e", script, join(home, "memory.db")], { stdio: ["ignore", "pipe", "inherit"] });
+    holder = h;
+    await new Promise<void>((resolve, reject) => {
+      h.stdout.once("data", () => resolve());
+      h.once("exit", (code) => reject(new Error(`lock holder exited early (${code})`)));
+    });
+
+    const r = runCli(["memory", "compact", repoDir, "--dry-run"], env);
+    assert.equal(r.code, 1, "fails instead of crashing");
+    assert.match(r.stderr, /memory compact: .*locked/);
+    assert.match(r.stderr, /another leina process/);
+    assert.doesNotMatch(r.stderr, /\n\s+at /, "no stack trace");
+  } finally {
+    holder?.kill();
     rmSync(home, { recursive: true, force: true });
     rmSync(repoDir, { recursive: true, force: true });
   }
