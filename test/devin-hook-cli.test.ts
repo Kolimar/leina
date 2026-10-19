@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
 const MARKER_REL = ".leina/session.memory-loaded";
+const SANDBOX_HOME = mkdtempSync(join(tmpdir(), "cg-devin-hook-sandbox-"));
+test.after(() => rmSync(SANDBOX_HOME, { recursive: true, force: true }));
 
 interface RunResult {
   code: number;
@@ -44,7 +46,9 @@ function runDevinHook(
   // resolveHookProjectRoot prefers DEVIN_PROJECT_DIR over cwd, so an ambient var pointing at a
   // real leina project would make SessionStart read the developer's global memory.db and
   // break these assertions — a contaminated environment must not change the outcome.
-  const baseEnv = { ...process.env };
+  // Isolated LEINA_HOME by default: SessionStart/UserPromptSubmit open the global memory.db,
+  // which must never be the developer's real ~/.leina (extraEnv may point at its own home).
+  const baseEnv: NodeJS.ProcessEnv = { ...process.env, LEINA_HOME: SANDBOX_HOME };
   delete baseEnv.DEVIN_PROJECT_DIR;
   // Suppress the SessionStart self-heal's REAL detached `leina build`: these tests assert
   // hook I/O, not the autobuild, and on Windows that detached child's cwd (the tmp project

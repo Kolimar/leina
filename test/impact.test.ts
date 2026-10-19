@@ -220,7 +220,8 @@ test("(ia-cli-1) impact analyze nonexistent --json → shape vacío, exit 0", as
     const result = spawnSync(
       process.execPath,
       ["--no-warnings", "--experimental-strip-types", cliPath, "impact", "analyze", tmp, "nonexistent-symbol-xyz", "--json"],
-      { encoding: "utf8", cwd: REPO_ROOT },
+      // Isolated LEINA_HOME: a graph command may rebuild and register the project.
+      { encoding: "utf8", cwd: REPO_ROOT, env: { ...process.env, LEINA_HOME: join(tmp, "leina-home") } },
     );
 
     assert.strictEqual(result.status, 0, `exit code debe ser 0. stderr: ${result.stderr}`);

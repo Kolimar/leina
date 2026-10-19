@@ -20,11 +20,17 @@ interface RunResult {
   code: number;
 }
 
+// `build` registers the project in $LEINA_HOME/projects.json and opens memory.db, so every
+// spawn gets an isolated LEINA_HOME — never the developer's real ~/.leina. `opts.env` is
+// layered on top (a test may still point LEINA_HOME at its own sandbox).
+const SANDBOX_HOME = mkdtempSync(join(tmpdir(), "leina-wiringcli-sandbox-"));
+test.after(() => rmSync(SANDBOX_HOME, { recursive: true, force: true }));
+
 function runCli(args: string[], opts: { env?: NodeJS.ProcessEnv } = {}): RunResult {
   const r = spawnSync(
     process.execPath,
     ["--no-warnings", "--experimental-strip-types", CLI, ...args],
-    { encoding: "utf8", env: opts.env ?? process.env },
+    { encoding: "utf8", env: { ...process.env, LEINA_HOME: SANDBOX_HOME, ...opts.env } },
   );
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", code: r.status ?? 1 };
 }
@@ -60,8 +66,7 @@ test("(WC-2) refuse posture: stale read fails and instructs to refresh", () => {
   try {
     runCli(["build", dir]);
     writeFileSync(join(dir, "c.ts"), `export function gamma(): number { return 2; }\n`);
-    const env = { ...process.env, LEINA_FRESHNESS: "refuse" };
-    const r = runCli(["query", dir, "gamma"], { env });
+    const r = runCli(["query", dir, "gamma"], { env: { LEINA_FRESHNESS: "refuse" } });
     assert.notEqual(r.code, 0, "should refuse to rebuild");
     assert.match(r.stderr, /freshness posture is "refuse"/);
     assert.match(r.stderr, /leina refresh/);

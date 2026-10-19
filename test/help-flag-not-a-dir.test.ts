@@ -22,11 +22,16 @@ import { fileURLToPath } from "node:url";
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
 const HELP_MARKER = "code knowledge graph + project memory";
 
+// The regression this guards against BUILDS a graph (registering it in
+// $LEINA_HOME/projects.json), so the spawns get an isolated LEINA_HOME.
+const SANDBOX_HOME = mkdtempSync(join(tmpdir(), "leina-help-sandbox-"));
+test.after(() => rmSync(SANDBOX_HOME, { recursive: true, force: true }));
+
 function runCli(args: string[], cwd: string): { stdout: string; code: number } {
   const r = spawnSync(
     process.execPath,
     ["--no-warnings", "--experimental-strip-types", CLI, ...args],
-    { encoding: "utf8", cwd },
+    { encoding: "utf8", cwd, env: { ...process.env, LEINA_HOME: SANDBOX_HOME } },
   );
   return { stdout: r.stdout ?? "", code: r.status ?? 1 };
 }
