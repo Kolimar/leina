@@ -465,7 +465,7 @@ defecto: el cwd en el que el host lanzó el server, es decir, la raíz del works
 | `memory save` | `memory_add` | batch: `items[]` + `atomic` |
 | `memory search` | `memory_search` | |
 | `memory verified` | `memory_verified` | |
-| `memory context` | `memory_context` | |
+| `memory context` | `memory_context` | previews por defecto (respeta el presupuesto de tokens); `limit`, `sessionLimit`, `full:true` |
 | `memory get` | `memory_get` | batch: `ids[]` |
 | `memory update` | `memory_update` | |
 | `memory suggest-topic` | `memory_suggest_topic` | |

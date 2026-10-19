@@ -402,6 +402,53 @@ test("(mcps-6) harness tools: parseable schemas and contract new → show → ve
   }
 });
 
+test("(mcps-7) memory_context clips bodies to previews; full:true and limit honoured", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home7-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo7-"));
+  const env = sandboxEnv(home);
+  const bigBody = `plan line\n${"x".repeat(4000)}`;
+  try {
+    const responses = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "memory_add", arguments: { root: dir, items: [{ title: "big plan", content: bigBody }, { title: "small note", content: "tiny" }], atomic: true } } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "memory_context", arguments: { root: dir } } },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "memory_context", arguments: { root: dir, full: true } } },
+      { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "memory_context", arguments: { root: dir, limit: 1 } } },
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+    assert.ok(!byId.get(2)?.result?.isError, `seed add failed: ${byId.get(2)?.result?.content?.[0]?.text}`);
+
+    // Default: previews. The 4k body never crosses the wire; id + note do.
+    const previewText = byId.get(3)?.result?.content?.[0]?.text ?? "";
+    assert.ok(!previewText.includes("x".repeat(600)), "full body not in default payload");
+    const preview = JSON.parse(previewText) as {
+      observations: { id: string; title: string; preview: string; truncated: boolean; contentChars: number }[];
+      note?: string;
+    };
+    assert.equal(preview.observations.length, 2, "both observations listed");
+    const big = preview.observations.find((o) => o.title === "big plan")!;
+    assert.ok(big.truncated, "big body marked truncated");
+    assert.equal(big.contentChars, bigBody.length);
+    assert.ok(big.id.length > 0, "id present for memory_get follow-up");
+    assert.match(preview.note ?? "", /memory_get/, "note redirects to memory_get");
+    const small = preview.observations.find((o) => o.title === "small note")!;
+    assert.equal(small.preview, "tiny");
+    assert.equal(small.truncated, false);
+
+    // full:true restores the untruncated payload.
+    const fullOut = JSON.parse(byId.get(4)?.result?.content?.[0]?.text ?? "{}") as { observations: { content: string }[] };
+    assert.ok(fullOut.observations.some((o) => o.content === bigBody), "full:true returns the whole body");
+
+    // limit:1 returns only the most recent observation.
+    const limited = JSON.parse(byId.get(5)?.result?.content?.[0]?.text ?? "{}") as { observations: unknown[] };
+    assert.equal(limited.observations.length, 1, "limit honoured");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(mcps-2) unknown tool and missing args surface as isError, not crashes", async () => {
   const home = mkdtempSync(join(tmpdir(), "leina-mcp-home2-"));
   const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo2-"));

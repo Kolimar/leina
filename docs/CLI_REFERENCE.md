@@ -453,7 +453,7 @@ server in, i.e. the workspace root).
 | `memory save` | `memory_add` | batch: `items[]` + `atomic` |
 | `memory search` | `memory_search` | |
 | `memory verified` | `memory_verified` | |
-| `memory context` | `memory_context` | |
+| `memory context` | `memory_context` | previews by default (budget-safe); `limit`, `sessionLimit`, `full:true` |
 | `memory get` | `memory_get` | batch: `ids[]` |
 | `memory update` | `memory_update` | |
 | `memory suggest-topic` | `memory_suggest_topic` | |

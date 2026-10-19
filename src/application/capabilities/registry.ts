@@ -247,6 +247,17 @@ const memoryQueryInputSchema = {
   },
 };
 
+const memoryContextInputSchema = {
+  type: "object" as const,
+  required: ["root"],
+  properties: {
+    root: { type: "string" as const },
+    limit: { type: "number" as const },
+    sessionLimit: { type: "number" as const },
+    full: { type: "boolean" as const },
+  },
+};
+
 const memoryGetInputSchema = {
   type: "object" as const,
   required: ["root"],
@@ -485,13 +496,15 @@ export const capabilities: readonly CommandContract[] = [
   {
     capability: {
       id: "memory.context",
-      description: "Recent sessions and latest observations for a project — the session-start context payload.",
-      inputSchema: rootOnlyInputSchema,
+      description:
+        "Recent sessions and latest observations for a project — the session-start context payload. Over MCP, bodies are clipped to previews (full content via memory.get, or full:true to opt out).",
+      inputSchema: memoryContextInputSchema,
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
-      schemaVersion: 1,
+      // v2: accepts limit/sessionLimit/full; MCP output defaults to clipped previews.
+      schemaVersion: 2,
     },
-    cli: { command: "memory context" },
+    cli: { command: "memory context", flags: ["--limit"] },
     mcp: { tool: "memory_context" },
   },
   {

@@ -29,6 +29,7 @@ import { affected, queryGraph, resolveSeed, shortestPath } from "../../applicati
 import { analyzeImpact } from "../../application/graph/impact.ts";
 import { graphStatus } from "../../application/graph/manifest.ts";
 import { searchMemory, getVerifiedContext } from "../../application/memory/query.ts";
+import { previewRecentContext } from "../../application/memory/context-preview.ts";
 import { buildActiveContext } from "../../application/context/active-context.ts";
 import { runAudit } from "../../application/audit/run.ts";
 import type { ObservationInput, ObservationType, UpdateFields } from "../../domain/memory/model.ts";
@@ -46,6 +47,8 @@ const str = (a: ToolArgs, k: string): string => {
 };
 const optNum = (a: ToolArgs, k: string): number | undefined =>
   typeof a[k] === "number" ? (a[k]) : undefined;
+const posInt = (v: number | undefined): number | undefined =>
+  v !== undefined && Number.isFinite(v) && v >= 1 ? Math.floor(v) : undefined;
 const optStr = (a: ToolArgs, k: string): string | undefined =>
   typeof a[k] === "string" ? (a[k]) : undefined;
 const optStrArr = (a: ToolArgs, k: string): string[] | undefined =>
@@ -216,7 +219,17 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
     withMemStore(rootOf(a), (mem) =>
       getVerifiedContext(mem.store, str(a, "query"), mem.verifyNode, { limit: optNum(a, "limit") }),
     ),
-  memory_context: (a) => withMemStore(rootOf(a), (s) => s.store.recentContext()),
+  memory_context: (a) =>
+    withMemStore(rootOf(a), (s) => {
+      // Clamp to positive integers: recentContext feeds these to SQL LIMIT, where a
+      // model-supplied 0/negative value would mean "no limit" — the exact blowup this
+      // tool's preview shaping exists to prevent.
+      const ctx = s.store.recentContext({
+        limit: posInt(optNum(a, "limit")),
+        sessionLimit: posInt(optNum(a, "sessionLimit")),
+      });
+      return a.full === true ? ctx : previewRecentContext(ctx);
+    }),
   memory_get: (a) =>
     withMemStore(rootOf(a), (s) => {
       // Batch form (schemaVersion 2): `ids` array.
@@ -343,6 +356,19 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
       query: { type: "string" },
       type: { type: "string" },
       limit: { type: "number" },
+    },
+  },
+  memory_context: {
+    type: "object",
+    properties: {
+      root: ROOT_PROP,
+      limit: { type: "number", description: "max observations (default 20)" },
+      sessionLimit: { type: "number", description: "max sessions (default 5)" },
+      full: {
+        type: "boolean",
+        description:
+          "return full bodies instead of previews (default false — bodies are clipped; use memory_get for full content)",
+      },
     },
   },
   memory_get: {
