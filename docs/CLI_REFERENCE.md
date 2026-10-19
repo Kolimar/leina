@@ -853,7 +853,10 @@ Host-neutral agent hook gate; reads the payload JSON on stdin (`devin-hook` is a
 alias — pre-3.0 `.devin/hooks.v1.json` installs invoke it). The installers write `--host` on
 every entry (it selects the host's output protocol) and `--scope user` on the user-global copy;
 an entry without `--host` is treated as Claude Code when `CLAUDE_PROJECT_DIR` is set and as
-Devin otherwise. Events: `PreToolUse`, `PostToolUse`,
+Devin otherwise. One answer per event: when a higher-priority copy of the wiring the running host
+also loads wires the same event — the project's own files over the user-global ones, and under
+Devin (which also loads Claude Code's files) Devin's own over Claude Code's — the lower copy
+exits 0 silently. Events: `PreToolUse`, `PostToolUse`,
 `UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`. The advisory gate never blocks; it
 answers in the host's documented channel — for Claude Code every advisory is
 `hookSpecificOutput.additionalContext` JSON on stdout (Claude Code never shows a hook's stderr

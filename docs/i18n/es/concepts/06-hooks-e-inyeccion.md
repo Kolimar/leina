@@ -77,6 +77,24 @@ nada advisory viaja por ahí. Como un empujón de `Stop` **continúa** la conver
 Code, está acotado: nunca en un stop que un Stop hook ya continuó (`stop_hook_active: true`) y
 como mucho una vez por sesión.
 
+### Una respuesta por evento
+
+El mismo cableado puede estar en hasta cuatro archivos: los del proyecto (`.devin/hooks.v1.json`,
+`.claude/settings.json`) y los user-global (`~/.config/devin/config.json`,
+`~/.claude/settings.json`). Un host dispara cada copia que carga — Claude Code sus dos, Devin sus
+dos **y** las dos de Claude Code. Para que una sola tool call no corra el conserje dos veces,
+cada copia se fija, para el evento en curso, si una copia de mayor prioridad que el host también
+carga lo cablea, y en ese caso se hace a un lado en silencio:
+
+| Host que corre | Prioridad (mayor primero) |
+|----------------|---------------------------|
+| Claude Code | `.claude/settings.json` del proyecto → `~/.claude/settings.json` |
+| Devin | `.devin/hooks.v1.json` del proyecto → `.claude/settings.json` del proyecto → `~/.config/devin/config.json` → `~/.claude/settings.json` |
+
+La verificación es por evento: un archivo de proyecto de una versión anterior al que le falta un
+evento deja que la copia user-global lo atienda. Las entradas escritas antes de que existiera el
+flag `--host` no saben qué copia son y corren siempre.
+
 ---
 
 ## ¿En qué proyecto estoy? (resolución del root)

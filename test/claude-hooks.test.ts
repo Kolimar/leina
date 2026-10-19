@@ -85,9 +85,10 @@ test("(ch-3b) agent-hook args: explicit --host/--scope win; a flagless entry fal
     event: "Stop",
     host: "devin",
     scope: "user",
+    flagged: true,
   });
-  assert.deepEqual(parseAgentHookArgs(["Stop"], { CLAUDE_PROJECT_DIR: "/p" }), { event: "Stop", host: "claude", scope: "project" });
-  assert.deepEqual(parseAgentHookArgs(["Stop"], { CLAUDE_PROJECT_DIR: " " }), { event: "Stop", host: "devin", scope: "project" });
+  assert.deepEqual(parseAgentHookArgs(["Stop"], { CLAUDE_PROJECT_DIR: "/p" }), { event: "Stop", host: "claude", scope: "project", flagged: false });
+  assert.deepEqual(parseAgentHookArgs(["Stop"], { CLAUDE_PROJECT_DIR: " " }), { event: "Stop", host: "devin", scope: "project", flagged: false });
   assert.equal(parseAgentHookArgs(["--host", "claude"], {}).event, undefined);
   assert.equal(parseAgentHookArgs(["Stop", "--host", "cursor"], {}).host, "devin", "unknown host value → fallback");
 });

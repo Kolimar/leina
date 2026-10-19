@@ -1,7 +1,7 @@
 // cli/handlers/system.ts — diagnostics, hook bridge, sidecar, capabilities, verify and root help.
 
 import { runDoctor, formatDoctor } from "../doctor.ts";
-import { parseAgentHookArgs, runAgentGate, runHarnessAgentGate, resolveHookRoots } from "../agent-gate.ts";
+import { parseAgentHookArgs, runAgentGate, runHarnessAgentGate, resolveHookRoots, shouldDeferInvocation } from "../agent-gate.ts";
 import { readPackageVersion } from "../../version.ts";
 import { readStdin } from "../io.ts";
 import { capabilities } from "../../application/capabilities/registry.ts";
@@ -45,12 +45,16 @@ export async function handleAgentHook(rest: string[]): Promise<never> {
   // (.harness/state/current/contract.json) or strictness "strict", PreToolUse edit/bash and
   // Stop may BLOCK (exit 2 / decision:block). Guided mode without a contract leaves the
   // advisory behaviour below untouched, byte for byte, except for that integrity seal.
-  const { event: eventName, host } = parseAgentHookArgs(rest, process.env);
+  const invocation = parseAgentHookArgs(rest, process.env);
+  const { event: eventName, host } = invocation;
   // Resolve the roots from the host's documented CLAUDE_PROJECT_DIR / DEVIN_PROJECT_DIR env
   // var (fallback to process.cwd()) — the hook payload itself never carries a cwd — walking
   // up from subdirectories and worktrees. See resolveHookRoots.
   const rawStdin = readStdin();
-  const { root, harnessRoot } = resolveHookRoots(process.env, process.cwd());
+  const { start, root, harnessRoot } = resolveHookRoots(process.env, process.cwd());
+  // One answer per event: a lower-priority copy of the wiring (typically the user-global
+  // one, when the project wires this host itself) stands down. See shouldDeferInvocation.
+  if (shouldDeferInvocation(invocation, start, process.env)) process.exit(0);
   const harness = await runHarnessAgentGate(rawStdin, harnessRoot, eventName, host);
   if (harness.handled) process.exit(harness.exitCode);
   runAgentGate(rawStdin, root, eventName, {

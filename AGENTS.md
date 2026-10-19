@@ -235,6 +235,16 @@ lets the machine-wide copy defer to a project's own wiring. Entries without the 
 before 3.0, including the `devin-hook` alias) are still recognised and rewritten by the next
 `init`/`activate`/`repair`.
 
+**One answer per event.** A host fires every copy of the wiring it reads (Claude Code: its
+project and user settings; Devin: its own two files AND Claude Code's two). `handleAgentHook`
+first asks `shouldDeferInvocation` (`src/cli/agent-gate.ts`, pure rule in
+`src/application/install/hook-scope.ts`): for the event at hand, the highest-priority copy the
+running host loads answers — Devin: own project > Claude Code project > own user > Claude Code
+user; Claude Code: project > user — and every lower copy exits 0 silently. The running host is
+recognised by `DEVIN_PROJECT_DIR` / `CLAUDE_PROJECT_DIR`; project files are looked up at Claude
+Code's project dir, or from Devin's up to the repo root. Entries without `--host` never stand
+down.
+
 **Project root resolution.** The `agent-hook` (alias `devin-hook`) events are NOT pinned to a baked dir (a single
 user-global hook fires in every repo, so it must resolve the project at runtime). It resolves
 via `resolveHookProjectRoot(process.env, process.cwd())` (`src/cli/agent-gate.ts`): the first

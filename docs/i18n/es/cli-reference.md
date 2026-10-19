@@ -910,7 +910,11 @@ Gate de agent hook agnóstica de host; lee el payload JSON por stdin (`devin-hoo
 de compatibilidad — las instalaciones de `.devin/hooks.v1.json` anteriores a 3.0 lo invocan).
 Los instaladores escriben `--host` en cada entrada (elige el protocolo de salida del host) y
 `--scope user` en la copia user-global; una entrada sin `--host` se trata como Claude Code
-cuando `CLAUDE_PROJECT_DIR` está definida y como Devin en caso contrario. Events:
+cuando `CLAUDE_PROJECT_DIR` está definida y como Devin en caso contrario. Una respuesta por
+evento: si una copia del cableado de mayor prioridad que el host también carga cablea el mismo
+evento — los archivos propios del proyecto antes que los user-global, y bajo Devin (que también
+carga los archivos de Claude Code) los de Devin antes que los de Claude Code — la copia de menor
+prioridad sale con 0 en silencio. Events:
 `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`.
 La gate advisory nunca bloquea; responde por el canal que documenta el host — para Claude Code
 cada advisory es JSON `hookSpecificOutput.additionalContext` por stdout (Claude Code nunca

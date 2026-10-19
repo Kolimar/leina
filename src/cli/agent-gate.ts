@@ -43,16 +43,18 @@
 // the process cwd), then walk up to the consent root (advisory gate) and to the checkout's
 // harness root (enforcement), so subdirectories and worktrees act on their project.
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { buildActiveContext } from "./active-context.ts";
 import { spawnDetachedBuild } from "./background-build.ts";
 import { graphDbPath } from "./wiring.ts";
 import { isStale } from "../application/graph/manifest.ts";
 import { readConsentFlag } from "../application/install/consent.ts";
 import { isTrustedWorkspaceDir, isWorkspaceTrusted } from "../application/install/trust.ts";
-import { findConsentRoot, findHarnessRoot, resolveHookProjectRoot } from "../application/project/root.ts";
-import { type HookHost, type HookScope, isHookHost } from "../application/install/hook-command.ts";
+import { findConsentRoot, findGitToplevel, findHarnessRoot, resolveHookProjectRoot } from "../application/project/root.ts";
+import { type HookSource, hookSourceOf, runningHookHost, shouldDeferHook } from "../application/install/hook-scope.ts";
+import { claudeUserSettingsFile, devinUserConfigFile } from "../infrastructure/install/share-paths.ts";
+import { type HookHost, type HookScope, isHookHost, managedHookCommands } from "../application/install/hook-command.ts";
 
 // Running any of these `leina memory <sub>` CLI commands counts as "project memory
 // loaded" for the session. Detected by inspecting the exec tool's command line (there is no
@@ -144,6 +146,8 @@ export interface AgentHookInvocation {
   event?: string;
   host: HookHost;
   scope: HookScope;
+  /** True when the entry named its host (`--host`): only such entries know their copy. */
+  flagged: boolean;
 }
 
 /**
@@ -164,7 +168,66 @@ export function parseAgentHookArgs(rest: string[], env: NodeJS.ProcessEnv): Agen
     ...(event !== undefined ? { event } : {}),
     host: isHookHost(explicit) ? explicit : claudeEnv ? "claude" : "devin",
     scope: flag("--scope") === "user" ? "user" : "project",
+    flagged: isHookHost(explicit),
   };
+}
+
+/** Directories whose project hook files a host loads for `start` (see shouldDeferInvocation). */
+function projectHookDirs(start: string, walkToRepoRoot: boolean): string[] {
+  const dirs = [resolvePath(start)];
+  const top = walkToRepoRoot ? findGitToplevel(start) : undefined;
+  if (top === undefined) return dirs;
+  for (let dir = dirs[0]!; dir !== top; ) {
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dirs.push(parent);
+    dir = parent;
+  }
+  return dirs;
+}
+
+function readText(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Does copy `source` carry a managed entry for `event`? Fail-open → false. */
+function sourceWiresEvent(source: HookSource, event: string, start: string, running: HookHost): boolean {
+  const files: [string, "root" | "hooks-key"][] =
+    source === "devin-user"
+      ? [[devinUserConfigFile(), "hooks-key"]]
+      : source === "claude-user"
+        ? [[claudeUserSettingsFile(), "hooks-key"]]
+        : projectHookDirs(start, running === "devin").map((dir) =>
+            source === "devin-project"
+              ? [join(dir, ".devin", "hooks.v1.json"), "root"]
+              : [join(dir, ".claude", "settings.json"), "hooks-key"],
+          );
+  return files.some(([file, shape]) => managedHookCommands(readText(file), shape).some((c) => c.event === event));
+}
+
+/**
+ * Should this invocation stand down because a higher-priority copy of the managed wiring
+ * answers the same event (hook-scope.ts)? Typical case: the user-global copy, when the
+ * project has its own wiring for that host — or, under Devin (which also loads Claude Code's
+ * files), the Claude Code copy when Devin's own wiring is there. Project files are looked up
+ * where the running host loads them: Claude Code at its project dir, Devin from there up to
+ * the repo root. Entries without `--host` never stand down. Fail-open → false (run).
+ */
+export function shouldDeferInvocation(inv: AgentHookInvocation, start: string, env: NodeJS.ProcessEnv): boolean {
+  if (!inv.flagged || inv.event === undefined) return false;
+  const event = inv.event;
+  try {
+    const running = runningHookHost(env, inv.host);
+    return shouldDeferHook(running, hookSourceOf(inv.host, inv.scope), (source) =>
+      sourceWiresEvent(source, event, start, running),
+    );
+  } catch {
+    return false;
+  }
 }
 
 export interface AgentHookPayload {

@@ -79,6 +79,24 @@ advisory travels there for it. Because a `Stop` nudge **continues** the conversa
 Code, it is bounded: never on a stop that a Stop hook already continued
 (`stop_hook_active: true`) and at most once per session.
 
+### One answer per event
+
+The same wiring can sit in up to four files: the project's own (`.devin/hooks.v1.json`,
+`.claude/settings.json`) and the user-global ones (`~/.config/devin/config.json`,
+`~/.claude/settings.json`). A host fires every copy it loads — Claude Code its two, Devin its
+own two **and** Claude Code's two. So that one tool call doesn't run the concierge twice, each
+copy checks, for the event at hand, whether a higher-priority copy the running host also loads
+wires it, and if so it steps aside silently:
+
+| Running host | Priority (highest first) |
+|--------------|--------------------------|
+| Claude Code | project `.claude/settings.json` → `~/.claude/settings.json` |
+| Devin | project `.devin/hooks.v1.json` → project `.claude/settings.json` → `~/.config/devin/config.json` → `~/.claude/settings.json` |
+
+The check is per event, so a project file from an older version that lacks an event still lets
+the user-global copy answer it. Entries written before the `--host` flag existed can't tell
+which copy they are and always run.
+
 ---
 
 ## Which project am I in? (root resolution)
