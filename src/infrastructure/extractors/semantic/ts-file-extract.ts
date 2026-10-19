@@ -227,6 +227,7 @@ class FileExtractor {
     this.emitDefs();
     this.walk(this.sf, { enclosing: this.defs.fileId, inHeritage: false, inTypeRef: false, inJsDoc: false });
     this.emitHeritage();
+    this.emitMemberContracts();
     this.emitCalls();
     this.emitReferences();
     return { nodes: this.nodes, edges: this.edges };
@@ -443,6 +444,53 @@ class FileExtractor {
         const target = this.resolve(t.expression, isExtends ? "value" : "type");
         if (target) this.addEdge(d.id, target, isExtends ? "extends" : "implements", t);
       }
+    }
+  }
+
+  // --- member-level contracts: `implements` (class/literal member → contract member) and
+  // `overrides` (class member → the base-class member it replaces) ------------------------
+
+  private emitMemberContracts(): void {
+    const members = new Map<string, Map<string, TsDef>>();
+    for (const d of this.defs.defs) {
+      if (d.relation !== "method" || hasModifier(d.decl, ts.SyntaxKind.StaticKeyword)) continue;
+      const name = nameText((d.decl as ts.NamedDeclaration).name);
+      if (name === undefined) continue;
+      let own = members.get(d.owner);
+      if (own === undefined) members.set(d.owner, (own = new Map<string, TsDef>()));
+      if (!own.has(name)) own.set(name, d);
+    }
+    for (const d of this.defs.defs) {
+      const own = members.get(d.id);
+      if (own === undefined) continue;
+      if (ts.isClassLike(d.decl)) this.classContracts(d.decl, own);
+      else if (d.kind === "variable") this.literalContracts(d.decl, own);
+    }
+  }
+
+  private classContracts(cls: ts.ClassLikeDeclaration, own: Map<string, TsDef>): void {
+    for (const clause of cls.heritageClauses ?? []) {
+      const relation = clause.token === ts.SyntaxKind.ExtendsKeyword ? "overrides" : "implements";
+      // In an `extends` clause this is the base class's instance type; in `implements`, the contract's.
+      for (const t of clause.types) this.memberEdges(own, this.checker.getTypeAtLocation(t), relation);
+    }
+  }
+
+  /** `const x: Port = { run() {} }` (or `satisfies Port`, `as Port`): `x.run` implements `Port.run`. */
+  private literalContracts(decl: ts.Node, own: Map<string, TsDef>): void {
+    const init = ts.isVariableDeclaration(decl) ? decl.initializer : ts.isExportAssignment(decl) ? decl.expression : undefined;
+    const lit = init && unwrapExpression(init);
+    if (lit === undefined || !ts.isObjectLiteralExpression(lit)) return;
+    const contract = this.checker.getContextualType(lit);
+    if (contract !== undefined) this.memberEdges(own, contract, "implements");
+  }
+
+  private memberEdges(own: Map<string, TsDef>, contract: ts.Type, relation: "implements" | "overrides"): void {
+    const type = this.checker.getNonNullableType(contract);
+    for (const [name, m] of own) {
+      const p = this.checker.getPropertyOfType(type, name);
+      const target = p && this.resolveSymbol(p, "value");
+      if (target !== undefined) this.addEdge(m.id, target, relation, m.decl);
     }
   }
 

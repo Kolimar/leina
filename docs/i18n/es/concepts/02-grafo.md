@@ -157,7 +157,10 @@ classDiagram
   TypeScript, `type` (alias de tipo) · `enum` · `variable` (`const`/`let`/`var` de nivel
   superior que no es una función) · `accessor` (un par `get`/`set`). Los métodos de un objeto
   literal guardado en una variable de nivel superior son nodos `method` de esa variable, y una
-  función o arrow anónima en `export default` es la función `default`.
+  función o arrow anónima en `export default` es la función `default`. Los miembros de un
+  contrato también son nodos `method`: los métodos y las propiedades de tipo función de una
+  interfaz (`run: () => void`), y los métodos de un alias de tipo objeto
+  (`type Port = { run(): void }`).
 - `signature` — solo para funciones/métodos/accessors: tipo de retorno, parámetros (con tipo,
   nullabilidad, opcionalidad), modificador de acceso, flags `isAsync`/`isGenerator`.
 
@@ -173,7 +176,8 @@ de que la calle existe):
 | Llamadas | `calls` | función → función que invoca |
 | Llamadas | `references` | función → tipo, enum, constante o accessor que usa |
 | Imports | `imports`, `imports_from` | dependencia de módulo |
-| Herencia | `extends`, `implements`, `inherits` | jerarquía de tipos |
+| Herencia | `extends`, `implements`, `inherits` | jerarquía de tipos; en TypeScript `implements` también une cada miembro con el miembro del contrato que implementa (`MemoryStore.load → Store.load`, incluidos miembros heredados de interfaces y objetos literales tipados) |
+| Herencia | `overrides` | miembro → el miembro más cercano de la clase base al que sobrescribe (TypeScript, miembros de instancia) |
 | Otros | `uses` | uso genérico |
 
 **Confianza** (`confidence`) — clave para entender la búsqueda después:

@@ -43,7 +43,7 @@ export type NodeKind =
 /** Known code relations (always present in KNOWN_RELATIONS). */
 const CODE_RELATIONS = [
   "calls", "imports", "imports_from", "inherits", "implements",
-  "extends", "references", "contains", "method", "uses",
+  "extends", "overrides", "references", "contains", "method", "uses",
 ] as const;
 
 /** Known infra relations (always present in KNOWN_RELATIONS). */
@@ -59,7 +59,7 @@ export const KNOWN_RELATIONS: ReadonlySet<string> = new Set<string>([
 
 export type Relation =
   | "calls" | "imports" | "imports_from" | "inherits" | "implements"
-  | "extends" | "references" | "contains" | "method" | "uses"
+  | "extends" | "overrides" | "references" | "contains" | "method" | "uses"
   | "deploys" | "reads" | "writes" | "configures" | "exposes" | "consumes" | "produces"
   | OpenStr;
 

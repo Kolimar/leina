@@ -158,7 +158,9 @@ classDiagram
   TypeScript, `type` (type alias) · `enum` · `variable` (top-level `const`/`let`/`var` that is
   not a function) · `accessor` (a `get`/`set` pair). The methods of an object literal held by a
   top-level variable are `method` nodes of that variable, and an anonymous `export default`
-  function or arrow is the function `default`.
+  function or arrow is the function `default`. A contract's members are `method` nodes too:
+  an interface's methods and function-typed properties (`run: () => void`), and the methods
+  of an object type alias (`type Port = { run(): void }`).
 - `signature` — only for functions/methods/accessors: return type, parameters (with type, nullability,
   optionality), access modifier, `isAsync`/`isGenerator` flags.
 
@@ -174,7 +176,8 @@ the street exists):
 | Calls | `calls` | function → function it invokes |
 | Calls | `references` | function → type, enum, constant or accessor it uses |
 | Imports | `imports`, `imports_from` | module dependency |
-| Inheritance | `extends`, `implements`, `inherits` | type hierarchy |
+| Inheritance | `extends`, `implements`, `inherits` | type hierarchy; in TypeScript `implements` also links each member to the contract member it implements (`MemoryStore.load → Store.load`, inherited interface members and typed object literals included) |
+| Inheritance | `overrides` | member → the nearest base-class member it overrides (TypeScript, instance members) |
 | Other | `uses` | generic usage |
 
 **Confidence** (`confidence`) — key to understanding search later on:

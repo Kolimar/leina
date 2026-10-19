@@ -46,6 +46,12 @@ function isFunctionInitializer(init: ts.Node | undefined): init is ts.ArrowFunct
   return init !== undefined && (ts.isArrowFunction(init) || ts.isFunctionExpression(init));
 }
 
+function isFunctionType(t: ts.TypeNode | undefined): boolean {
+  let cur = t;
+  while (cur !== undefined && ts.isParenthesizedTypeNode(cur)) cur = cur.type;
+  return cur !== undefined && ts.isFunctionTypeNode(cur);
+}
+
 /** `(x)`, `x as T`, `x satisfies T`, `<T>x`, `x!` → x. */
 export function unwrapExpression(e: ts.Expression): ts.Expression {
   let cur = e;
@@ -212,9 +218,16 @@ class DefCollector {
     }
   }
 
-  interfaceMembers(itf: ts.InterfaceDeclaration, itfId: string): void {
-    for (const m of itf.members) {
+  /** Methods of an interface or of an object type literal (`type Port = { run(): void }`). */
+  contractMembers(members: ts.NodeArray<ts.TypeElement>, itfId: string): void {
+    for (const m of members) {
       if (!ts.isMethodSignature(m)) continue;
+      const name = nameText(m.name);
+      if (name !== undefined) this.method(itfId, m, name, false);
+    }
+    // `run: (x: T) => U` is a method of the contract as much as `run(x: T): U` is.
+    for (const m of members) {
+      if (!ts.isPropertySignature(m) || !isFunctionType(m.type)) continue;
       const name = nameText(m.name);
       if (name !== undefined) this.method(itfId, m, name, false);
     }
@@ -231,7 +244,8 @@ class DefCollector {
 function collectDataDefs(c: DefCollector, stmts: ts.NodeArray<ts.Statement>): void {
   for (const s of stmts) {
     if (ts.isTypeAliasDeclaration(s)) {
-      c.topLevel({ decl: s, name: s.name.text, tag: "type", kind: "type", label: s.name.text });
+      const id = c.topLevel({ decl: s, name: s.name.text, tag: "type", kind: "type", label: s.name.text });
+      if (ts.isTypeLiteralNode(s.type)) c.contractMembers(s.type.members, id);
     }
   }
   for (const s of stmts) {
@@ -303,7 +317,7 @@ export function collectDefs(sf: ts.SourceFile, relPath: string): FileDefs {
     if (!ts.isInterfaceDeclaration(s)) continue;
     const name = s.name.text;
     const id = c.topLevel({ decl: s, name, tag: "interface", kind: "interface", label: name });
-    c.interfaceMembers(s, id);
+    c.contractMembers(s.members, id);
   }
   for (const s of stmts) {
     if (!ts.isFunctionDeclaration(s) || !s.name) continue;

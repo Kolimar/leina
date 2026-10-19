@@ -190,3 +190,52 @@ test("(b1-local-alias) const aliases and shorthand properties are followed to th
   ]);
   assert.deepStrictEqual(edgesFrom(`${DT}:tools`), [`${DT}:tools -references-> ${DT}:runtask @L8`]);
 });
+
+// ---------------------------------------------------------------------------
+// B2 — member-level `implements` (member → contract member) and `overrides`
+// (member → nearest base-class member), at the implementing member's line
+// ---------------------------------------------------------------------------
+
+const C = "contracts_ts";
+
+function contractEdges(): string[] {
+  return [
+    ...new Set(
+      edges
+        // Member sources only (`contracts_ts_<owner>:<member>`); class-level `implements` is older.
+        .filter((e) => (e.relation === "overrides" || e.relation === "implements") && e.source.startsWith(`${C}_`))
+        .map(fmt),
+    ),
+  ].sort();
+}
+
+test("(b2-member-edges) class, object-literal and inherited contract members are linked", () => {
+  assert.deepStrictEqual(contractEdges(), [
+    `${C}_cachedstore:load -overrides-> ${C}_memorystore:load @L39`,
+    `${C}_fakestore:load -implements-> ${C}_store:load @L51`,
+    `${C}_fakestore:save -implements-> ${C}_store:save @L52`,
+    `${C}_memorystore:audit -implements-> ${C}_auditedstore:audit @L27`,
+    `${C}_memorystore:describe -overrides-> ${C}_basestore:describe @L30`,
+    `${C}_memorystore:load -implements-> ${C}_store:load @L21`,
+    `${C}_memorystore:load -overrides-> ${C}_basestore:load @L21`,
+    `${C}_memorystore:save -implements-> ${C}_store:save @L24`,
+    `${C}_systemclock:now -implements-> ${C}_clock:now @L45`,
+  ]);
+});
+
+test("(b2-contract-members) function-typed properties and type-literal methods are contract members", () => {
+  assert.deepStrictEqual(edgesFrom(`${C}:store`, ["method"]), [
+    `${C}:store -method-> ${C}_store:load @L3`,
+    `${C}:store -method-> ${C}_store:save @L4`,
+  ]);
+  assert.deepStrictEqual(edgesFrom(`${C}:clock`, ["method"]), [`${C}:clock -method-> ${C}_clock:now @L11`]);
+  // Calls through the contract reach its members.
+  assert.deepStrictEqual(edgesFrom(`${C}:usestore`, ["calls"]), [
+    `${C}:usestore -calls-> ${C}_store:load @L56`,
+    `${C}:usestore -calls-> ${C}_store:save @L56`,
+  ]);
+});
+
+test("(b2-static-excluded) static members neither implement nor override", () => {
+  assert.deepStrictEqual(edgesFrom(`${C}_memorystore:create`, ["implements", "overrides"]), []);
+});
