@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS edges (
 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target);
 CREATE INDEX IF NOT EXISTS idx_nodes_label ON nodes(label);
+-- findByLabel's exact branch probes \`label = ? COLLATE NOCASE\`, which the
+-- BINARY-collated idx_nodes_label can never serve — without this NOCASE twin the
+-- most common lookup (exact label hit) full-scans the nodes table.
+CREATE INDEX IF NOT EXISTS idx_nodes_label_nocase ON nodes(label COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_nodes_community ON nodes(community);
 CREATE INDEX IF NOT EXISTS idx_nodes_kind ON nodes(kind);
 `;
@@ -153,8 +157,14 @@ export class GraphStore implements GraphRepository {
 
     // Fast path: a db already at the current version has the full current shape. Skipping
     // the DDL re-execution keeps concurrent opens (build in one process, queries in others)
-    // free of write locks on the hot path.
-    if (v === GRAPH_SCHEMA_VERSION) return;
+    // free of write locks on the hot path. The NOCASE label index is additive (older
+    // binaries simply ignore an extra index — no version bump), so a v4 db from before it
+    // existed is retrofitted here with a read-only catalog probe first: the common case
+    // (index present) takes no write lock at all.
+    if (v === GRAPH_SCHEMA_VERSION) {
+      this.#ensureLabelNocaseIndex();
+      return;
+    }
 
     // Otherwise create the current shape and stamp it. graph.db is a derived artifact: a
     // fresh db (user_version=0, no tables) gets the full v4 shape from SCHEMA. Pre-1.0
@@ -162,6 +172,22 @@ export class GraphStore implements GraphRepository {
     // if an old db predates the current schema, rebuild it with `leina build`.
     this.db.exec(SCHEMA);
     this.db.exec(`PRAGMA user_version = ${GRAPH_SCHEMA_VERSION}`);
+  }
+
+  // Retrofit idx_nodes_label_nocase into dbs stamped v4 before the index existed.
+  // Probe the catalog (pure read — no lock) and only run DDL when actually missing;
+  // IF NOT EXISTS makes the create race-safe against a concurrent open doing the same.
+  // Read-only connections never reach this (they return before the version fast path)
+  // — findByLabel stays correct without the index, just unaccelerated.
+  #ensureLabelNocaseIndex(): void {
+    const present = this.db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_nodes_label_nocase'")
+      .get();
+    if (present === undefined) {
+      this.db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_nodes_label_nocase ON nodes(label COLLATE NOCASE)",
+      );
+    }
   }
 
   close(): void {
@@ -298,6 +324,13 @@ export class GraphStore implements GraphRepository {
   //   1. exact label match (case-insensitive)
   //   2. functional-exact: normalized label equals normalized query
   //   3. substring, shortest label first (most specific)
+  //
+  // Cost: branch 1 is an index seek on idx_nodes_label_nocase (the collation of the
+  // predicate matches the index collation). The substring branch is inherently a full
+  // scan — a B-tree index can never serve a leading-wildcard LIKE ('%q%'), and the
+  // ORDER BY length(label) needs every match anyway — but it only runs when there is
+  // no exact hit, and LIMIT 50 keeps the sort a bounded top-N. Same results as before;
+  // only the exact-hit path got cheaper.
   findByLabel(query: string): GraphNode[] {
     const exact = this.db
       .prepare("SELECT * FROM nodes WHERE label = ? COLLATE NOCASE")
