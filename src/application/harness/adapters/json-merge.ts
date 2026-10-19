@@ -13,7 +13,8 @@ export const HARNESS_CMD_MARKER = "harness hook";
 /**
  * A command is harness-managed when it contains the default marker OR invokes
  * one of our hook events — this keeps cleanup working when `hookCommand` is
- * overridden (e.g. "node dist/cli/index.js harness hook stop"). The default
+ * overridden (e.g. "node /abs/path/leina/dist/cli/index.js harness hook stop" —
+ * the only accepted override shapes, see validate.ts). The default
  * `leina harness hook` matches the marker too.
  */
 const HOOK_EVENT_RE =
