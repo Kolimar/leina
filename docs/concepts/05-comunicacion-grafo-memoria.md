@@ -44,13 +44,27 @@ save an observation with `--anchors "TokenFactory"`, at **save-time** the follow
 
 1. The graph is searched for the node(s) whose label matches **exactly** (functional-exact, no
    fuzzy substring) `"TokenFactory"`.
-2. For each match, the **file fingerprint** (SHA-256) is read from the build manifest.
+2. For each match, a **fingerprint** is taken from the working tree:
+   - a **symbol fingerprint** (`sym1:<sha256>`) of the symbol's *own lines* — whenever the node
+     has a start line (`sourceLocation`) in a language with a span rule (TS/JS, Java, C#, Go,
+     Rust, C/C++, Kotlin, Swift, PHP… by brackets; Python by indentation);
+   - otherwise the **whole file's** SHA-256 (module/config nodes, other languages), or the build
+     manifest's hash when the file can't be read.
 3. `memory_anchors` stores: `nodeId`, `sourceFile`, and that save-time `anchorHash`.
 
-That hash is the snapshot of the file *at the moment you wrote the note*. It's the baseline
-against which drift is later measured. If the label doesn't resolve (no graph, no match), the
-anchor is still saved but without `nodeId` → it will remain `unverified`. **Fail-open:** any error
-returns `[]`, and the save is never broken.
+That fingerprint is the snapshot *at the moment you wrote the note*. It's the baseline against
+which drift is later measured. If the label doesn't resolve (no graph, no match), the anchor is
+still saved but without `nodeId` → it will remain `unverified`. **Fail-open:** any error returns
+`[]`, and the save is never broken.
+
+**How the symbol's lines are found.** The graph records only where a symbol *starts*
+(`"L42"`). The span is derived from the source: the symbol's name is looked up on that line (or
+the nearest line naming it, so a graph built a few edits ago still lands on it), then scanned to
+the end of its declaration — matching brackets while skipping strings, comments and regex
+literals, or the indented block for Python. The fingerprint hashes those lines trimmed, without
+blank lines: re-indenting is not drift, any token change is. The span is a heuristic, but a
+deterministic one, so save-time and read-time fingerprints differ only when the symbol's own
+text changed.
 
 ---
 
@@ -58,8 +72,9 @@ returns `[]`, and the save is never broken.
 
 When you run `leina memory verified`, the librarian reviews each sticky note
 **at the moment of reading** (the result is never persisted). For each anchor, the verifier
-asks the graph: *does this node still exist? what is the file's current hash on disk?*
-And the anchor state is decided:
+asks the graph: *does this node still exist? what is its current fingerprint on disk?* — the
+symbol's lines for a `sym1:` anchor, the whole file for a file-level one. And the anchor state is
+decided:
 
 ```mermaid
 flowchart TD
@@ -81,13 +96,33 @@ The four states (`MemoryState`):
 
 | State | Meaning | The sticky note... |
 |--------|-----------|---------------|
-| `active` | the node exists and the file **hasn't changed** | is still stuck on, and current |
-| `stale` | the node exists but the **file changed** | is still stuck on, but the page was rewritten |
+| `active` | the node exists and **its fingerprint is unchanged** | is still stuck on, and current |
+| `stale` | the node exists but **the symbol changed** (or can no longer be located in its file); for a file-level anchor, **the file changed** | is still stuck on, but the page was rewritten |
 | `contradicted` | the node **no longer exists** in the graph | the page was torn out |
 | `unverified` | it never resolved to a node, or the graph isn't available | we don't know which page it was against |
 
 When an observation has **several** anchors, the aggregation takes the worst case
-(`contradicted` > `stale` > `unverified` > `active`).
+(`contradicted` > `stale` > `unverified` > `active`) — with one exception: a whole-file anchor
+into a file the same note also pins *symbols* of (`src/cli/doctor.ts` next to `checkHooks`) does
+not count as `stale`. The symbols decide; an edit elsewhere in that file is not drift for the note.
+(A node that is gone still counts.)
+
+### Upgrading pre-3.0 anchors: `memory reanchor`
+
+Before 3.0 every anchor stored the whole file's hash, so any edit anywhere in the file flagged
+the note. `leina memory reanchor <dir>` upgrades those anchors in place to symbol fingerprints
+**without moving their baseline**: the saved hash identifies one exact version of the file — the
+working tree when it is unchanged, otherwise a commit found by walking that file's history on
+any ref (newest first, last 300 commits) — and the symbol is fingerprinted *in that version*.
+An upgraded anchor reads `active` only if the symbol itself is unchanged since the note was
+saved. Anchors whose version can't be found, and module/config anchors, stay file-level.
+`--dry-run` reports what would change.
+
+The same command also mints anchors from the backticked code references in each note
+(`` `openFreshStore` ``, `` `src/cli/wiring.ts` ``, `` `src/a.ts:helper` ``) when one resolves
+to exactly one node. It skips identifiers shorter than 3 characters and generic words (`get`,
+`query`, `foo`, `npm`…), prefers production code over tests when a name matches both, and never
+anchors a bare name to test code alone — qualify it (`test/x.test.ts:helper`) to mean it.
 
 ---
 
@@ -112,12 +147,20 @@ flowchart TD
         d2["stale / unverified → warning ⚠️"]
         d3["contradicted → do_not_use ⛔"]
     end
-    subgraph norm["NORMATIVE (the rule survives)"]
+    subgraph norm["NORMATIVE (the rule survives, but is re-checked)"]
         n1["active → usable ✅"]
-        n2["stale / contradicted → usable<br/>+ checkViolation ⚠️<br/>(the rule applies, but the code drifted)"]
+        n2["stale / contradicted → warning<br/>+ checkViolation ⚠️<br/>(the rule applies, but the code it governs changed)"]
         n3["unverified → warning ⚠️"]
     end
 ```
+
+A drifted rule is never discarded, but it is not served as `usable` either (before 3.0 it was):
+the code it governs changed, so the agent is told to check it was not violated.
+
+The note's **lifecycle status** (`active` / `resolved` / `obsolete`, see
+[Memory](./04-memoria.md)) is a second, independent axis: it is reported next to the drift
+`state` — never folded into it — and it caps the verdict. A `resolved` note is history, not
+current truth, so it is at best a `warning`; an `obsolete` one is always `do_not_use`.
 
 | Verdict | What it tells the agent |
 |-----------|------------------------|
@@ -143,7 +186,7 @@ sequenceDiagram
     Note over Dev,Graph: SAVE-TIME (you write the note)
     Dev->>Mem: memory save --anchors "TokenFactory"
     Mem->>Graph: resolver: which node is "TokenFactory"?
-    Graph-->>Mem: nodeId + file hash (baseline)
+    Graph-->>Mem: nodeId + symbol fingerprint (baseline)
     Mem->>Mem: saves anchor {nodeId, anchorHash}
 
     Note over Dev,Graph: ...the code changes...
@@ -151,8 +194,8 @@ sequenceDiagram
     Note over Dev,Graph: READ-TIME (you verify)
     Dev->>Mem: memory verified "token factory"
     Mem->>Mem: FTS5/BM25 → candidate observations
-    Mem->>Graph: verifier: does the node exist? current hash?
-    Graph-->>Mem: exists=true, different hash → stale
+    Mem->>Graph: verifier: does the node exist? current fingerprint?
+    Graph-->>Mem: exists=true, the symbol's lines changed → stale
     Mem-->>Dev: USABLE / WARNING / DO-NOT-USE + reason
 ```
 

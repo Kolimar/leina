@@ -12,7 +12,13 @@ import { SQLiteMemoryRepository } from "../infrastructure/sqlite/memory-reposito
 import type { AnchorResolver } from "../infrastructure/sqlite/memory-repository.ts";
 import { FTS5_MIN_NODE_MAJOR } from "../infrastructure/sqlite/schema.ts";
 import { detectNodeVersionAdvice, buildLikeModeWarning } from "../infrastructure/node-version-advice.ts";
-import { makeResolveAnchor, makeVerifyNode } from "../application/memory/anchor-verify.ts";
+import {
+  makeResolveAnchor,
+  makeUpgradeAnchor,
+  makeVerifyNode,
+  type AnchorUpgrader,
+} from "../application/memory/anchor-verify.ts";
+import { makeGitFileHistory } from "../infrastructure/git/file-history.ts";
 import { AmbiguousProjectError, deriveProjectKey, deriveWorkspaceRootKey, detectWorkspaceMode } from "../application/project/detect-key.ts";
 import { globalMemoryPath, leinaHome } from "../infrastructure/install/share-paths.ts";
 import { isStale } from "../application/graph/manifest.ts";
@@ -71,6 +77,7 @@ export function openMemoryRepo(root: string, opts?: { readOnly?: boolean }): {
   store: MemoryRepository;
   verifyNode: NodeVerifier;
   resolveAnchor: AnchorResolver;
+  upgradeAnchor: AnchorUpgrader;
   close: () => void;
 } {
   let graph: GraphStore | null = null;
@@ -86,6 +93,7 @@ export function openMemoryRepo(root: string, opts?: { readOnly?: boolean }): {
   };
   const resolveAnchor = makeResolveAnchor({ getStore: getGraph, root });
   const verifyNode = makeVerifyNode({ getStore: getGraph, root });
+  const upgradeAnchor = makeUpgradeAnchor({ getStore: getGraph, root, history: makeGitFileHistory(root) });
   // Derive the project key from git remote / root / dir name. May throw AmbiguousProjectError.
   const projectKey = deriveProjectKey(resolvePath(root)).key;
   const store = new SQLiteMemoryRepository(globalMemoryPath(), projectKey, resolveAnchor, opts);
@@ -96,6 +104,8 @@ export function openMemoryRepo(root: string, opts?: { readOnly?: boolean }): {
     // application/memory/reanchor.ts can re-resolve labels extracted from EXISTING
     // observation text against the same live-graph-backed resolver.
     resolveAnchor,
+    // `memory reanchor`: file-level anchors → symbol fingerprints (git history lookup).
+    upgradeAnchor,
     close: () => {
       store.close();
       if (graph) graph.close();
@@ -414,6 +424,11 @@ export function openWorkspaceMemoryRepo(
   };
   const resolveAnchor = makeResolveAnchor({ getStore: getGraph, root: resolved });
   const verifyNode = makeVerifyNode({ getStore: getGraph, root: resolved });
+  const upgradeAnchor = makeUpgradeAnchor({
+    getStore: getGraph,
+    root: resolved,
+    history: makeGitFileHistory(resolved),
+  });
   const baseRepo = new SQLiteMemoryRepository(globalMemoryPath(), wsProjectKey, resolveAnchor);
 
   // Create per-member repos (all backed by same global db, different projectKeys)
@@ -426,6 +441,7 @@ export function openWorkspaceMemoryRepo(
     store: federator,
     verifyNode,
     resolveAnchor,
+    upgradeAnchor,
     close: () => {
       // federator.close() is a no-op; we own all repos here
       for (const mr of memberRepos) mr.close();

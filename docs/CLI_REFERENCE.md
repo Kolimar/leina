@@ -293,6 +293,15 @@ Search **plus drift classification** against the live graph. Buckets results int
 you're about to act on remembered context. If the graph is unavailable, verdicts degrade to
 unverified (still printed).
 
+Anchors saved by 3.0 carry a **symbol fingerprint** (`sym1:`): a note goes `stale` when its
+anchored symbol's own lines change, not when anything else in the file does. Whole-file anchors
+(module/config nodes, other languages, anchors saved before 3.0) still compare the file — and a
+whole-file anchor into a file whose symbols the same note pins does not count as stale. Drifted
+`decision`/`preference` notes land in `WARNING` with `⚠ check-violation` (before 3.0 they were
+`USABLE`). The lifecycle status is printed next to the drift state and caps the verdict:
+`resolved` notes are at best `WARNING`, `obsolete` ones `DO NOT USE`. Details in
+[concepts/05](./concepts/05-comunicacion-grafo-memoria.md).
+
 ### `memory get <dir> <id>`
 Print the full observation (title, type, topic_key, status, timestamps, revision, content). Ids are
 scoped to the current project: another project's id reads as not found (same for
@@ -340,13 +349,23 @@ its snapshots. `--dry-run` reports what would move. Older versions moved only li
 
 ### `memory reanchor <dir> [--dry-run]`
 Retro-anchor **existing** observations that reference a real file/symbol in prose but were
-saved without an explicit `--anchors`. Extracts only EXPLICIT references (a path matching a
-node's `sourceFile`, or a symbol resolved with a functional-exact match against the live
-graph) — ambiguous (2+ matches) or unresolved candidates are discarded, never guessed.
+saved without an explicit `--anchors`. Extracts only EXPLICIT references (a backticked path
+matching a node's `sourceFile`, or a symbol resolved with a functional-exact match against the
+live graph; `` `path:symbol` `` resolves the symbol within that file only) — ambiguous (2+
+matches) or unresolved candidates are discarded, never guessed. Identifiers shorter than 3
+characters and generic words (`get`, `query`, `foo`, `npm`…) are not candidates; a bare name
+that matches production code and tests anchors the production node, and one that matches only
+test code is rejected (qualify it as `` `test/x.test.ts:helper` ``).
 Minting is **additive** (unions with any anchors the observation already has) and
 **idempotent** per `(observation_id, node_id)`: re-running never duplicates a row.
-`--dry-run` reports what would be minted/rejected without writing. Prints a summary
-(`{processed, minted, rejected}`) plus a per-observation breakdown.
+
+It also **upgrades whole-file anchors** (every anchor saved before 3.0) to symbol fingerprints
+without moving their baseline: the symbol is fingerprinted in the file version the anchor was
+saved against — the working tree when unchanged, else the commit found in that file's git
+history (any ref, last 300 commits). Anchors whose version is not found, and module/config
+anchors, stay file-level.
+`--dry-run` reports what would be minted/rejected/upgraded without writing. Prints a summary
+(`{processed, minted, rejected, upgraded}`) plus a per-observation breakdown.
 
 ### `memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--keep-sessions N] [--dry-run]`
 Garbage-collect this project's **superseded snapshots** — the prior revisions every

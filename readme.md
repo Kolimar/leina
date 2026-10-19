@@ -466,7 +466,9 @@ to evolve an existing entry in place instead of creating a duplicate. Already ha
 observations saved without `--anchors`? `memory reanchor <dir> [--dry-run]` retro-anchors
 them by extracting only *explicit* path/symbol references from their text and verifying each
 candidate against the live graph — ambiguous or unresolved mentions are discarded, never
-guessed. It's additive and idempotent, so re-running it is always safe.
+guessed. It also upgrades whole-file anchors saved before 3.0 to symbol fingerprints (from
+git history, keeping their baseline). It's additive and idempotent, so re-running it is always
+safe.
 
 ### Graph explorer server (`graph serve`)
 
@@ -506,8 +508,9 @@ never returns results from repo B.
 What makes it more than a notes file: an observation can be **anchored** to graph
 nodes (the symbols it talks about). When the code changes, `memory verified`
 re-checks each hit against the live graph and labels it **USABLE**, **WARNING** (the
-anchored code moved — stale), or **DO-NOT-USE** (a normative claim the code now
-contradicts). Memory that quietly goes wrong is worse than no memory; drift
+anchored symbol's own code changed — stale; a drifted decision is flagged for a violation
+check), or **DO-NOT-USE** (the anchored code is gone, or the note was marked obsolete).
+Anchors fingerprint the symbol itself, so an edit elsewhere in the same file is not drift. Memory that quietly goes wrong is worse than no memory; drift
 detection is what keeps recalled context trustworthy.
 
 **Migrating from the old per-repo layout.** Memory now lives only in the global DB;

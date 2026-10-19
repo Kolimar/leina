@@ -474,18 +474,24 @@ function memMergeProjects(rest: string[], dir: string): void {
 
 // memory reanchor <dir> [--dry-run] — retro-anchor existing observations by extracting
 // EXPLICIT path/symbol references from their text and resolving them against the live
-// graph (see application/memory/reanchor.ts for the conservative extraction rules).
+// graph (see application/memory/reanchor.ts for the conservative extraction rules), and
+// upgrade file-level anchors to symbol fingerprints without moving their baseline.
 function memReanchor(rest: string[], dir: string): void {
   const dryRun = hasFlag(rest, "--dry-run");
-  const { store, resolveAnchor, close } = memOpenGuarded(dir);
+  const { store, resolveAnchor, upgradeAnchor, close } = memOpenGuarded(dir);
   try {
-    const report = reanchorObservations(store, resolveAnchor, { dryRun });
+    const report = reanchorObservations(store, resolveAnchor, { dryRun, upgradeAnchor });
     const prefix = dryRun ? "[dry-run] " : "";
     console.log(
       `${prefix}reanchor: ${report.processed} candidate(s) processed, ` +
-        `${report.minted} minted, ${report.rejected} rejected`,
+        `${report.minted} minted, ${report.rejected} rejected, ` +
+        `${report.upgraded} file-level anchor(s) upgraded to symbol fingerprints`,
     );
     for (const item of report.items) {
+      if (item.upgraded.length > 0) {
+        const labels = item.upgraded.map((u) => u.label ?? u.nodeId).join(", ");
+        console.log(`  #${item.observationId} upgraded: ${labels}`);
+      }
       if (item.minted.length > 0) {
         const labels = item.minted.map((m) => `${m.label} -> ${m.nodeId}`).join(", ");
         console.log(`  #${item.observationId} minted: ${labels}`);
@@ -595,7 +601,7 @@ function memHelp(): void {
       `  suggest-topic <dir> --title "..." [--type ..]\n` +
       `  current-project <dir>              (show derived project key + detection method)\n` +
       `  merge-projects <dir> --from <key> --to <key> [--dry-run]  (rename/merge project keys)\n` +
-      `  reanchor <dir> [--dry-run]         (retro-anchor observations to real graph nodes)\n` +
+      `  reanchor <dir> [--dry-run]         (retro-anchor notes; upgrade whole-file anchors to symbols)\n` +
       `  compact <dir> [--keep N] [--sessions-older-than DAYS] [--keep-sessions N] [--dry-run]\n` +
       `                                     (GC superseded snapshots — live rows always kept;\n` +
       `                                      --keep N retains N newest snapshots per topic, default 0;\n` +

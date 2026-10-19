@@ -236,6 +236,17 @@ export class MockMemoryRepository implements MemoryRepository {
     return inserted;
   }
 
+  replaceAnchorHash(observationId: string, nodeId: string, from: string, to: string): number {
+    let changed = 0;
+    for (const a of this.anchors) {
+      if (a.observationId === observationId && a.nodeId === nodeId && a.anchorHash === from) {
+        a.anchorHash = to;
+        changed += 1;
+      }
+    }
+    return changed;
+  }
+
   suggestTopicKeyWithMatches(
     title: string,
     _type: string,

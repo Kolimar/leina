@@ -152,8 +152,9 @@ MCP `memory_update {status, resolution}` set it directly. A status change record
 closing an old note never pushes it to the top of anything ordered by recency. Re-saving the
 same `topicKey` starts a fresh, active revision (the snapshot keeps the old status).
 
-The status is independent of the drift verdict (next chapter): a resolved note can still have
-fresh anchors, and an active one can be stale; `verified` reports both.
+The status is independent of the drift state (next chapter): a resolved note can still have
+fresh anchors, and an active one can be stale; `verified` reports both, and its verdict honours
+both — a resolved note is at best `WARNING`, an obsolete one `DO NOT USE`.
 
 ### The `session` (a work shift)
 

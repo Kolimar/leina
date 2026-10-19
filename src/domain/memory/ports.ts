@@ -33,10 +33,11 @@ export interface ResolvedAnchor {
   /** Source file that contains the node (used for drift detection). */
   sourceFile: string;
   /**
-   * SHA-256 of the source file at save time (from the build manifest).
-   * Undefined when the file is not in the manifest.
+   * Save-time drift baseline: `sym1:<sha256>` of the symbol's own source lines when the
+   * node has a span, else the whole file's sha256 (working tree, or the build manifest
+   * when the file is unreadable). Undefined when neither is available.
    */
-  fileHash?: string;
+  anchorHash?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +207,14 @@ export interface MemoryRepository {
       anchorHash?: string;
     }[],
   ): number;
+
+  /**
+   * Compare-and-set of an anchor's drift baseline: rewrites `anchor_hash` from `from` to
+   * `to` on the observation's anchors to `nodeId` (every role) that still hold `from`.
+   * Used by `memory reanchor` to upgrade file-level hashes to symbol fingerprints; a
+   * concurrent change wins (0 rows). Returns the number of anchors rewritten.
+   */
+  replaceAnchorHash(observationId: string, nodeId: string, from: string, to: string): number;
 
   // ---- topic-key suggestion -----------------------------------------------
 

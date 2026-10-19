@@ -246,6 +246,10 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     return this.ownerOf(observationId)?.addAnchorsIfMissing(observationId, anchors) ?? 0;
   }
 
+  replaceAnchorHash(observationId: string, nodeId: string, from: string, to: string): number {
+    return this.ownerOf(observationId)?.replaceAnchorHash(observationId, nodeId, from, to) ?? 0;
+  }
+
   // ---- Topic suggestion → host repo ---------------------------------------
 
   suggestTopicKeyWithMatches(

@@ -10,7 +10,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQLiteMemoryRepository as MemoryStore } from "../src/infrastructure/sqlite/memory-repository.ts";
 import type { AnchorResolver } from "../src/infrastructure/sqlite/memory-repository.ts";
-import { getVerifiedContext, latestMemoriesForNode } from "../src/application/memory/query.ts";
+import {
+  deriveAnchorState,
+  deriveMemoryState,
+  getVerifiedContext,
+  latestMemoriesForNode,
+  verdictOf,
+} from "../src/application/memory/query.ts";
 import type { NodeVerifier } from "../src/application/memory/query.ts";
 import { ensureMemorySchema, MEMORY_SCHEMA_VERSION, LIKE_DDL } from "../src/infrastructure/sqlite/schema.ts";
 
@@ -27,7 +33,7 @@ function tmpDir(): string {
 function resolverWithHash(hash: string): AnchorResolver {
   return (label: string) =>
     label === "UserService"
-      ? [{ nodeId: "src_user_ts:userservice", sourceFile: "src/user.ts", fileHash: hash }]
+      ? [{ nodeId: "src_user_ts:userservice", sourceFile: "src/user.ts", anchorHash: hash }]
       : [];
 }
 
@@ -134,9 +140,9 @@ test("(drift-d) descriptive + node gone → contradicted → do_not_use", () => 
   }
 });
 
-// ---- (drift-e) normative stale → usable + checkViolation --------------------
+// ---- (drift-e) normative stale → warning + checkViolation -------------------
 
-test("(drift-e) normative + hash changed → usable + checkViolation", () => {
+test("(drift-e) normative + hash changed → warning + checkViolation (never blindly usable)", () => {
   const dir = tmpDir();
   const store = new MemoryStore(join(dir, "memory.db"), "test_project", resolverWithHash("H1"));
   try {
@@ -149,19 +155,21 @@ test("(drift-e) normative + hash changed → usable + checkViolation", () => {
     const verify: NodeVerifier = () => ({ exists: true, currentHash: "H2" });
     const ctx = getVerifiedContext(store, "drifttoken", verify);
 
-    assert.equal(ctx.usable.length, 1, "normative memory is never invalidated by drift");
-    assert.equal(ctx.usable[0]!.nature, "normative");
-    assert.equal(ctx.usable[0]!.state, "stale");
-    assert.equal(ctx.usable[0]!.checkViolation, true, "drifted normative memory flags a violation check");
+    assert.equal(ctx.usable.length, 0, "a rule whose code changed is not served as usable");
+    assert.equal(ctx.doNotUse.length, 0, "normative memory is never discarded by drift");
+    assert.equal(ctx.warning.length, 1);
+    assert.equal(ctx.warning[0]!.nature, "normative");
+    assert.equal(ctx.warning[0]!.state, "stale");
+    assert.equal(ctx.warning[0]!.checkViolation, true, "drifted normative memory flags a violation check");
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-// ---- (drift-f) normative contradicted → usable + checkViolation -------------
+// ---- (drift-f) normative contradicted → warning + checkViolation ------------
 
-test("(drift-f) normative + node gone → usable + checkViolation (not do_not_use)", () => {
+test("(drift-f) normative + node gone → warning + checkViolation (not do_not_use)", () => {
   const dir = tmpDir();
   const store = new MemoryStore(join(dir, "memory.db"), "test_project", resolverWithHash("H1"));
   try {
@@ -175,9 +183,9 @@ test("(drift-f) normative + node gone → usable + checkViolation (not do_not_us
     const ctx = getVerifiedContext(store, "drifttoken", verify);
 
     assert.equal(ctx.doNotUse.length, 0, "normative memory must not be discarded by drift");
-    assert.equal(ctx.usable.length, 1);
-    assert.equal(ctx.usable[0]!.state, "contradicted");
-    assert.equal(ctx.usable[0]!.checkViolation, true);
+    assert.equal(ctx.warning.length, 1);
+    assert.equal(ctx.warning[0]!.state, "contradicted");
+    assert.equal(ctx.warning[0]!.checkViolation, true);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
@@ -449,8 +457,8 @@ test("(super-b) a superseded snapshot is excluded from search but retrievable by
 test("(super-c) topic re-save with a different anchor set replaces the live row's anchors", () => {
   const dir = tmpDir();
   const resolver: AnchorResolver = (label) => {
-    if (label === "UserService") return [{ nodeId: "n_user", sourceFile: "src/user.ts", fileHash: "H1" }];
-    if (label === "TokenStore") return [{ nodeId: "n_token", sourceFile: "src/token.ts", fileHash: "H2" }];
+    if (label === "UserService") return [{ nodeId: "n_user", sourceFile: "src/user.ts", anchorHash: "H1" }];
+    if (label === "TokenStore") return [{ nodeId: "n_token", sourceFile: "src/token.ts", anchorHash: "H2" }];
     return [];
   };
   const store = new MemoryStore(join(dir, "memory.db"), "test_project", resolver);
@@ -834,6 +842,94 @@ test("(mig-g) save sin scope explícito usa 'project' por defecto", () => {
       // scope: omitido → debe usar "project"
     });
     assert.equal(observation.scope, "project", "scope por defecto debe ser 'project'");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Symbol-level anchors, file-anchor subsumption, and the status-aware verdict (3.0)
+// ---------------------------------------------------------------------------
+
+const SYM_A = `sym1:${"a".repeat(64)}`;
+const SYM_B = `sym1:${"b".repeat(64)}`;
+const FILE_1 = "1".repeat(64);
+const FILE_2 = "2".repeat(64);
+
+test("(drift-sym-1) a sym1 anchor compares the symbol fingerprint, not the file hash", () => {
+  const a = { nodeId: "n", anchorLabel: "alpha", anchorFile: "src/a.ts", anchorHash: SYM_A };
+  // The file changed (another symbol was edited) but alpha did not → active.
+  const same = deriveAnchorState(a, () => ({ exists: true, currentHash: FILE_2, symbolHash: SYM_A }));
+  assert.equal(same.state, "active");
+  assert.match(same.reason, /verified 'alpha' in 'src\/a\.ts'/);
+  const changed = deriveAnchorState(a, () => ({ exists: true, currentHash: FILE_2, symbolHash: SYM_B }));
+  assert.equal(changed.state, "stale");
+  assert.match(changed.reason, /'alpha' changed in 'src\/a\.ts'/);
+  const lost = deriveAnchorState(a, () => ({ exists: true, currentHash: FILE_2, symbolHash: null }));
+  assert.equal(lost.state, "stale");
+  assert.match(lost.reason, /can no longer be located/);
+  // A verifier that computes no fingerprints cannot verify a symbol anchor.
+  const legacyVerifier = deriveAnchorState(a, () => ({ exists: true, currentHash: FILE_2 }));
+  assert.equal(legacyVerifier.state, "unverified");
+  // A file-level anchor keeps the whole-file comparison, labelled as such.
+  const fileLevel = deriveAnchorState({ ...a, anchorHash: FILE_1 }, () => ({ exists: true, currentHash: FILE_2, symbolHash: SYM_A }));
+  assert.equal(fileLevel.state, "stale");
+  assert.match(fileLevel.reason, /file-level anchor/);
+});
+
+test("(drift-sym-2) a symbol anchor overrides a whole-file anchor into the same file — except when its node is gone", () => {
+  const verify: NodeVerifier = (id) =>
+    id === "gone" ? { exists: false, currentHash: null } : { exists: true, currentHash: FILE_2, symbolHash: SYM_A };
+  const sym = { nodeId: "sym", anchorLabel: "alpha", anchorFile: "src/a.ts", anchorHash: SYM_A };
+  const moduleSameFile = { nodeId: "mod", anchorLabel: "src/a.ts", anchorFile: "src/a.ts", anchorHash: FILE_1 };
+  const moduleOtherFile = { nodeId: "mod2", anchorLabel: "src/b.ts", anchorFile: "src/b.ts", anchorHash: FILE_1 };
+  const goneSameFile = { nodeId: "gone", anchorLabel: "beta", anchorFile: "src/a.ts", anchorHash: FILE_1 };
+
+  assert.equal(deriveMemoryState([sym, moduleSameFile], verify).state, "active", "edit elsewhere in a.ts is not drift");
+  assert.equal(deriveMemoryState([moduleSameFile], verify).state, "stale", "alone, the file anchor still counts");
+  assert.equal(deriveMemoryState([sym, moduleOtherFile], verify).state, "stale", "b.ts is not pinned by a symbol");
+  assert.equal(deriveMemoryState([sym, goneSameFile], verify).state, "contradicted", "a gone node always counts");
+});
+
+test("(drift-verdict-1) verdictOf: drift by nature, honouring the lifecycle status", () => {
+  // Active notes: the drift verdict.
+  assert.deepEqual(verdictOf("active", "descriptive"), { verdict: "usable", checkViolation: false });
+  assert.deepEqual(verdictOf("stale", "descriptive"), { verdict: "warning", checkViolation: false });
+  assert.deepEqual(verdictOf("contradicted", "descriptive"), { verdict: "do_not_use", checkViolation: false });
+  assert.deepEqual(verdictOf("active", "normative"), { verdict: "usable", checkViolation: false });
+  assert.deepEqual(verdictOf("stale", "normative"), { verdict: "warning", checkViolation: true });
+  assert.deepEqual(verdictOf("contradicted", "normative"), { verdict: "warning", checkViolation: true });
+  assert.deepEqual(verdictOf("unverified", "normative"), { verdict: "warning", checkViolation: false });
+  // resolved: history, never more than a warning; obsolete: never usable.
+  assert.equal(verdictOf("active", "descriptive", "resolved").verdict, "warning");
+  assert.equal(verdictOf("contradicted", "descriptive", "resolved").verdict, "do_not_use");
+  assert.deepEqual(verdictOf("stale", "normative", "resolved"), { verdict: "warning", checkViolation: true });
+  assert.deepEqual(verdictOf("active", "normative", "obsolete"), { verdict: "do_not_use", checkViolation: false });
+});
+
+test("(drift-verdict-2) verified: status and drift state are reported side by side", () => {
+  const dir = tmpDir();
+  const store = new MemoryStore(join(dir, "memory.db"), "test_project", resolverWithHash("H1"));
+  try {
+    const save = (title: string) =>
+      store.save({ title, content: `statustoken ${title}`, type: "architecture", anchors: ["UserService"] }).observation;
+    save("still active");
+    store.update(save("fixed already").id, { status: "resolved" });
+    store.update(save("no longer true").id, { status: "obsolete" });
+    const verify: NodeVerifier = () => ({ exists: true, currentHash: "H1" });
+    const ctx = getVerifiedContext(store, "statustoken", verify);
+
+    assert.deepEqual(ctx.usable.map((i) => i.title), ["still active"]);
+    assert.deepEqual(ctx.warning.map((i) => [i.title, i.status, i.state]), [["fixed already", "resolved", "active"]]);
+    assert.deepEqual(ctx.doNotUse.map((i) => [i.title, i.status, i.state]), [["no longer true", "obsolete", "active"]]);
+
+    const node = latestMemoriesForNode(store, NODE_ID, verify, 10);
+    const byTitle = new Map(node.map((m) => [m.title, m]));
+    assert.equal(byTitle.get("fixed already")?.status, "resolved");
+    assert.equal(byTitle.get("fixed already")?.verdict, "warning");
+    assert.equal(byTitle.get("no longer true")?.verdict, "do_not_use");
+    assert.equal(byTitle.get("still active")?.verdict, "usable");
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });

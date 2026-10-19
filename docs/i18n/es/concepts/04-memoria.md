@@ -155,8 +155,9 @@ su fecha (`statusChangedAt`) y la nota opcional (`resolution`) pero **no toca `u
 cerrar una nota vieja nunca la sube al tope de nada ordenado por recencia. Volver a guardar el
 mismo `topicKey` arranca una revisión nueva y activa (el snapshot conserva el estado viejo).
 
-El estado es independiente del veredicto de drift (siguiente capítulo): una nota resuelta
-puede tener anclas frescas y una activa puede estar stale; `verified` informa ambos.
+El estado es independiente del estado de drift (siguiente capítulo): una nota resuelta
+puede tener anclas frescas y una activa puede estar stale; `verified` informa ambos, y su
+veredicto respeta los dos — una nota resuelta es como mucho `WARNING`, una obsoleta `DO NOT USE`.
 
 ### La `session` (un turno de trabajo)
 

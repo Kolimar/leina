@@ -44,13 +44,27 @@ guardás una observación con `--anchors "TokenFactory"`, en **save-time** ocurr
 
 1. Se busca en el grafo el/los node(s) cuyo label coincide **exacto** (functional-exact, sin
    substring difuso) con `"TokenFactory"`.
-2. Para cada match se lee la **huella del archivo** (SHA-256) desde el manifest del build.
+2. Para cada match se toma una **huella** del working tree:
+   - una **huella de símbolo** (`sym1:<sha256>`) de las *líneas propias* del símbolo — siempre que
+     el node tenga línea de inicio (`sourceLocation`) en un lenguaje con regla de span (TS/JS,
+     Java, C#, Go, Rust, C/C++, Kotlin, Swift, PHP… por llaves; Python por indentación);
+   - si no, el SHA-256 del **archivo entero** (nodes module/config, otros lenguajes), o el hash
+     del manifest del build cuando el archivo no se puede leer.
 3. Se guarda en `memory_anchors`: `nodeId`, `sourceFile` y ese `anchorHash` de save-time.
 
-Ese hash es la foto del archivo *en el momento en que escribiste la nota*. Es la línea base
-contra la que después se mide el drift. Si el label no resuelve (no hay grafo, no hay match), el
-anchor se guarda igual pero sin `nodeId` → quedará `unverified`. **Fail-open:** cualquier error
-devuelve `[]`, nunca rompe el save.
+Esa huella es la foto *en el momento en que escribiste la nota*. Es la línea base contra la que
+después se mide el drift. Si el label no resuelve (no hay grafo, no hay match), el anchor se
+guarda igual pero sin `nodeId` → quedará `unverified`. **Fail-open:** cualquier error devuelve
+`[]`, nunca rompe el save.
+
+**Cómo se encuentran las líneas del símbolo.** El grafo solo registra dónde *empieza* un
+símbolo (`"L42"`). El span se deriva del código: se busca el nombre del símbolo en esa línea (o
+en la línea más cercana que lo nombre, así un grafo construido hace unas ediciones igual cae en
+él) y se recorre hasta el final de su declaración — balanceando llaves y saltando strings,
+comentarios y regex literales, o el bloque indentado en Python. La huella hashea esas líneas
+recortadas y sin líneas en blanco: re-indentar no es drift, cambiar cualquier token sí. El span
+es una heurística, pero determinista: la huella de save-time y la de read-time solo difieren
+cuando cambió el texto del propio símbolo.
 
 ---
 
@@ -58,8 +72,9 @@ devuelve `[]`, nunca rompe el save.
 
 Cuando corrés `leina memory verified`, el bibliotecario revisa cada post-it
 **en el momento de leer** (nunca se persiste el resultado). Para cada anchor, el verifier
-pregunta al grafo: *¿este node todavía existe? ¿cuál es el hash actual del archivo en el disco?*
-Y a partir de eso se decide el estado:
+pregunta al grafo: *¿este node todavía existe? ¿cuál es su huella actual en el disco?* — las
+líneas del símbolo para un anchor `sym1:`, el archivo entero para uno de nivel archivo. Y a partir
+de eso se decide el estado:
 
 ```mermaid
 flowchart TD
@@ -81,13 +96,34 @@ Los cuatro estados (`MemoryState`):
 
 | Estado | Significa | El post-it... |
 |--------|-----------|---------------|
-| `active` | el node existe y el archivo **no cambió** | sigue pegado y vigente |
-| `stale` | el node existe pero el **archivo cambió** | sigue pegado, pero la página se reescribió |
+| `active` | el node existe y **su huella no cambió** | sigue pegado y vigente |
+| `stale` | el node existe pero **el símbolo cambió** (o ya no se encuentra en su archivo); en un anchor de nivel archivo, **el archivo cambió** | sigue pegado, pero la página se reescribió |
 | `contradicted` | el node **ya no existe** en el grafo | la página fue arrancada |
 | `unverified` | nunca resolvió a un node, o el grafo no está disponible | no sabemos contra qué página estaba |
 
 Cuando una observación tiene **varios** anchors, el estado se agrega: gana el peor caso
-(`contradicted` > `stale` > `unverified` > `active`).
+(`contradicted` > `stale` > `unverified` > `active`) — con una excepción: un anchor de archivo
+entero sobre un archivo del que la misma nota también fija *símbolos* (`src/cli/doctor.ts` junto
+a `checkHooks`) no cuenta como `stale`. Deciden los símbolos; una edición en otra parte de ese
+archivo no es drift para la nota. (Un node que desapareció sí cuenta.)
+
+### Actualizar anchors previos a 3.0: `memory reanchor`
+
+Antes de 3.0 cada anchor guardaba el hash del archivo entero, así que cualquier edición en
+cualquier parte del archivo marcaba la nota. `leina memory reanchor <dir>` actualiza esos anchors
+en el lugar a huellas de símbolo **sin mover su línea base**: el hash guardado identifica una
+versión exacta del archivo — el working tree si no cambió, si no un commit encontrado recorriendo
+la historia de ese archivo en cualquier ref (de más nuevo a más viejo, últimos 300 commits) — y
+el símbolo se huellea *en esa versión*. Un anchor actualizado da `active` solo si el propio
+símbolo no cambió desde que se guardó la nota. Los anchors cuya versión no aparece, y los de
+module/config, quedan a nivel archivo. `--dry-run` informa qué cambiaría.
+
+El mismo comando también crea anchors a partir de las referencias de código entre backticks de
+cada nota (`` `openFreshStore` ``, `` `src/cli/wiring.ts` ``, `` `src/a.ts:helper` ``) cuando una
+resuelve a exactamente un node. Ignora identificadores de menos de 3 caracteres y palabras
+genéricas (`get`, `query`, `foo`, `npm`…), prefiere código de producción sobre tests cuando un
+nombre matchea ambos, y nunca ancla un nombre suelto solo a código de test — calificalo
+(`test/x.test.ts:helper`) si es eso lo que querés.
 
 ---
 
@@ -112,12 +148,20 @@ flowchart TD
         d2["stale / unverified → warning ⚠️"]
         d3["contradicted → do_not_use ⛔"]
     end
-    subgraph norm["NORMATIVA (la regla sobrevive)"]
+    subgraph norm["NORMATIVA (la regla sobrevive, pero se re-chequea)"]
         n1["active → usable ✅"]
-        n2["stale / contradicted → usable<br/>+ chequeo de violación ⚠️<br/>(la regla aplica, pero el código drifteó)"]
+        n2["stale / contradicted → warning<br/>+ chequeo de violación ⚠️<br/>(la regla aplica, pero el código que gobierna cambió)"]
         n3["unverified → warning ⚠️"]
     end
 ```
+
+Una regla con drift nunca se descarta, pero tampoco se sirve como `usable` (antes de 3.0 sí):
+el código que gobierna cambió, así que se le pide al agente que chequee que no se haya violado.
+
+El **estado de ciclo de vida** de la nota (`active` / `resolved` / `obsolete`, ver
+[Memoria](./04-memoria.md)) es un segundo eje, independiente: se informa al lado del `state` de
+drift — nunca se mezcla con él — y pone un techo al veredicto. Una nota `resolved` es historia,
+no la verdad actual, así que como mucho es `warning`; una `obsolete` siempre es `do_not_use`.
 
 | Veredicto | Qué le dice al agente |
 |-----------|------------------------|
@@ -143,7 +187,7 @@ sequenceDiagram
     Note over Dev,Graph: SAVE-TIME (escribís la nota)
     Dev->>Mem: memory save --anchors "TokenFactory"
     Mem->>Graph: resolver: ¿qué node es "TokenFactory"?
-    Graph-->>Mem: nodeId + hash del archivo (línea base)
+    Graph-->>Mem: nodeId + huella del símbolo (línea base)
     Mem->>Mem: guarda anchor {nodeId, anchorHash}
 
     Note over Dev,Graph: ...el código cambia...
@@ -151,8 +195,8 @@ sequenceDiagram
     Note over Dev,Graph: READ-TIME (verificás)
     Dev->>Mem: memory verified "token factory"
     Mem->>Mem: FTS5/BM25 → observaciones candidatas
-    Mem->>Graph: verifier: ¿existe el node? ¿hash actual?
-    Graph-->>Mem: exists=true, hash distinto → stale
+    Mem->>Graph: verifier: ¿existe el node? ¿huella actual?
+    Graph-->>Mem: exists=true, cambiaron las líneas del símbolo → stale
     Mem-->>Dev: USABLE / WARNING / DO-NOT-USE + razón
 ```
 

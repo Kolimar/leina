@@ -6,9 +6,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
@@ -364,5 +366,73 @@ test("(MC-scope-1) get/update in project Q never reach project P's observation b
     } finally {
       rmSync(other, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Symbol-level drift (3.0): an edit elsewhere in the file is not drift
+// ---------------------------------------------------------------------------
+
+const TWO_FNS_SRC = [
+  "export function alphaSym(): number {",
+  "  return 1;",
+  "}",
+  "",
+  "export function betaSym(): number {",
+  "  return 2;",
+  "}",
+  "",
+].join("\n");
+
+test("(MC-drift-sym-1) verified: editing another function keeps the note usable; editing its symbol flags it", () => {
+  withEnv(({ env, dir }) => {
+    writeFileSync(join(dir, "a.ts"), TWO_FNS_SRC);
+    assert.equal(runCli(["build", dir], { env }).code, 0);
+    runCli(["memory", "save", dir, "--title", "Alpha note", "--content", "symdrift alpha returns one", "--anchors", "alphaSym"], { env });
+
+    writeFileSync(join(dir, "a.ts"), `// header\n${TWO_FNS_SRC.replace("return 2;", "return 22;")}`);
+    const other = runCli(["memory", "verified", dir, "symdrift"], { env });
+    assert.match(other.stdout, /USABLE \(1\)/, other.stdout);
+    assert.match(other.stdout, /all anchors verified/, "the whole file changed; the symbol did not");
+
+    writeFileSync(join(dir, "a.ts"), TWO_FNS_SRC.replace("return 1;", "return 11;"));
+    const own = runCli(["memory", "verified", dir, "symdrift"], { env });
+    assert.match(own.stdout, /WARNING \(1\)/, own.stdout);
+    assert.match(own.stdout, /'alphaSym' changed in 'a\.ts' since this memory was saved/);
+  });
+});
+
+test("(MC-reanchor-5) reanchor upgrades a pre-3.0 whole-file anchor from git history, keeping its baseline", () => {
+  withEnv(({ env, dir }) => {
+    const git = (...args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+    git("init", "-q");
+    writeFileSync(join(dir, "a.ts"), TWO_FNS_SRC);
+    git("add", "a.ts");
+    git("-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "v1");
+    assert.equal(runCli(["build", dir], { env }).code, 0);
+    const saved = runCli(["memory", "save", dir, "--title", "Alpha note", "--content", "legacydrift", "--anchors", "alphaSym"], { env });
+    const id = idFrom(saved.stdout);
+
+    // Rewrite the anchor as a pre-3.0 store left it: the whole-file sha256 at save time.
+    const v1Hash = createHash("sha256").update(TWO_FNS_SRC).digest("hex");
+    const db = new DatabaseSync(join(env.LEINA_HOME!, "memory.db"));
+    db.prepare("UPDATE memory_anchors SET anchor_hash = ? WHERE observation_id = ?").run(v1Hash, id);
+    db.close();
+
+    // Only the OTHER function changes afterwards.
+    writeFileSync(join(dir, "a.ts"), TWO_FNS_SRC.replace("return 2;", "return 22;"));
+    git("-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-am", "v2");
+    const before = runCli(["memory", "verified", dir, "legacydrift"], { env });
+    assert.match(before.stdout, /WARNING \(1\)/, "a whole-file anchor flags the unrelated edit");
+    assert.match(before.stdout, /file-level anchor/);
+
+    const r = runCli(["memory", "reanchor", dir], { env });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /1 file-level anchor\(s\) upgraded to symbol fingerprints/);
+    assert.match(r.stdout, new RegExp(`#${id} upgraded: alphaSym`));
+
+    const after = runCli(["memory", "verified", dir, "legacydrift"], { env });
+    assert.match(after.stdout, /USABLE \(1\)/, after.stdout);
+    assert.match(runCli(["memory", "reanchor", dir], { env }).stdout, /0 file-level anchor\(s\) upgraded/);
   });
 });

@@ -3,6 +3,7 @@
 
 import type { MemoryRepository } from "../../domain/memory/ports.ts";
 import type { ObservationStatus, ObservationType, Scope, SearchHit } from "../../domain/memory/model.ts";
+import { isSymbolFingerprint } from "../../domain/memory/symbol-span.ts";
 
 interface SearchOpts {
   scope?: Scope;
@@ -34,7 +35,7 @@ export function anchorsFor(store: MemoryRepository, nodeId: string): AnchorRef[]
 // ---------------------------------------------------------------------------
 // latestMemoriesForNode — "recent memories" panel for a single graph node.
 // Composes recentAnchoredObservations() (ordering/limit) with anchorsForObservation()
-// + deriveMemoryState()/classify() (drift badge) so callers get ready-to-render items
+// + deriveMemoryState()/verdictOf() (drift badge) so callers get ready-to-render items
 // instead of raw rows. Same shape of composition as getVerifiedContext() below, but
 // keyed by node instead of by search query.
 // ---------------------------------------------------------------------------
@@ -46,6 +47,8 @@ export interface NodeMemory {
   updatedAt: number;
   role: string;
   anchorLabel?: string;
+  /** Lifecycle status, reported next to (never folded into) the drift `state`. */
+  status: ObservationStatus;
   nature: Nature;
   state: MemoryState;
   reason: string;
@@ -68,13 +71,14 @@ export function latestMemoriesForNode(
     const anchors = store.anchorsForObservation(r.observationId);
     const { state, reason } = deriveMemoryState(anchors, verify);
     const nature = natureOf(obs.type);
-    const { verdict } = classify(state, nature);
+    const { verdict } = verdictOf(state, nature, obs.status);
     const item: NodeMemory = {
       observationId: r.observationId,
       title: obs.title,
       content: obs.content,
       updatedAt: r.updatedAt,
       role: r.role,
+      status: obs.status,
       nature,
       state,
       reason,
@@ -102,15 +106,18 @@ export type Nature = "descriptive" | "normative";
 
 export type Verdict = "usable" | "warning" | "do_not_use";
 
-// Looks up a node's current existence and source-file hash in the graph. Injected so
-// the memory layer verifies anchors without importing GraphStore (memory.db / graph.db
-// stay decoupled — joined here in app code, no FK).
+// Looks up a node's current existence, source-file hash and symbol fingerprint in the
+// graph. Injected so the memory layer verifies anchors without importing GraphStore
+// (memory.db / graph.db stay decoupled — joined here in app code, no FK).
 // `error` set means the graph itself could not be read (missing/corrupt) — distinct
 // from a definitive exists:false (node gone) or currentHash:null (file unreadable / no
 // baseline hash). It lets the caller tell "verification is down" apart from real drift.
+// `symbolHash` is the node's current `sym1:` fingerprint (application/memory/anchor-verify
+// .ts), null when its span cannot be located in the current file, and absent when the
+// verifier does not compute fingerprints (a symbol-level anchor then reads unverified).
 export type NodeVerifier = (
   nodeId: string,
-) => { exists: boolean; currentHash: string | null; error?: string };
+) => { exists: boolean; currentHash: string | null; symbolHash?: string | null; error?: string };
 
 interface AnchorForDrift {
   nodeId: string;
@@ -134,6 +141,8 @@ export function natureOf(type: ObservationType): Nature {
 
 // One anchor's drift state. anchorFile === undefined means it never resolved to a
 // real graph node → unverified (NOT contradicted: there was nothing to contradict).
+// A `sym1:` anchor compares the symbol's own lines, so only an edit to the anchored symbol
+// is drift; a bare-hash anchor (module-level, or saved before 3.0) compares the whole file.
 export function deriveAnchorState(a: AnchorForDrift, verify: NodeVerifier): StateReason {
   const who = a.anchorLabel ?? a.nodeId;
   if (a.anchorFile === undefined) {
@@ -156,10 +165,29 @@ export function deriveAnchorState(a: AnchorForDrift, verify: NodeVerifier): Stat
   if (a.anchorHash === undefined || v.currentHash === null) {
     return { state: "unverified", reason: `no hash available to compare for '${a.anchorFile}'` };
   }
+  if (isSymbolFingerprint(a.anchorHash)) return symbolAnchorState(a.anchorHash, who, a.anchorFile, v.symbolHash);
   if (v.currentHash !== a.anchorHash) {
-    return { state: "stale", reason: `'${a.anchorFile}' changed since this memory was saved` };
+    return { state: "stale", reason: `'${a.anchorFile}' changed since this memory was saved (file-level anchor)` };
   }
-  return { state: "active", reason: `verified against '${a.anchorFile}'` };
+  return { state: "active", reason: `verified against '${a.anchorFile}' (file-level anchor)` };
+}
+
+function symbolAnchorState(
+  saved: string,
+  who: string,
+  file: string,
+  current: string | null | undefined,
+): StateReason {
+  if (current === undefined) {
+    return { state: "unverified", reason: `no symbol fingerprint available to compare for '${who}'` };
+  }
+  if (current === null) {
+    return { state: "stale", reason: `'${who}' can no longer be located in '${file}'` };
+  }
+  if (current !== saved) {
+    return { state: "stale", reason: `'${who}' changed in '${file}' since this memory was saved` };
+  }
+  return { state: "active", reason: `verified '${who}' in '${file}'` };
 }
 
 const SEVERITY: Record<MemoryState, number> = {
@@ -169,16 +197,34 @@ const SEVERITY: Record<MemoryState, number> = {
   contradicted: 3,
 };
 
-// A memory's state is the worst case across its anchors. No anchors → unverified
-// (nothing to verify against).
+const isSymbolAnchor = (a: AnchorForDrift): boolean =>
+  a.anchorHash !== undefined && isSymbolFingerprint(a.anchorHash);
+
+// A whole-file anchor is coarser than a symbol anchor into the same file. When a memory pins
+// symbols of a file (`checkHooks` in `src/cli/doctor.ts`), an edit elsewhere in that file is
+// not drift for it: the whole-file anchors into that file do not count as STALE (they would
+// flag every unrelated edit and drown the symbol-level signal). A node that is gone still
+// counts — that is not a coarse signal.
+function subsumedFileAnchors(anchors: AnchorForDrift[]): Set<AnchorForDrift> {
+  const symbolFiles = new Set(anchors.filter(isSymbolAnchor).map((a) => a.anchorFile));
+  return new Set(
+    anchors.filter((a) => a.anchorHash !== undefined && !isSymbolAnchor(a) && symbolFiles.has(a.anchorFile)),
+  );
+}
+
+// A memory's state is the worst case across its anchors (see subsumedFileAnchors for the
+// whole-file anchors a symbol anchor overrides). No anchors → unverified (nothing to verify
+// against).
 export function deriveMemoryState(anchors: AnchorForDrift[], verify: NodeVerifier): StateReason {
   if (anchors.length === 0) {
     return { state: "unverified", reason: "memory has no graph anchors" };
   }
+  const subsumed = subsumedFileAnchors(anchors);
   let worst: StateReason = { state: "active", reason: "all anchors verified" };
   let graphError: string | undefined;
   for (const a of anchors) {
     const sr = deriveAnchorState(a, verify);
+    if (sr.state === "stale" && subsumed.has(a)) continue;
     if (sr.graphError !== undefined) graphError = sr.graphError;
     if (SEVERITY[sr.state] > SEVERITY[worst.state]) worst = sr;
   }
@@ -190,11 +236,12 @@ export function deriveMemoryState(anchors: AnchorForDrift[], verify: NodeVerifie
   return worst;
 }
 
-function classify(state: MemoryState, nature: Nature): { verdict: Verdict; checkViolation: boolean } {
+function driftVerdict(state: MemoryState, nature: Nature): { verdict: Verdict; checkViolation: boolean } {
   if (nature === "normative") {
-    // A rule is never invalidated by drift; drift flags a violation check instead.
+    // A rule is not invalidated by drift, but it is not trusted blindly either: the code it
+    // governs changed (or is gone), so it reads as a warning that asks for a violation check.
     if (state === "stale" || state === "contradicted") {
-      return { verdict: "usable", checkViolation: true };
+      return { verdict: "warning", checkViolation: true };
     }
     if (state === "unverified") return { verdict: "warning", checkViolation: false };
     return { verdict: "usable", checkViolation: false }; // active
@@ -203,6 +250,25 @@ function classify(state: MemoryState, nature: Nature): { verdict: Verdict; check
   if (state === "active") return { verdict: "usable", checkViolation: false };
   if (state === "contradicted") return { verdict: "do_not_use", checkViolation: false };
   return { verdict: "warning", checkViolation: false }; // stale | unverified
+}
+
+/**
+ * Whether a memory can be relied on, from two INDEPENDENT axes: its drift `state` against
+ * the graph and its lifecycle `status`. Neither is folded into the other — callers report
+ * both — but the verdict honours both: an `obsolete` note is never usable whatever its
+ * drift, and a `resolved` one (history, not current truth) is at best a warning. For
+ * active notes the verdict is the drift verdict by nature (normative rules flag a violation
+ * check on drift instead of being discarded).
+ */
+export function verdictOf(
+  state: MemoryState,
+  nature: Nature,
+  status: ObservationStatus = "active",
+): { verdict: Verdict; checkViolation: boolean } {
+  const drift = driftVerdict(state, nature);
+  if (status === "obsolete") return { verdict: "do_not_use", checkViolation: false };
+  if (status === "resolved" && drift.verdict === "usable") return { ...drift, verdict: "warning" };
+  return drift;
 }
 
 export interface VerifiedItem {
@@ -246,7 +312,7 @@ export function getVerifiedContext(
     const { state, reason, graphError } = deriveMemoryState(anchors, verify);
     if (graphError !== undefined && ctx.graphError === undefined) ctx.graphError = graphError;
     const nature = natureOf(h.type);
-    const { verdict, checkViolation } = classify(state, nature);
+    const { verdict, checkViolation } = verdictOf(state, nature, h.status);
     const item: VerifiedItem = {
       id: h.id,
       title: h.title,

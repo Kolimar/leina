@@ -925,3 +925,42 @@ test("(batch-6) rolled-back error string is exactly 'rolled-back' (spec-locked w
     cleanup(store, dir);
   }
 });
+
+// ---- replaceAnchorHash: compare-and-set of the drift baseline (reanchor's upgrade path) ----
+
+test("(replace-anchor-1) replaceAnchorHash rewrites only anchors still holding the expected hash", () => {
+  const { store, dir } = tmpStore();
+  try {
+    const { observation } = store.save({ title: "T", content: "C", type: "architecture" });
+    store.addAnchorsIfMissing(observation.id, [
+      { nodeId: "n1", role: "about", anchorHash: "old" },
+      { nodeId: "n1", role: "uses", anchorHash: "old" },
+      { nodeId: "n2", anchorHash: "old" },
+    ]);
+    assert.equal(store.replaceAnchorHash(observation.id, "n1", "old", "sym1:new"), 2, "every role of the node");
+    assert.equal(store.replaceAnchorHash(observation.id, "n1", "old", "sym1:other"), 0, "compare-and-set: already moved");
+    const byKey = new Map(store.anchorsForObservation(observation.id).map((a) => [`${a.nodeId}/${a.role}`, a.anchorHash]));
+    assert.equal(byKey.get("n1/about"), "sym1:new");
+    assert.equal(byKey.get("n1/uses"), "sym1:new");
+    assert.equal(byKey.get("n2/about"), "old", "other nodes untouched");
+  } finally {
+    cleanup(store, dir);
+  }
+});
+
+test("(replace-anchor-2) replaceAnchorHash never reaches another project's observation", () => {
+  const dir = join(tmpdir(), `cg-mem-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(dir, { recursive: true });
+  const p = new MemoryStore(join(dir, "memory.db"), "project_p");
+  const q = new MemoryStore(join(dir, "memory.db"), "project_q");
+  try {
+    const { observation } = p.save({ title: "T", content: "C", type: "architecture" });
+    p.addAnchorsIfMissing(observation.id, [{ nodeId: "n1", anchorHash: "old" }]);
+    assert.equal(q.replaceAnchorHash(observation.id, "n1", "old", "sym1:new"), 0);
+    assert.equal(p.anchorsForObservation(observation.id)[0]!.anchorHash, "old");
+  } finally {
+    p.close();
+    q.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

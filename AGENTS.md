@@ -11,7 +11,8 @@ Windsurf editor uses the same `.devin/` on-disk shape as Devin.
 
 Memory lives in the global DB `~/.leina/memory.db` (honoring `$LEINA_HOME`), keyed by a
 stable project key, and is accessed through the `leina memory <sub>` CLI. Anchors resolve against the
-live graph on save, and `memory verified` re-checks them (drift detection).
+live graph on save (fingerprinting the anchored symbol's own lines), and `memory verified` re-checks
+them (drift detection). `memory reanchor` upgrades pre-3.0 whole-file anchors from git history.
 
 ### Memory subcommands
 

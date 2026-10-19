@@ -317,6 +317,16 @@ Búsqueda **más clasificación de drift** contra el grafo vivo. Agrupa los resu
 cuando estés por actuar sobre contexto recordado. Si el grafo no está disponible, los
 veredictos degradan a no verificados (igual se imprimen).
 
+Los anchors guardados por 3.0 llevan una **huella de símbolo** (`sym1:`): una nota pasa a
+`stale` cuando cambian las líneas propias del símbolo anclado, no cuando cambia cualquier otra
+cosa del archivo. Los anchors de archivo entero (nodes module/config, otros lenguajes, anchors
+guardados antes de 3.0) siguen comparando el archivo — y un anchor de archivo entero sobre un
+archivo del que la misma nota fija símbolos no cuenta como stale. Las notas
+`decision`/`preference` con drift caen en `WARNING` con `⚠ check-violation` (antes de 3.0 eran
+`USABLE`). El estado de ciclo de vida se imprime junto al estado de drift y pone techo al
+veredicto: las notas `resolved` son como mucho `WARNING`, las `obsolete` `DO NOT USE`. Detalle
+en [concepts/05](./concepts/05-comunicacion-grafo-memoria.md).
+
 ### `memory get <dir> <id>`
 Imprime la observación completa (title, type, topic_key, status, timestamps, revision, content). Los
 ids están acotados al proyecto actual: el id de otro proyecto se lee como inexistente (igual en
@@ -368,13 +378,23 @@ snapshots que quedaron varados bajo la key vieja.
 
 ### `memory reanchor <dir> [--dry-run]`
 Retro-ancla observaciones **existentes** que mencionan en la prosa un archivo/símbolo real
-pero se guardaron sin `--anchors` explícitos. Solo extrae referencias EXPLÍCITAS (un path que
-coincide con el `sourceFile` de un nodo, o un símbolo resuelto con match funcional-exacto
-contra el grafo vivo): los candidatos ambiguos (2+ matches) o sin resolver se descartan, nunca
-se adivinan. El minting es **aditivo** (se une a los anchors que la observación ya tenga) e
-**idempotente** por `(observation_id, node_id)`. `--dry-run` informa qué se mintearía o
-rechazaría sin escribir. Imprime un resumen (`{processed, minted, rejected}`) y el detalle por
-observación.
+pero se guardaron sin `--anchors` explícitos. Solo extrae referencias EXPLÍCITAS (un path entre
+backticks que coincide con el `sourceFile` de un nodo, o un símbolo resuelto con match
+funcional-exacto contra el grafo vivo; `` `path:símbolo` `` resuelve el símbolo solo dentro de
+ese archivo): los candidatos ambiguos (2+ matches) o sin resolver se descartan, nunca se
+adivinan. Los identificadores de menos de 3 caracteres y las palabras genéricas (`get`,
+`query`, `foo`, `npm`…) no son candidatos; un nombre suelto que matchea código de producción y
+tests ancla el node de producción, y uno que solo matchea código de test se rechaza (calificalo
+como `` `test/x.test.ts:helper` ``). El minting es **aditivo** (se une a los anchors que la
+observación ya tenga) e **idempotente** por `(observation_id, node_id)`.
+
+También **actualiza los anchors de archivo entero** (todos los guardados antes de 3.0) a huellas
+de símbolo sin mover su línea base: el símbolo se huellea en la versión del archivo contra la que
+se guardó el anchor — el working tree si no cambió, si no el commit encontrado en la historia git
+de ese archivo (cualquier ref, últimos 300 commits). Los anchors cuya versión no aparece, y los de
+module/config, quedan a nivel archivo. `--dry-run` informa qué se mintearía, rechazaría o
+actualizaría sin escribir. Imprime un resumen (`{processed, minted, rejected, upgraded}`) y el
+detalle por observación.
 
 ### `memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--keep-sessions N] [--dry-run]`
 Recolecta los **snapshots superseded** de este proyecto (las revisiones previas que guarda

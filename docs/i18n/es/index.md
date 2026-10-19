@@ -248,7 +248,7 @@ leina memory session-start <dir> [--title "..."]   # open a session at session s
 leina memory suggest-topic <dir> --title "..." [--type ..]
 leina memory current-project <dir>         # show derived project key + detection method
 leina memory merge-projects <dir> --from <old-key> --to <new-key> [--dry-run]
-leina memory reanchor <dir> <id>           # re-resolve an observation's anchors against the live graph
+leina memory reanchor <dir> [--dry-run]    # anclar referencias `código` de las notas; pasar anchors de archivo a símbolo
 leina memory export <dir> [--out file.jsonl]       # dump observations + anchors as JSONL
 leina memory import <dir> [--in file.jsonl]        # merge an export; newer revision wins
 leina memory sync <dir>                            # two-way merge with .leina/memory-export.jsonl
@@ -494,9 +494,10 @@ nunca devuelve resultados del repo B.
 
 Lo que la hace más que un archivo de notas: una observación puede **anclarse** (anchor) a
 nodes del grafo (los símbolos de los que habla). Cuando el código cambia, `memory verified`
-re-chequea cada resultado contra el grafo vivo y lo etiqueta como **USABLE**, **WARNING** (el
-código anclado se movió — obsoleto), o **DO-NOT-USE** (una afirmación normativa que el código
-ahora contradice). Una memory que silenciosamente se vuelve incorrecta es peor que no tener
+re-chequea cada resultado contra el grafo vivo y lo etiqueta como **USABLE**, **WARNING** (cambió
+el código propio del símbolo anclado — stale; una decisión con drift se marca para chequear
+violaciones), o **DO-NOT-USE** (el código anclado desapareció, o la nota se marcó obsoleta). Los
+anchors toman la huella del símbolo en sí, así que editar otra parte del mismo archivo no es drift. Una memory que silenciosamente se vuelve incorrecta es peor que no tener
 memory; la detección de drift es lo que mantiene confiable el contexto recuperado.
 
 ## Lenguajes

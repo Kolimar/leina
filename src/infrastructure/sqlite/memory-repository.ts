@@ -52,10 +52,10 @@ import type { MemoryRepository } from "../../domain/memory/ports.ts";
 export interface ResolvedAnchor {
   nodeId: string;
   sourceFile: string;
-  // sha256 of the source file at save time (from the build manifest), or undefined
-  // when the file isn't in the manifest. Lets drift detection later compare the
-  // file's current hash against what it was when this memory was anchored.
-  fileHash?: string;
+  // Save-time drift baseline: `sym1:<sha256>` of the symbol's own lines when the node has
+  // a span, else the whole file's sha256 — see application/memory/anchor-verify.ts. Lets
+  // drift detection later compare it against the current one.
+  anchorHash?: string;
 }
 export type AnchorResolver = (label: string) => ResolvedAnchor[];
 
@@ -1055,7 +1055,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       const matches = this.resolveAnchor(label);
       if (matches.length > 0) {
         for (const m of matches) {
-          stmt.run(observationId, m.nodeId, label, m.sourceFile, m.fileHash ?? null, now);
+          stmt.run(observationId, m.nodeId, label, m.sourceFile, m.anchorHash ?? null, now);
         }
       } else {
         // Graph not built, or the label names nothing. Keep the intent, mark unresolved.
@@ -1489,6 +1489,18 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       if (result.changes > 0) inserted += 1;
     }
     return inserted;
+  }
+
+  // Compare-and-set on anchor_hash (see the port). Scoped to this project's observations.
+  replaceAnchorHash(observationId: string, nodeId: string, from: string, to: string): number {
+    const result = this.db
+      .prepare(
+        `UPDATE memory_anchors SET anchor_hash = ?
+          WHERE observation_id = ? AND node_id = ? AND anchor_hash = ?
+            AND EXISTS (SELECT 1 FROM observations WHERE id = ? AND project_key = ?)`,
+      )
+      .run(to, observationId, nodeId, from, observationId, this.projectKey) as { changes: number };
+    return Number(result.changes);
   }
 
   // ---- suggestTopicKeyWithMatches -------------------------------------------
