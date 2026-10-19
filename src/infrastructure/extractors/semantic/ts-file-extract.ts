@@ -201,6 +201,12 @@ interface Site {
   from: string;
 }
 
+/** A module specifier (`from "./x"`, `import("./x")`) and the statement or call holding it. */
+interface ModuleRef {
+  spec: ts.Expression;
+  at: ts.Node;
+}
+
 class FileExtractor {
   readonly nodes: GraphNode[] = [];
   readonly edges: GraphEdge[] = [];
@@ -210,6 +216,7 @@ class FileExtractor {
   private readonly news: Site[] = [];
   private readonly typeRefs: Site[] = [];
   private readonly valueRefs: Site[] = [];
+  private readonly moduleRefs: ModuleRef[] = [];
   private readonly resolved: Record<Meaning, Map<ts.Symbol, string | null>> = { value: new Map(), type: new Map() };
   private readonly env: TsProgramEnv;
   private readonly sf: ts.SourceFile;
@@ -226,6 +233,7 @@ class FileExtractor {
   run(): TsFileResult {
     this.emitDefs();
     this.walk(this.sf, { enclosing: this.defs.fileId, inHeritage: false, inTypeRef: false, inJsDoc: false });
+    this.emitImports();
     this.emitHeritage();
     this.emitMemberContracts();
     this.emitCalls();
@@ -327,9 +335,18 @@ class FileExtractor {
   }
 
   private collectSite(n: ts.Node, from: string): void {
-    if (ts.isCallExpression(n)) this.calls.push({ node: n, from });
-    else if (ts.isNewExpression(n)) this.news.push({ node: n, from });
+    if (ts.isCallExpression(n)) {
+      this.calls.push({ node: n, from });
+      const spec = n.arguments[0];
+      if (n.expression.kind === ts.SyntaxKind.ImportKeyword && spec !== undefined) this.moduleRefs.push({ spec, at: n });
+    } else if (ts.isNewExpression(n)) this.news.push({ node: n, from });
     else if (ts.isTypeReferenceNode(n)) this.typeRefs.push({ node: n, from });
+    else if (ts.isImportDeclaration(n)) this.moduleRefs.push({ spec: n.moduleSpecifier, at: n });
+    else if (ts.isExportDeclaration(n) && n.moduleSpecifier !== undefined) {
+      this.moduleRefs.push({ spec: n.moduleSpecifier, at: n });
+    } else if (ts.isImportEqualsDeclaration(n) && ts.isExternalModuleReference(n.moduleReference)) {
+      this.moduleRefs.push({ spec: n.moduleReference.expression, at: n });
+    }
   }
 
   // Value-position identifiers already covered by a more specific walk (calls, heritage,
@@ -428,6 +445,19 @@ class FileExtractor {
   }
 
   // --- edges -------------------------------------------------------------------------
+
+  /** `module -imports-> module` for each extracted file this one imports, at its first import site. */
+  private emitImports(): void {
+    const seen = new Set<string>();
+    for (const r of this.moduleRefs) {
+      if (!ts.isStringLiteralLike(r.spec)) continue; // `import(name)`: not statically known
+      const target = this.checker.getSymbolAtLocation(r.spec)?.declarations?.find(ts.isSourceFile);
+      const id = target && this.idOfDecl(target);
+      if (id === undefined || seen.has(id)) continue;
+      seen.add(id);
+      this.addEdge(this.defs.fileId, id, "imports", r.at);
+    }
+  }
 
   private emitHeritage(): void {
     const classes = this.defs.defs.filter((d) => ts.isClassLike(d.decl));

@@ -175,7 +175,7 @@ the street exists):
 | Structural | `method` | class → its method |
 | Calls | `calls` | function → function it invokes |
 | Calls | `references` | function → type, enum, constant or accessor it uses |
-| Imports | `imports`, `imports_from` | module dependency |
+| Imports | `imports`, `imports_from` | module dependency; in TypeScript one `module → module` edge per extracted file a module imports (`import`, `import type`, `export … from`, `import x = require()`, `import("./literal")`), at its first import site |
 | Inheritance | `extends`, `implements`, `inherits` | type hierarchy; in TypeScript `implements` also links each member to the contract member it implements (`MemoryStore.load → Store.load`, inherited interface members and typed object literals included) |
 | Inheritance | `overrides` | member → the nearest base-class member it overrides (TypeScript, instance members) |
 | Other | `uses` | generic usage |

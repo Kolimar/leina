@@ -201,3 +201,45 @@ test("(linker-empty-members) empty members list → no cross-repo edges", () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// In-repo module edges (TypeScript `module -imports-> module`) are not package imports
+// ---------------------------------------------------------------------------
+
+test("(linker-internal-module) an import of an in-repo source file never links to a package", () => {
+  const dir = tmpDir();
+  try {
+    const repoB = join(dir, "lib");
+    mkdirSync(repoB);
+    writeFileSync(join(repoB, "package.json"), JSON.stringify({ name: "lib" }), "utf8");
+    const members: WorkspaceMember[] = [
+      { dir: join(dir, "app"), repoKey: "app" },
+      { dir: repoB, repoKey: "lib" },
+    ];
+    const store = new GraphStore(join(dir, "merged.db"));
+    try {
+      // lib/util.ts is app's own file; its path starts with the package name "lib".
+      store.addNodes([
+        { id: "app::src_main_ts", label: "src/main.ts", fileType: "code", sourceFile: "src/main.ts", kind: "module", repo: "app" },
+        { id: "app::lib_util_ts", label: "lib/util.ts", fileType: "code", sourceFile: "lib/util.ts", kind: "module", repo: "app" },
+      ]);
+      store.addEdges([
+        {
+          source: "app::src_main_ts",
+          target: "app::lib_util_ts",
+          relation: "imports",
+          confidence: "EXTRACTED",
+          sourceFile: "src/main.ts",
+          sourceLocation: "L1",
+          weight: 1,
+          repo: "app",
+        },
+      ]);
+      assert.deepStrictEqual(linkCrossRepo(store, members), []);
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

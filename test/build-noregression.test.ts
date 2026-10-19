@@ -30,8 +30,11 @@ import { tmpdir } from "node:os";
 // identificador `ns` de `ns.target()` (namespace import) alias-resuelve al módulo
 // `callee.ts`, una referencia real y no-espuria (distinta de la arista `calls` hacia
 // `callee.ts:target`, ya cubierta por linkCallEdges).
+//
+// TS_ONLY.edges 7 -> 11 (3.0.0): el extractor TS emite `module -imports-> module` por cada
+// archivo extraído que un módulo importa (4 imports entre los 4 módulos del fixture).
 const BASELINE = {
-  TS_ONLY: { nodes: 7, edges: 7 },
+  TS_ONLY: { nodes: 7, edges: 11 },
   MIXED: { nodes: 9, edges: 8 },
 } as const;
 
@@ -41,7 +44,7 @@ const BASELINE = {
 const KIND_SNAPSHOT = {
   TS_ONLY: {
     nodesByKind: { module: 4, function: 3 } as Record<string, number>,
-    edgesByRelation: { contains: 3, calls: 3, references: 1 } as Record<string, number>,
+    edgesByRelation: { contains: 3, calls: 3, references: 1, imports: 4 } as Record<string, number>,
   },
   MIXED: {
     nodesByKind: { module: 6, function: 3 } as Record<string, number>,

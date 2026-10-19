@@ -638,6 +638,10 @@ function processImportEdge(ctx: LinkContext, edge: GraphEdge): void {
 
   // Look up the target node — if it has kind="module", its label is the module path
   const targetNode = ctx.nodeById.get(edge.target);
+  // A source file of the graph (the TypeScript extractor's module -> module edges) is an
+  // in-repo dependency, never a package: its label is a path ("lib/util.ts") that must not
+  // be matched against package names.
+  if (targetNode?.kind === "module" && targetNode.fileType === "code") return;
   const importedModule =
     (targetNode?.kind === "module" && targetNode.label !== undefined)
       ? targetNode.label

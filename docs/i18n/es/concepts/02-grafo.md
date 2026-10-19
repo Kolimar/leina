@@ -175,7 +175,7 @@ de que la calle existe):
 | Estructural | `method` | clase → su método |
 | Llamadas | `calls` | función → función que invoca |
 | Llamadas | `references` | función → tipo, enum, constante o accessor que usa |
-| Imports | `imports`, `imports_from` | dependencia de módulo |
+| Imports | `imports`, `imports_from` | dependencia de módulo; en TypeScript un edge `módulo → módulo` por cada archivo extraído que un módulo importa (`import`, `import type`, `export … from`, `import x = require()`, `import("./literal")`), en su primer sitio de import |
 | Herencia | `extends`, `implements`, `inherits` | jerarquía de tipos; en TypeScript `implements` también une cada miembro con el miembro del contrato que implementa (`MemoryStore.load → Store.load`, incluidos miembros heredados de interfaces y objetos literales tipados) |
 | Herencia | `overrides` | miembro → el miembro más cercano de la clase base al que sobrescribe (TypeScript, miembros de instancia) |
 | Otros | `uses` | uso genérico |

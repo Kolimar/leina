@@ -239,3 +239,33 @@ test("(b2-contract-members) function-typed properties and type-literal methods a
 test("(b2-static-excluded) static members neither implement nor override", () => {
   assert.deepStrictEqual(edgesFrom(`${C}_memorystore:create`, ["implements", "overrides"]), []);
 });
+
+// ---------------------------------------------------------------------------
+// B5 — module → module `imports` edges (static, re-export, import-equals, dynamic)
+// ---------------------------------------------------------------------------
+
+test("(b5-module-imports) every statically known import of an extracted file is an edge", () => {
+  assert.deepStrictEqual(edgesFrom("modules_ts", ["imports"]), [
+    "modules_ts -imports-> contracts_ts @L3", // import type
+    "modules_ts -imports-> data_default_ts @L8", // await import("./data-default")
+    "modules_ts -imports-> data_kinds_ts @L4", // import kinds = require(...)
+    "modules_ts -imports-> dyn_target_ts @L2", // export { … } from
+  ]);
+  // `import(name)` is not statically known; `node:fs` is not an extracted file.
+  assert.ok(!edges.some((e) => e.source === "modules_ts" && e.target === "collisions_ts"));
+});
+
+test("(b5-one-edge-per-module) a module imported statically and dynamically gets one edge, at the first site", () => {
+  assert.deepStrictEqual(edgesFrom("dyn_user_ts", ["imports"]), ["dyn_user_ts -imports-> dyn_target_ts @L1"]);
+  assert.deepStrictEqual(edgesFrom("data_user_ts", ["imports"]), [
+    "data_user_ts -imports-> data_default_ts @L1",
+    "data_user_ts -imports-> data_kinds_ts @L2",
+  ]);
+});
+
+test("(b5-call-lines) call edges keep their call-site line", () => {
+  assert.deepStrictEqual(edgesFrom("modules_ts:later", ["calls"]), [
+    "modules_ts:later -calls-> contracts_ts_store:load @L11",
+    "modules_ts:later -calls-> data_default_ts:default @L12",
+  ]);
+});
