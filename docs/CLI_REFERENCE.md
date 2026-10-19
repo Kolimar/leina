@@ -20,6 +20,15 @@ All read commands (`query`, `affected`, `path`) route through the **freshness ga
 - stale + posture `auto` → rebuild, then serve (prints a `rebuilding ...` note on stderr);
 - stale + posture `refuse` → fail and tell you to run `refresh`.
 
+Rebuilds of one project are serialized across processes by `.leina/graph.build.lock` — the
+same lock `build`, `refresh`, the MCP server and the SessionStart self-heal take. When several
+processes find the graph stale at once, one rebuilds and each of the others prints
+`another leina process (pid N) is rebuilding it; waiting ...`, then re-checks: if the graph is
+fresh by then it answers from it without rebuilding (N concurrent stale queries → one rebuild,
+not N). The wait is bounded by `LEINA_BUILD_LOCK_WAIT_MS` (default `120000`); past it the
+command exits `1` naming the holder's pid and the lock file to delete if it is stuck.
+`build`/`refresh` wait the same way, then always rebuild.
+
 ### `build <dir> [--json]`
 Build the graph for `<dir>` into `.leina/graph.db`. With `--json`, also export a
 node-link dump to `.leina/graph.json`. Prints node/edge/file counts.

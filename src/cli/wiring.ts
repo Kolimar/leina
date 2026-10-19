@@ -16,7 +16,8 @@ import { makeResolveAnchor, makeVerifyNode } from "../application/memory/anchor-
 import { AmbiguousProjectError, deriveProjectKey, deriveWorkspaceRootKey, detectWorkspaceMode } from "../application/project/detect-key.ts";
 import { globalMemoryPath, leinaHome } from "../infrastructure/install/share-paths.ts";
 import { isStale } from "../application/graph/manifest.ts";
-import { withSourceListMemo } from "../application/graph/sources.ts";
+import { forgetSourceList, withSourceListMemo } from "../application/graph/sources.ts";
+import { acquireBuildLock, lockTimeoutMessage, releaseBuildLock } from "./background-build.ts";
 import { loadFreshnessConfig } from "../infrastructure/config/freshness.ts";
 import { WorkspaceMemoryFederator } from "../application/workspace/federation.ts";
 import { LocalEventStore } from "../infrastructure/events/local-event-store.ts";
@@ -181,13 +182,9 @@ export async function openFreshStoreOrThrow(
       );
     }
     // auto: rebuild then serve. Writer and reader never coexist (build, close, reopen).
-    // Concurrent stale callers in this process share one rebuild (single-flight).
-    process.stderr.write(
-      isGraphBuildInFlight(root)
-        ? `leina: graph stale (${s.reason}); waiting for the in-flight rebuild ...\n`
-        : `leina: graph stale (${s.reason}); rebuilding ...\n`,
-    );
-    await buildGraphShared(root);
+    // Concurrent stale callers in this process share one rebuild (single-flight); across
+    // processes the build lock admits one builder, and the others re-check after waiting.
+    await rebuildIfStillStale(root, s.reason);
     return openGraphRepo(root);
   });
 }
@@ -198,45 +195,96 @@ export async function openFreshStoreOrThrow(
 // the graph stale, and a reader racing a FIRST build would read the empty,
 // not-yet-committed db (graph_stats → nodes: 0). Builds are keyed by resolved root:
 // concurrent callers share the in-flight promise, and readers can wait for it
-// (awaitGraphBuild). In-process only — cross-process coordination stays with the CLI's
-// foreground build lock (background-build.ts) and SQLite's own locking.
+// (awaitGraphBuild). Across processes, every build here also holds the project's build lock
+// (background-build.ts) — the same lock `leina build`/`refresh` and the detached self-heal
+// take — so N concurrent CLI queries against a stale graph run ONE rebuild, not N.
 // ---------------------------------------------------------------------------
 
-const inflightBuilds = new Map<string, Promise<BuildReport>>();
+/** `build` resolves null only when `maySkip` (a read-path rebuild) found the graph already
+ *  rebuilt by another process once it got the lock. */
+interface InflightBuild {
+  build: Promise<BuildReport | null>;
+  maySkip: boolean;
+}
+const inflightBuilds = new Map<string, InflightBuild>();
 
-function isGraphBuildInFlight(root: string): boolean {
-  return inflightBuilds.has(resolvePath(root));
+/**
+ * Build the graph for `root` (always — an explicit build, e.g. the MCP graph_build tool), or
+ * join the build already running for it in this process. The extractor stack is lazy-imported
+ * here, so the read path never loads it.
+ */
+export function buildGraphShared(root: string): Promise<BuildReport> {
+  const running = inflightBuilds.get(resolvePath(root));
+  if (running && !running.maySkip) return running.build as Promise<BuildReport>;
+  // A joined read-path rebuild may be skipped (another process had just rebuilt): then force one.
+  if (running) return running.build.then((report) => report ?? buildGraphShared(root));
+  return startBuild(root, { skipIfFresh: false }) as Promise<BuildReport>;
 }
 
 /**
- * Build the graph for `root`, or join the build already running for it in this process.
- * The extractor stack is lazy-imported here, so the read path never loads it.
+ * The read path's rebuild of a graph it found stale: like buildGraphShared, but when another
+ * process held the build lock first, staleness is re-checked once the lock is ours and the
+ * build is skipped (null) if that process already brought the graph up to date. With
+ * `staleReason` (the gate's isStale reason) it narrates on stderr: exactly one
+ * "…; rebuilding ..." line per build actually started, a "waiting" line otherwise.
  */
-export function buildGraphShared(root: string): Promise<BuildReport> {
+export function rebuildIfStillStale(root: string, staleReason?: string): Promise<BuildReport | null> {
+  const running = inflightBuilds.get(resolvePath(root));
+  if (running) {
+    if (staleReason) process.stderr.write(`leina: graph stale (${staleReason}); waiting for the in-flight rebuild ...\n`);
+    return running.build;
+  }
+  return startBuild(root, { skipIfFresh: true, staleReason });
+}
+
+function startBuild(
+  root: string,
+  opts: { skipIfFresh: boolean; staleReason?: string },
+): Promise<BuildReport | null> {
   const key = resolvePath(root);
-  const running = inflightBuilds.get(key);
-  if (running) return running;
   const rootProblem = buildRootProblem(root);
   if (rootProblem) return Promise.reject(new Error(`cannot build the graph: ${rootProblem}`));
+  const said = opts.staleReason ? `graph stale (${opts.staleReason}); ` : "";
   const build = (async () => {
-    const { buildGraph } = await import("../application/graph/build.ts");
-    const registry = await buildDefaultRegistry();
-    const w = openGraphRepo(root);
+    const lock = await acquireBuildLock(root, {
+      onWait: (holder) =>
+        process.stderr.write(
+          `leina: ${said}another leina process (${holder.pid > 0 ? `pid ${holder.pid}` : "pid unknown"}) ` +
+            `is rebuilding it; waiting ...\n`,
+        ),
+    });
+    if ("timeout" in lock) throw new Error(lockTimeoutMessage(root, lock.holderPid, lock.holderStartedAt));
     try {
-      // quiet: a read-path auto-rebuild or an MCP build — nobody asked to watch it, so no
-      // per-build diagnostics or nudges on stderr (the report still carries `degraded`).
-      return await buildGraph(root, w, registry, { quiet: true });
+      let line = opts.staleReason ? `leina: graph stale (${opts.staleReason}); rebuilding ...` : null;
+      if (lock.waited && opts.skipIfFresh) {
+        // Judge what is on disk NOW, not the source listing taken before the wait.
+        forgetSourceList(root);
+        const again = isStale(root);
+        if (!again.stale) return null;
+        if (line) line = `leina: graph still stale (${again.reason}); rebuilding ...`;
+      }
+      if (line) process.stderr.write(`${line}\n`);
+      const { buildGraph } = await import("../application/graph/build.ts");
+      const registry = await buildDefaultRegistry();
+      const w = openGraphRepo(root);
+      try {
+        // quiet: a read-path auto-rebuild or an MCP build — nobody asked to watch it, so no
+        // per-build diagnostics or nudges on stderr (the report still carries `degraded`).
+        return await buildGraph(root, w, registry, { quiet: true });
+      } finally {
+        w.close();
+      }
     } finally {
-      w.close();
+      releaseBuildLock(root);
     }
   })().finally(() => inflightBuilds.delete(key));
-  inflightBuilds.set(key, build);
+  inflightBuilds.set(key, { build, maySkip: opts.skipIfFresh });
   return build;
 }
 
 /** Resolve once no build of `root` is running in this process (its outcome is the builder's to report). */
 export async function awaitGraphBuild(root: string): Promise<void> {
-  await inflightBuilds.get(resolvePath(root))?.catch(() => undefined);
+  await inflightBuilds.get(resolvePath(root))?.build.catch(() => undefined);
 }
 
 export async function openFreshStore(root: string): Promise<GraphRepository> {
@@ -250,6 +298,19 @@ export async function openFreshStore(root: string): Promise<GraphRepository> {
 // ---------------------------------------------------------------------------
 // Workspace composition root (new — NFR-02: single-repo functions above untouched)
 // ---------------------------------------------------------------------------
+
+/** Tail of the workspace merges queued per resolved workspace root (in-process FIFO). */
+const workspaceMerges = new Map<string, Promise<unknown>>();
+
+function mergeInProcess<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const next = (workspaceMerges.get(key) ?? Promise.resolve()).catch(() => undefined).then(run);
+  workspaceMerges.set(key, next);
+  const forget = (): void => {
+    if (workspaceMerges.get(key) === next) workspaceMerges.delete(key);
+  };
+  next.then(forget, forget);
+  return next;
+}
 
 /**
  * Open a guaranteed-fresh merged GraphRepository for a workspace.
@@ -275,16 +336,31 @@ export async function openWorkspaceFreshStore(
   const mergedDbPath = graphDbPath(wsRoot); // reuse same path helper for the workspace root
   mkdirSync(dirname(mergedDbPath), { recursive: true });
 
-  const mergedStore = openGraphRepo(wsRoot);
-
   const { buildWorkspace } = await import("../application/workspace/build.ts");
   const registry = await buildDefaultRegistry();
-  // Same intra-operation walk memo as openFreshStoreOrThrow: buildWorkspace runs
-  // isStale(member) and, for stale members, buildGraph(member) — each pair shares
-  // one walk per member root. Dropped when this call settles.
-  const report = await withSourceListMemo(() =>
-    buildWorkspace(resolved, detection.members, mergedStore, registry),
-  );
+  // The merge clears and re-imports the merged graph.db: it runs one at a time per workspace,
+  // in this process (mergeInProcess) and across processes (the workspace root's build lock),
+  // so concurrent workspace reads never interleave their merges. Each stale member is rebuilt
+  // under its OWN lock (rebuildIfStillStale), shared with that repo's single-repo readers and
+  // builders. Same intra-operation walk memo as openFreshStoreOrThrow.
+  const { mergedStore, report } = await mergeInProcess(resolved, async () => {
+    const lock = await acquireBuildLock(resolved);
+    if ("timeout" in lock) throw new Error(lockTimeoutMessage(resolved, lock.holderPid, lock.holderStartedAt));
+    const store = openGraphRepo(wsRoot);
+    try {
+      const built = await withSourceListMemo(() =>
+        buildWorkspace(resolved, detection.members, store, registry, {
+          buildMember: async (dir) => (await rebuildIfStillStale(dir)) !== null,
+        }),
+      );
+      return { mergedStore: store, report: built };
+    } catch (err) {
+      store.close();
+      throw err;
+    } finally {
+      releaseBuildLock(resolved);
+    }
+  });
 
   if (Object.keys(report.errors).length > 0) {
     process.stderr.write(

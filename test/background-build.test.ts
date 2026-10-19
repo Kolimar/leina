@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import {
@@ -121,8 +121,8 @@ test("(bg-5) spawner throws → returns 'failed', never propagates exception", (
     }
     assert.equal(threw, false, "must not propagate");
     assert.equal(result, "failed");
-    // The lock is emptied (not removed) on spawn failure, leaving it reclaimable next run.
-    assert.equal(readFileSync(buildLockPath(root), "utf8"), "", "lock emptied after spawn failure");
+    // Nothing will build: the lock is released, so the next run (or a reader) can take it.
+    assert.equal(existsSync(buildLockPath(root)), false, "lock released after spawn failure");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

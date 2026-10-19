@@ -195,6 +195,13 @@ flowchart TD
   The writer and the reader never coexist (build → close → reopen).
 - **`refuse`**: doesn't touch anything; tells you to run `leina refresh` yourself.
 
+Several processes can find the same map stale at the same moment — four agents' queries right
+after an edit, an MCP server next to a CLI. Only one redraws it: rebuilds of a project take a
+lock (`.leina/graph.build.lock`), the others wait for it and then look again, and if the map is
+fresh by then they answer from it instead of redrawing it themselves. Four concurrent stale
+queries cost one rebuild, not four (on a ~790-file repo: ~1.5 GB of combined peak memory
+instead of ~4.4 GB).
+
 The `import()` of the build stack is **dynamic** and only happens on the `auto` branch when needed:
 that way, the common path (fresh map) never loads the heavy extraction stack, and that's why a
 `query` starts up in ~0.15s.

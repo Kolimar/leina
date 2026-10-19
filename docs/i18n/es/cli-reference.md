@@ -20,6 +20,16 @@ Todos los comandos de lectura (`query`, `affected`, `path`) pasan por la **fresh
 - stale + posture `auto` → reconstruye y luego sirve (imprime una nota `rebuilding ...` en stderr);
 - stale + posture `refuse` → falla e indica que corras `refresh`.
 
+Los rebuilds de un proyecto se serializan entre procesos con `.leina/graph.build.lock` — el
+mismo lock que toman `build`, `refresh`, el servidor MCP y el self-heal de SessionStart. Cuando
+varios procesos encuentran el grafo stale a la vez, uno reconstruye y cada uno de los demás
+imprime `another leina process (pid N) is rebuilding it; waiting ...` y después vuelve a
+chequear: si para entonces el grafo está fresco, responde con él sin reconstruir (N queries
+concurrentes sobre un grafo stale → un rebuild, no N). La espera está acotada por
+`LEINA_BUILD_LOCK_WAIT_MS` (por defecto `120000`); pasado ese tiempo el comando sale con `1`
+nombrando el pid del dueño y el archivo de lock a borrar si quedó trabado. `build`/`refresh`
+esperan igual y después siempre reconstruyen.
+
 La posture se configura por proyecto (`.leina/config.json`, clave `freshness`).
 
 ### `build <dir> [--json]`

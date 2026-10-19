@@ -197,6 +197,13 @@ flowchart TD
 - **`auto`** (por defecto): reconstruye solo, avisa por `stderr` y responde con el mapa fresco.
 - **`refuse`**: no toca nada; te dice que corras `leina refresh` vos mismo.
 
+Varios procesos pueden encontrar el mismo mapa viejo en el mismo momento — las queries de cuatro
+agentes justo después de una edición, un servidor MCP junto a la CLI. Solo uno lo redibuja: los
+rebuilds de un proyecto toman un lock (`.leina/graph.build.lock`), los demás lo esperan y después
+vuelven a mirar, y si para entonces el mapa está fresco responden con él en lugar de redibujarlo
+ellos. Cuatro queries concurrentes sobre un mapa viejo cuestan un rebuild, no cuatro (en un repo
+de ~790 archivos: ~1.5 GB de memoria pico combinada en lugar de ~4.4 GB).
+
 El pesado stack de extracción se carga solo cuando hay que reconstruir: así, el camino común
 (mapa fresco) jamás lo paga, y por eso una `query` arranca en ~0.15s.
 

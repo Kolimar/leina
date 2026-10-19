@@ -40,13 +40,19 @@ export interface WorkspaceBuildReport {
  * @param wsRoot      - workspace root directory (used for advisory messaging only)
  * @param members     - list of member repos with dir + repoKey
  * @param mergedStore - the workspace merged GraphRepository (v3, writable)
+ * @param opts.buildMember - rebuilds one stale member and resolves true if it did build (false:
+ *   it found the member fresh after all, e.g. another process rebuilt it meanwhile). The
+ *   composition root passes one that holds the member's cross-process build lock; the default
+ *   builds into the member's graph.db directly.
  */
 export async function buildWorkspace(
   wsRoot: string,
   members: WorkspaceMember[],
   mergedStore: GraphRepository,
   registry: GraphExtractor[],
+  opts: { buildMember?: (dir: string) => Promise<boolean> } = {},
 ): Promise<WorkspaceBuildReport> {
+  const buildMember = opts.buildMember ?? ((dir: string) => buildMemberDirect(dir, registry));
   const report: WorkspaceBuildReport = {
     membersTotal: members.length,
     membersReused: 0,
@@ -62,19 +68,7 @@ export async function buildWorkspace(
     try {
       const staleResult = isStale(member.dir);
 
-      if (staleResult.stale) {
-        // Lazy-import buildGraph so the common (fresh) path never loads the extractor stack.
-        const { buildGraph } = await import("../graph/build.ts");
-        // Open a per-repo store for writing, build into it, then close.
-        const { GraphStore } = await import("../../infrastructure/sqlite/graph-store.ts");
-        const repoDbPath = join(member.dir, ".leina", "graph.db");
-        mkdirSync(join(member.dir, ".leina"), { recursive: true });
-        const repoStore = new GraphStore(repoDbPath);
-        try {
-          await buildGraph(member.dir, repoStore, registry);
-        } finally {
-          repoStore.close();
-        }
+      if (staleResult.stale && (await buildMember(member.dir))) {
         report.membersRebuilt++;
       } else {
         report.membersReused++;
@@ -113,4 +107,19 @@ export async function buildWorkspace(
   }
 
   return report;
+}
+
+/** Default member builder: build straight into the member's own graph.db (no lock). */
+async function buildMemberDirect(dir: string, registry: GraphExtractor[]): Promise<boolean> {
+  // Lazy-import buildGraph so the common (fresh) path never loads the extractor stack.
+  const { buildGraph } = await import("../graph/build.ts");
+  const { GraphStore } = await import("../../infrastructure/sqlite/graph-store.ts");
+  mkdirSync(join(dir, ".leina"), { recursive: true });
+  const repoStore = new GraphStore(join(dir, ".leina", "graph.db"));
+  try {
+    await buildGraph(dir, repoStore, registry);
+  } finally {
+    repoStore.close();
+  }
+  return true;
 }

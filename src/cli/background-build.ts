@@ -1,8 +1,34 @@
-// cli/background-build.ts — fire-and-forget detached graph build helper.
-// Serialized via a best-effort lock file; fail-open on every error path.
+// cli/background-build.ts — the cross-process graph build lock, and the fire-and-forget
+// detached build (SessionStart self-heal) that uses it.
+//
+// One lock file per project, `<root>/.leina/graph.build.lock`, holding `{pid, startedAt}`,
+// serializes EVERY graph build of that root across processes: an explicit `leina build` /
+// `leina refresh` (acquireForegroundBuildLock — waits, synchronously), a read path's stale
+// auto-rebuild and the MCP server's builds (acquireBuildLock — waits without blocking the
+// event loop) and the detached self-heal (spawnDetachedBuild — never waits, skips).
+//
+// Acquisition is an O_EXCL create, so two processes can never both create it. A holder that
+// is dead (ESRCH), older than the 15-minute TTL, or left unparseable content is reclaimed by
+// renaming the file aside and re-creating it; the rename is verified against what was judged
+// stale, so a racing reclaimer cannot silently take over a lock that was just re-created.
+// A lock that is still EMPTY (its creator is between create and write) is treated as held for
+// a short grace period. Release only removes a lock this process still owns.
 
-import { closeSync, constants as fsConstants, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  constants as fsConstants,
+  ftruncateSync,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { deriveCliCommand } from "../application/install/command.ts";
 import type { McpCommand } from "../application/install/protocol.ts";
@@ -17,6 +43,14 @@ export interface SpawnDetachedOpts {
 }
 
 const STALE_TTL_MS = 15 * 60_000;
+/** An empty lock younger than this is a creator between its O_EXCL create and its write. */
+const EMPTY_LOCK_GRACE_MS = 5_000;
+const DEFAULT_WAIT_MS = 120_000; // 2min — well under STALE_TTL_MS (15min)
+const POLL_INTERVAL_MS = 500;
+/** Immediate re-attempts when the lock vanishes or is reclaimed between our own steps. */
+const MAX_IMMEDIATE_RETRIES = 8;
+
+const CREATE_FLAGS = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL;
 
 export function buildLockPath(root: string): string {
   return join(resolvePath(root), ".leina", "graph.build.lock");
@@ -26,7 +60,12 @@ function defaultSpawner(cmd: string, args: string[], opts: object): { pid?: numb
   return spawn(cmd, args, opts as Parameters<typeof spawn>[2]);
 }
 
-function parseLock(raw: string): { pid: number; startedAt: number } | null {
+interface LockHolder {
+  pid: number;
+  startedAt: number;
+}
+
+function parseLock(raw: string): LockHolder | null {
   try {
     const obj = JSON.parse(raw) as unknown;
     if (
@@ -35,7 +74,7 @@ function parseLock(raw: string): { pid: number; startedAt: number } | null {
       typeof (obj as Record<string, unknown>).pid === "number" &&
       typeof (obj as Record<string, unknown>).startedAt === "number"
     ) {
-      return obj as { pid: number; startedAt: number };
+      return obj as LockHolder;
     }
   } catch {
     /* corrupt / unreadable — treat as not-held */
@@ -43,10 +82,9 @@ function parseLock(raw: string): { pid: number; startedAt: number } | null {
   return null;
 }
 
-// True only when a *live* build currently holds the lock. Corrupt content, an expired TTL, or a
-// dead PID all mean "not held" (reclaimable). Operates purely on already-read data — no I/O.
-function holderIsAlive(data: { pid: number; startedAt: number } | null, now: () => number): boolean {
-  if (!data) return false;
+// True only when a *live* build currently holds the lock. An expired TTL or a dead PID mean
+// "not held" (reclaimable). Operates purely on already-read data — no I/O on the lock.
+function holderIsAlive(data: LockHolder, now: () => number): boolean {
   if (now() - data.startedAt > STALE_TTL_MS) return false;
   try {
     process.kill(data.pid, 0);
@@ -56,35 +94,129 @@ function holderIsAlive(data: { pid: number; startedAt: number } | null, now: () 
   }
 }
 
-/**
- * Acquire the build lock and return an open fd, or null if a live build already holds it.
- *
- * The lock path is touched EXACTLY ONCE — a single `openSync(…, O_RDWR|O_CREAT)` that creates the
- * file if absent and opens it otherwise. Inspection (fstat/read), reclaim (ftruncate) and the eventual
- * write all happen through that one fd, so there is no second path resolution to race against
- * (avoids the TOCTOU pattern CWE-367 / js/file-system-race). The trade-off is a weaker mutual
- * exclusion than O_EXCL: two simultaneous callers could both build, which is harmless for an
- * idempotent best-effort background build.
- */
-// O_RDWR|O_CREAT (create-if-absent, read+write, never truncates on open). NOT "a+":
-// an append-mode fd cannot be ftruncate'd on Windows (EPERM), which broke every
-// reclaim path (stale/dead/corrupt lock) on the windows CI runners.
-const LOCK_OPEN_FLAGS = fsConstants.O_RDWR | fsConstants.O_CREAT;
-
-function acquireLock(lockPath: string, now: () => number): number | null {
-  const fd = openSync(lockPath, LOCK_OPEN_FLAGS);
-  if (fstatSync(fd).size > 0) {
-    if (holderIsAlive(parseLock(readFileSync(fd, "utf8")), now)) {
-      closeSync(fd);
-      return null; // a live build owns it
-    }
-    ftruncateSync(fd, 0); // stale/corrupt → reclaim the same fd in place
-  }
-  return fd;
+function lockContent(pid: number, startedAt: number): string {
+  return JSON.stringify({ pid, startedAt });
 }
 
-const DEFAULT_WAIT_MS = 120_000; // 2min — well under STALE_TTL_MS (15min)
-const POLL_INTERVAL_MS = 500;
+function errCode(err: unknown): string | undefined {
+  return (err as NodeJS.ErrnoException | null)?.code;
+}
+
+/** O_EXCL-create the lock holding `content`; false when it already exists. */
+function createExclusive(lockPath: string, content: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(lockPath, CREATE_FLAGS);
+  } catch (err) {
+    if (errCode(err) === "EEXIST") return false;
+    throw err;
+  }
+  try {
+    writeSync(fd, content, 0);
+  } finally {
+    closeSync(fd);
+  }
+  return true;
+}
+
+/** Overwrite a lock this process already holds (or is entitled to, see self-ownership). */
+function overwriteLock(lockPath: string, content: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(lockPath, fsConstants.O_RDWR);
+  } catch {
+    return false; // vanished meanwhile — the caller retries the create
+  }
+  try {
+    ftruncateSync(fd, 0); // never leave a tail of the previous content
+    writeSync(fd, content, 0);
+  } finally {
+    closeSync(fd);
+  }
+  return true;
+}
+
+/**
+ * Move a lock judged stale (content `staleRaw`) out of the way. The rename is atomic; the
+ * renamed file is then compared with what was judged stale. If another process re-created
+ * the lock in between (we renamed THEIR fresh lock), it is linked back — never silently
+ * taken over. Every outcome ends with the caller retrying the exclusive create.
+ */
+function reclaimStale(lockPath: string, staleRaw: string): void {
+  const aside = `${lockPath}.stale-${process.pid}-${randomBytes(4).toString("hex")}`;
+  try {
+    renameSync(lockPath, aside);
+  } catch {
+    return; // already reclaimed / released by someone else
+  }
+  try {
+    if (readFileSync(aside, "utf8") !== staleRaw) linkSync(aside, lockPath);
+  } catch {
+    /* restore lost the race to a newer create — that holder wins */
+  } finally {
+    try { unlinkSync(aside); } catch { /* best-effort */ }
+  }
+}
+
+type AttemptResult = { acquired: true } | { acquired: false; holder: LockHolder };
+
+/** What is in the lock right now: its content and age, or null when it no longer exists. */
+function readLock(lockPath: string): { raw: string; mtimeMs: number } | null {
+  try {
+    return { raw: readFileSync(lockPath, "utf8"), mtimeMs: statSync(lockPath).mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One non-blocking acquisition attempt. `selfOwned` lets a lock naming THIS process count as
+ * ours (the detached child whose pid its parent pre-wrote); a live foreign holder (or an empty
+ * lock still in its grace period) is returned as `holder`.
+ */
+function attemptAcquire(lockPath: string, now: () => number, selfOwned: boolean): AttemptResult {
+  const content = lockContent(process.pid, now());
+  for (let i = 0; i < MAX_IMMEDIATE_RETRIES; i++) {
+    if (createExclusive(lockPath, content)) return { acquired: true };
+    const current = readLock(lockPath);
+    if (current === null) continue; // released between create and read
+    if (current.raw === "" && Date.now() - current.mtimeMs < EMPTY_LOCK_GRACE_MS) {
+      return { acquired: false, holder: { pid: 0, startedAt: current.mtimeMs } };
+    }
+    const holder = parseLock(current.raw);
+    if (holder !== null && selfOwned && holder.pid === process.pid) {
+      if (overwriteLock(lockPath, content)) return { acquired: true };
+      continue;
+    }
+    if (holder !== null && holderIsAlive(holder, now)) return { acquired: false, holder };
+    reclaimStale(lockPath, current.raw); // dead / expired / corrupt / abandoned-empty
+  }
+  // Pathological churn (many processes reclaiming at once): report "held" so the caller waits.
+  return { acquired: false, holder: { pid: 0, startedAt: now() } };
+}
+
+/**
+ * Remove the lock if THIS process still holds it. A lock reclaimed by someone else after our
+ * TTL ran out is theirs now and is left alone. Best-effort; never throws.
+ */
+export function releaseBuildLock(root: string): void {
+  const lockPath = buildLockPath(root);
+  try {
+    if (parseLock(readFileSync(lockPath, "utf8"))?.pid === process.pid) unlinkSync(lockPath);
+  } catch {
+    /* already gone, or unreadable — nothing of ours to release */
+  }
+}
+
+/** The actionable message for a wait that timed out (shared by the CLI and the read path). */
+export function lockTimeoutMessage(root: string, holderPid: number, holderStartedAt: number): string {
+  const ageS = Math.max(0, Math.round((Date.now() - holderStartedAt) / 1000));
+  const who = holderPid > 0 ? `pid ${holderPid}` : "pid unknown";
+  return (
+    `another build is running (${who}, started ${ageS}s ago) — ` +
+    `wait for it to finish, retry, or delete ${buildLockPath(root)} if it is stuck.`
+  );
+}
 
 export interface AcquireForegroundLockOpts {
   /** Max time to wait for a live, foreign holder to release the lock. Defaults to
@@ -95,22 +227,18 @@ export interface AcquireForegroundLockOpts {
   sleep?: (ms: number) => void;
 }
 
-// `{ fd }` on success: the fd is already closed by the time it's returned (the lock file
-// has been written and the fd used to write it, matching the write-then-close pattern in
-// spawnDetachedBuild). It is surfaced only as a truthy "acquired" marker for callers /
-// tests — release always goes through `rmSync(lockPath)`, never through this fd.
+// `{ fd }` on success is only a truthy "acquired" marker kept for callers/tests (the lock has
+// been written and its descriptor closed); release goes through releaseBuildLock(root).
 //
-// On timeout, the holder's pid/startedAt are surfaced (not just the string "timeout") so
-// the CLI can print an actionable message ("another build is running (pid N, started
-// <age>)") without re-reading and re-parsing the lock file itself.
+// On timeout, the holder's pid/startedAt are surfaced so the CLI can print an actionable
+// message ("another build is running (pid N, started <age>)") without re-reading the lock.
 export type AcquireForegroundLockResult =
   | { fd: number }
   | { timeout: true; holderPid: number; holderStartedAt: number };
 
 function defaultSleep(ms: number): void {
   // Synchronous blocking sleep — handlers here (handleBuild/handleRefresh) are not
-  // inside an event loop turn that needs to stay responsive; a real await-based sleep
-  // would require making every caller async-friendly for no benefit.
+  // inside an event loop turn that needs to stay responsive.
   const sab = new Int32Array(new SharedArrayBuffer(4));
   Atomics.wait(sab, 0, 0, ms);
 }
@@ -120,18 +248,13 @@ function defaultSleep(ms: number): void {
  * waiting for a live foreign holder rather than silently skipping like
  * `spawnDetachedBuild` does for background self-heals.
  *
- * Centralizes the self-ownership rule here (single source of truth) so it applies
- * identically to the child process spawned by `spawnDetachedBuild`: the parent
- * pre-writes the CHILD's pid into the lock before the child's own `leina build`
- * re-enters this function. If `lock.pid === process.pid`, the caller already owns the
- * lock (case: I *am* that child) — reclaim it immediately without waiting. Without this
- * centralized check, the detached child would wait on itself forever (deadlock).
+ * Self-ownership: the parent of a detached self-heal pre-writes the CHILD's pid into the
+ * lock before the child's own `leina build` re-enters this function. A lock naming this
+ * process is therefore already ours — taken over immediately; waiting would deadlock.
  *
- * Resolution order for a non-empty lock:
- *   1. self-owned (`lock.pid === process.pid`) → reclaim immediately, no wait
- *   2. stale (dead holder / TTL expired / corrupt) → reclaim immediately
- *   3. live foreign holder → poll every 500ms until it releases or `waitMs` elapses
- *      → on timeout, return `"timeout"` (caller fails fast with an actionable message)
+ * Resolution order for an existing lock: self-owned → take over; stale (dead holder / TTL
+ * expired / corrupt / abandoned empty) → reclaim; live foreign holder → poll every 500ms
+ * until it releases or `waitMs` elapses, then return a timeout naming the holder.
  */
 export function acquireForegroundBuildLock(
   root: string,
@@ -141,46 +264,57 @@ export function acquireForegroundBuildLock(
   const sleep = opts?.sleep ?? defaultSleep;
   const waitMs = opts?.waitMs ?? envWaitMs();
   const lockPath = buildLockPath(root);
-
   mkdirSync(dirname(lockPath), { recursive: true });
 
   const deadline = now() + waitMs;
   for (;;) {
-    const fd = openSync(lockPath, LOCK_OPEN_FLAGS);
-    const size = fstatSync(fd).size;
-    if (size === 0) {
-      writeSelfLock(fd, now());
-      return { fd };
-    }
-    const lock = parseLock(readFileSync(fd, "utf8"));
-    if (lock !== null && lock.pid === process.pid) {
-      // Self-ownership: I already hold this lock (e.g. the detached child spawned by
-      // spawnDetachedBuild, whose pid the parent pre-wrote). Reclaim without waiting —
-      // waiting here would deadlock forever.
-      writeSelfLock(fd, now());
-      return { fd };
-    }
-    if (!holderIsAlive(lock, now)) {
-      // Absent/corrupt/stale/dead holder → reclaim.
-      ftruncateSync(fd, 0);
-      writeSelfLock(fd, now());
-      return { fd };
-    }
-    closeSync(fd);
-    // lock is non-null here: holderIsAlive(null, now) always returns false, which would
-    // have already returned via the reclaim branch above.
+    const attempt = attemptAcquire(lockPath, now, true);
+    if (attempt.acquired) return { fd: 1 };
     if (now() >= deadline) {
-      return { timeout: true, holderPid: lock!.pid, holderStartedAt: lock!.startedAt };
+      return { timeout: true, holderPid: attempt.holder.pid, holderStartedAt: attempt.holder.startedAt };
     }
     sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - now())));
   }
 }
 
-function writeSelfLock(fd: number, startedAt: number): void {
-  const content = JSON.stringify({ pid: process.pid, startedAt });
-  ftruncateSync(fd, 0); // drop any previous content so the overwrite can never leave a tail
-  writeSync(fd, content, 0);
-  closeSync(fd);
+export interface AcquireBuildLockOpts {
+  /** As for acquireForegroundBuildLock (env `LEINA_BUILD_LOCK_WAIT_MS`, default 120000ms). */
+  waitMs?: number;
+  /** Called once, when the first attempt finds a live foreign holder (before waiting). */
+  onWait?: (holder: { pid: number; startedAt: number }) => void;
+  /** Injectable async sleep for tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export type AcquireBuildLockResult =
+  | { acquired: true; waited: boolean }
+  | { timeout: true; holderPid: number; holderStartedAt: number };
+
+/**
+ * Event-loop-friendly acquisition for builds nobody ran explicitly — the read path's stale
+ * auto-rebuild and the MCP server — which must not freeze a long-lived process while another
+ * one builds. `waited: true` means another process held the lock first: it has most likely
+ * just rebuilt the graph, so the caller should re-check staleness before building again.
+ */
+export async function acquireBuildLock(root: string, opts: AcquireBuildLockOpts = {}): Promise<AcquireBuildLockResult> {
+  const now = (): number => Date.now();
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const waitMs = opts.waitMs ?? envWaitMs();
+  const lockPath = buildLockPath(root);
+  mkdirSync(dirname(lockPath), { recursive: true });
+
+  const deadline = now() + waitMs;
+  let waited = false;
+  for (;;) {
+    const attempt = attemptAcquire(lockPath, now, true);
+    if (attempt.acquired) return { acquired: true, waited };
+    if (now() >= deadline) {
+      return { timeout: true, holderPid: attempt.holder.pid, holderStartedAt: attempt.holder.startedAt };
+    }
+    if (!waited) opts.onWait?.(attempt.holder);
+    waited = true;
+    await sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - now())));
+  }
 }
 
 function envWaitMs(): number {
@@ -205,8 +339,9 @@ export function spawnDetachedBuild(root: string, opts?: SpawnDetachedOpts): Back
     // normally created by the build itself). Ensure it exists before reserving the lock.
     mkdirSync(dirname(lockPath), { recursive: true });
 
-    const fd = acquireLock(lockPath, now);
-    if (fd === null) return "skipped-lock-active";
+    // Never waits, and never treats a lock naming this process as its own: a hook process
+    // finding any live build (even one it started) simply skips.
+    if (!attemptAcquire(lockPath, now, false).acquired) return "skipped-lock-active";
 
     const cliBase = opts?.cliBase ?? deriveCliCommand({
       cliEntry: resolvePath(process.argv[1] ?? "."),
@@ -218,14 +353,12 @@ export function spawnDetachedBuild(root: string, opts?: SpawnDetachedOpts): Back
     try {
       child = spawner(cliBase.command, args, { detached: true, stdio: "ignore" });
     } catch {
-      try { ftruncateSync(fd, 0); } catch { /* ignore */ } // empty → reclaimable next run
-      closeSync(fd);
+      releaseBuildLock(root); // nothing will build — free the lock for the next run
       return "failed";
     }
 
-    const lockContent = JSON.stringify({ pid: child.pid ?? 0, startedAt: now() });
-    try { writeSync(fd, lockContent, 0); } catch { /* non-fatal */ }
-    closeSync(fd);
+    // Hand the lock to the child: its own `leina build` finds its pid there and takes over.
+    overwriteLock(lockPath, lockContent(child.pid ?? 0, now()));
     child.unref();
     return "spawned";
   } catch {

@@ -2,9 +2,9 @@
 // Each handler receives the argv tail (everything after the top-level command).
 
 import { join, resolve as resolvePath } from "node:path";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { isStale, readManifest } from "../../application/graph/manifest.ts";
-import { acquireForegroundBuildLock, buildLockPath } from "../background-build.ts";
+import { acquireForegroundBuildLock, lockTimeoutMessage, releaseBuildLock } from "../background-build.ts";
 import { loadFreshnessConfig } from "../../infrastructure/config/freshness.ts";
 import { affected, queryGraph, shortestPath } from "../../application/graph/query.ts";
 import { ambiguityNote, noMatchMessage, resolveSeedQuery } from "../../application/graph/seed.ts";
@@ -70,19 +70,11 @@ function acquireLockOrFail(root: string): void {
   const problem = buildRootProblem(root);
   if (problem) fail(`leina: cannot build the graph: ${problem}`);
   const result = acquireForegroundBuildLock(root);
-  if ("timeout" in result) {
-    const ageMs = Date.now() - result.holderStartedAt;
-    const ageS = Math.max(0, Math.round(ageMs / 1000));
-    fail(
-      `another build is running (pid ${result.holderPid}, started ${ageS}s ago) — ` +
-        `wait for it to finish, retry, or delete ${buildLockPath(root)} if it is stuck.`,
-    );
-  }
+  if ("timeout" in result) fail(lockTimeoutMessage(root, result.holderPid, result.holderStartedAt));
 }
 
 export async function handleBuild(rest: string[]): Promise<void> {
   const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : ".";
-  const lockPath = buildLockPath(root);
   acquireLockOrFail(root);
   try {
     const { buildGraph } = await import("../../application/graph/build.ts");
@@ -110,13 +102,12 @@ export async function handleBuild(rest: string[]): Promise<void> {
     );
     recordProjectBuild(root);
   } finally {
-    try { rmSync(lockPath, { force: true }); } catch { /* best-effort */ }
+    releaseBuildLock(root);
   }
 }
 
 export async function handleRefresh(rest: string[]): Promise<void> {
   const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : ".";
-  const lockPath = buildLockPath(root);
   acquireLockOrFail(root);
   try {
     const { buildGraph } = await import("../../application/graph/build.ts");
@@ -138,7 +129,7 @@ export async function handleRefresh(rest: string[]): Promise<void> {
     );
     recordProjectBuild(root);
   } finally {
-    try { rmSync(lockPath, { force: true }); } catch { /* best-effort */ }
+    releaseBuildLock(root);
   }
 }
 
