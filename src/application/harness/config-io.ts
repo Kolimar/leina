@@ -97,7 +97,11 @@ export async function loadConfig(repoRoot: string, opts: { committedOnly?: boole
   if (strictness !== undefined) mergedRaw.strictness = strictness;
 
   const result = validateConfig(mergedRaw);
-  const invalid = [...(result.ok ? [] : result.errors), ...ruleErrors];
+  const invalid = [
+    ...(result.ok ? [] : result.errors),
+    ...ruleErrors,
+    ...(result.ok ? hookCommandRepoProblems(result.value.hookCommand, repoRoot) : []),
+  ];
   if (!result.ok || invalid.length > 0) {
     errors.push(`invalid config: ${invalid.join("; ")}`);
     const fallback = validateConfig({});
@@ -116,6 +120,24 @@ export async function loadConfig(repoRoot: string, opts: { committedOnly?: boole
     localRuleOverrides: local,
     errors,
   };
+}
+
+/**
+ * validateConfig only admits leina launch forms for `hookCommand` (see
+ * hookCommandProblem); it cannot know the repo root. A shape-valid absolute
+ * path INSIDE the repository would still run a file the repo ships from the
+ * host's hook wiring — refused here.
+ */
+function hookCommandRepoProblems(command: string, repoRoot: string): string[] {
+  const root = path.resolve(repoRoot);
+  const inside = command
+    .split(/\s+/)
+    .filter((word) => path.isAbsolute(word))
+    .some((word) => {
+      const abs = path.resolve(word);
+      return abs === root || abs.startsWith(`${root}${path.sep}`);
+    });
+  return inside ? [`hookCommand: must not run a program from inside the repository (got ${JSON.stringify(command)})`] : [];
 }
 
 /**

@@ -509,6 +509,65 @@ function readRuleOverrides(value: unknown, errors: string[]): Record<string, Rul
   return overrides;
 }
 
+// hookCommand — repo config that `harness sync` writes verbatim into host hook
+// wiring: Cursor runs `<hookCommand> <event>` through a shell, the OpenCode
+// plugin execs its first word. Unchecked it would be command injection by
+// committed config, so only a leina CLI invocation of the hook entry passes:
+//   leina harness hook
+//   /abs/path/leina[.cmd|.exe] harness hook
+//   <node | /abs/node> [--no-warnings] [--experimental-strip-types] /abs/…/cli/index.{js,ts} harness hook
+// (the last is the form deriveCliCommand writes for the agent hooks). Words
+// may not carry shell metacharacters or quotes. Whether an absolute path lies
+// inside the repository is checked by the loader, which knows the repo root.
+const HOOK_WORD_RE = /^[\w./:@+=\\-]+$/;
+const ABSOLUTE_PATH_RE = /^(?:\/|[A-Za-z]:[\\/])/;
+const HOOK_NODE_FLAGS = new Set(["--no-warnings", "--experimental-strip-types"]);
+
+function pathBasename(p: string): string {
+  return p.split(/[\\/]/).at(-1) ?? p;
+}
+
+function isLeinaLauncher(words: string[]): boolean {
+  if (words.length !== 1) return false;
+  const [bin] = words as [string];
+  return bin === "leina" || (ABSOLUTE_PATH_RE.test(bin) && /^leina(?:\.cmd|\.exe)?$/.test(pathBasename(bin)));
+}
+
+function isNodeEntryLauncher(words: string[]): boolean {
+  const [node, ...rest] = words;
+  const entry = rest.at(-1);
+  if (node === undefined || entry === undefined) return false;
+  const nodeOk = node === "node" || (ABSOLUTE_PATH_RE.test(node) && /^node(?:\.exe)?$/.test(pathBasename(node)));
+  return (
+    nodeOk &&
+    rest.slice(0, -1).every((flag) => HOOK_NODE_FLAGS.has(flag)) &&
+    ABSOLUTE_PATH_RE.test(entry) &&
+    /[\\/]cli[\\/]index\.(?:js|ts)$/.test(entry)
+  );
+}
+
+/** Why `command` is not an acceptable hookCommand, or undefined when it is. */
+export function hookCommandProblem(command: string): string | undefined {
+  const words = command.trim().split(/\s+/).filter((w) => w.length > 0);
+  if (words.some((w) => !HOOK_WORD_RE.test(w))) return "must not contain shell metacharacters or quotes";
+  if (words.length < 3 || words.slice(-2).join(" ") !== "harness hook") return 'must end with "harness hook"';
+  const launcher = words.slice(0, -2);
+  if (isLeinaLauncher(launcher) || isNodeEntryLauncher(launcher)) return undefined;
+  return (
+    "must invoke the leina CLI: `leina`, an absolute path to the leina binary, or node with " +
+    "the absolute path of leina's cli/index.js"
+  );
+}
+
+function readHookCommand(value: Record<string, unknown>, errors: string[]): string | undefined {
+  const command = readString(value, "hookCommand", "", errors);
+  if (command === undefined) return undefined;
+  const problem = hookCommandProblem(command);
+  if (problem === undefined) return command;
+  errors.push(`hookCommand: ${problem} (got ${JSON.stringify(command)})`);
+  return undefined;
+}
+
 /** Validate a merged raw config object, applying built-in defaults per field. */
 export function validateConfig(value: unknown): ValidationResult<HarnessConfig> {
   if (!isRecord(value)) return { ok: false, errors: ["config must be a JSON object"] };
@@ -523,7 +582,7 @@ export function validateConfig(value: unknown): ValidationResult<HarnessConfig> 
     verify: readVerifySection(value.verify, errors),
     taskTypes: readStringArray(value, "taskTypes", "", errors) ?? defaults.taskTypes,
     strictness: readEnum(value, "strictness", "", errors, STRICTNESS_LEVELS) ?? defaults.strictness,
-    hookCommand: readString(value, "hookCommand", "", errors) ?? defaults.hookCommand,
+    hookCommand: readHookCommand(value, errors) ?? defaults.hookCommand,
   };
 
   if (errors.length > 0) return { ok: false, errors };

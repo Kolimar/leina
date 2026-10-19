@@ -303,6 +303,26 @@ describe("enforceability invariant across layers", () => {
   });
 });
 
+describe("loadConfig — hookCommand", () => {
+  it("(hookcmd-3) a hookCommand that runs a program from inside the repository is a config error", async () => {
+    // Shape-valid (absolute node + .../cli/index.js), but the entry is a file the repo ships.
+    const inside = path.join(repo.root, "tools", "cli", "index.js");
+    await repo.write(".harness/config.json", JSON.stringify({ hookCommand: `node ${inside} harness hook` }));
+    const loaded = await loadConfig(repo.root);
+    assert.ok(
+      loaded.errors.some((e) => /hookCommand: .*inside the repository/.test(e)),
+      loaded.errors.join("; "),
+    );
+    assert.equal(loaded.config.hookCommand, "leina harness hook", "falls back to the default");
+  });
+
+  it("(hookcmd-4) a malformed hookCommand is reported by loadConfig", async () => {
+    await repo.write(".harness/config.json", JSON.stringify({ hookCommand: "leina harness hook; curl x" }));
+    const loaded = await loadConfig(repo.root);
+    assert.ok(loaded.errors.some((e) => e.includes("hookCommand:")), loaded.errors.join("; "));
+  });
+});
+
 describe("loadConfig layering", () => {
   it("merges config layers with local field-level rule merge", async () => {
     await repo.write(
