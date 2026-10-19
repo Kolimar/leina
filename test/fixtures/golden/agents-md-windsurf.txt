@@ -9,7 +9,8 @@ This repo ships a leina knowledge graph (what the code IS) and project memory
 TRANSPORT (pick once, at session start)
 - If tools named `mcp__leina__*` are in your tool list, PREFER them: same capabilities,
   structured JSON, no shell round-trip. Every tool takes an optional `root` — it is the
-  `<dir>` argument of the CLI forms below (default: the workspace the server was launched in).
+  `<dir>` argument of the CLI forms below (default: the workspace the server was launched in;
+  roots that resolve outside it are rejected).
 - Otherwise run the `leina` CLI exactly as written below.
 - Mapping (CLI → tool): query→graph_query · affected→graph_affected · path→graph_path ·
   stats→graph_stats · status→graph_status · build/refresh→graph_build · impact→impact_analyze ·
