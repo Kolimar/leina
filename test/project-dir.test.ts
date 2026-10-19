@@ -45,7 +45,8 @@ test("(pdir-1) from a subdirectory, no <dir>: reads the project's graph, creates
     const deep = join(dir, "src", "deep");
     const status = runCli(["status"], deep);
     assert.equal(status.code, 0, status.stderr);
-    assert.match(status.stdout, new RegExp(`^root: ${dir}\\n`));
+    // startsWith, not a RegExp: a Windows temp path is full of backslash escapes.
+    assert.ok(status.stdout.startsWith(`root: ${dir}\n`), status.stdout);
     assert.match(runCli(["affected", "beta"], deep).stdout, /Blast radius of beta/);
     assert.match(runCli(["path", "alpha", "beta"], deep).stdout, /alpha/);
     assert.match(runCli(["query", "alpha"], deep).stdout, /Seeds: alpha/);
@@ -150,7 +151,7 @@ test("(pdir-6) memory: <dir> is optional, resolves to the project root, ids take
     const deep = join(dir, "src", "deep");
     const cp = runCli(["memory", "current-project"], deep);
     assert.equal(cp.code, 0, cp.stderr);
-    assert.match(cp.stdout, new RegExp(`root: ${dir}`));
+    assert.ok(cp.stdout.includes(`root: ${dir}`), cp.stdout);
 
     const saved = runCli(["memory", "save", "--title", "from deep", "--content", "x"], deep);
     assert.equal(saved.code, 0, saved.stderr);

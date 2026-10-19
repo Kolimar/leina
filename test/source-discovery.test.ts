@@ -157,7 +157,21 @@ test("(disc-5) git: a root that the enclosing repo ignores falls back to the wal
   }
 });
 
-test("(disc-6) symlinks are not sources in either mode (the walk never followed them)", () => {
+// Windows without Developer Mode / admin cannot create symlinks: skip, don't fail.
+const SYMLINKS_OK = (() => {
+  const d = mkdtempSync(join(tmpdir(), "leina-disc-symprobe-"));
+  try {
+    writeFileSync(join(d, "t"), "");
+    symlinkSync(join(d, "t"), join(d, "l"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+})();
+
+test("(disc-6) symlinks are not sources in either mode (the walk never followed them)", { skip: !SYMLINKS_OK && "symlink privilege unavailable" }, () => {
   const root = mkdtempSync(join(tmpdir(), "leina-disc-link-"));
   const outside = mkdtempSync(join(tmpdir(), "leina-disc-outside-"));
   try {

@@ -128,7 +128,8 @@ test("(hroot-5) an opt-out in the subtree and an untrusted repo both stay untrus
 test("(hroot-6) e2e: agent-hook fired from a subdirectory and from a nested worktree acts on the project", () => {
   const home = fresh();
   const dir = fresh();
-  const env = { ...process.env, LEINA_HOME: join(home, ".leina"), HOME: home, USERPROFILE: home };
+  // No detached self-heal build: it would outlive the test holding the temp dir (Windows EBUSY).
+  const env = { ...process.env, LEINA_HOME: join(home, ".leina"), HOME: home, USERPROFILE: home, LEINA_DISABLE_AUTOBUILD: "1" };
   const run = (args: string[], projectDir: string, input?: string) =>
     spawnSync(process.execPath, ["--no-warnings", "--experimental-strip-types", CLI, ...args], {
       encoding: "utf8", env: { ...env, CLAUDE_PROJECT_DIR: projectDir }, cwd: projectDir, input,

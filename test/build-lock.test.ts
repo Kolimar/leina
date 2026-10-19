@@ -113,14 +113,16 @@ test("(lock-5) an empty lock is a creator mid-write for a grace period, then aba
 
 test("(lock-6) processes racing for a free lock: exactly one acquires it (O_EXCL)", async () => {
   const root = tmpRoot("race");
-  const startAt = Date.now() + 1500; // all children attempt at the same instant
+  // All children attempt at the same instant; the lead covers a slow process start (a cold
+  // Windows/macOS runner takes well over a second to spawn six strip-types Node processes).
+  const startAt = Date.now() + 4000;
   const script =
     `const m = await import(${JSON.stringify(LOCK_MODULE)});` +
     `while (Date.now() < ${startAt}) {}` +
     `const r = m.acquireForegroundBuildLock(${JSON.stringify(root)}, { waitMs: 0 });` +
     `process.stdout.write("fd" in r ? "acquired" : "busy");` +
     // the winner keeps its (live) lock until every contender has tried
-    `setTimeout(() => { m.releaseBuildLock(${JSON.stringify(root)}); }, 1500);`;
+    `setTimeout(() => { m.releaseBuildLock(${JSON.stringify(root)}); }, 3000);`;
   const runs = Array.from({ length: 6 }, () =>
     new Promise<string>((ok, ko) => {
       const child = spawn(

@@ -110,7 +110,7 @@ test("(hscope-6) fs: under Devin without project wiring, the Claude Code user co
 test("(hscope-7) e2e: with project wiring the user-global entry is silent and the project entry answers", () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), "hook-scope-e2e-home-")));
   const proj = realpathSync(mkdtempSync(join(tmpdir(), "hook-scope-e2e-proj-")));
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: join(home, ".config"), LEINA_HOME: join(home, ".leina"), CLAUDE_PROJECT_DIR: proj };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: join(home, ".config"), LEINA_HOME: join(home, ".leina"), CLAUDE_PROJECT_DIR: proj, LEINA_DISABLE_AUTOBUILD: "1" };
   delete env.DEVIN_PROJECT_DIR;
   const run = (args: string[], input?: string) =>
     spawnSync(process.execPath, ["--no-warnings", "--experimental-strip-types", CLI, ...args], { encoding: "utf8", env, cwd: proj, input });
