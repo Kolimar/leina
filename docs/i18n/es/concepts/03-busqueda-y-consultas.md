@@ -16,26 +16,44 @@ cuatro pasos:
 
 ```mermaid
 flowchart TD
-    q["pregunta:<br/>'quién maneja autenticación'"] --> tok["1. tokenize<br/>(parte, normaliza, descarta tokens de 1 letra)"]
-    tok --> score["2. puntúa CADA node por<br/>solapamiento de términos"]
-    score --> seeds["3. toma los 3 nodes<br/>de mayor puntaje (seeds)"]
-    seeds --> expand["4. expande el vecindario<br/>BFS no dirigido<br/>(depth=2, máx 40 nodes)"]
+    q["pregunta:<br/>'cómo resuelve el hook la raíz del project'"] --> tok["1. términos<br/>(sin stopwords EN/ES, parte camelCase, stemming)"]
+    tok --> score["2. puntúa CADA node<br/>(IDF, cobertura, kind, penalización de tests)"]
+    score --> seeds["3. toma hasta 3 seeds<br/>(cada una ≥ 30% del mejor puntaje)"]
+    seeds --> expand["4. crece el vecindario best-first<br/>(depth=2, máx 25 nodes,<br/>primero edges semánticos)"]
     expand --> sub["subgrafo:<br/>seeds + nodes + edges"]
 ```
 
-El **scoring** premia los matches más específicos:
+**1. Términos.** La pregunta se parte en palabras — incluido camelCase y snake_case
+(`graphStore` → graph, store) —, se descartan stopwords en inglés y español y palabras meta
+("function", "code", "método"…), y cada palabra se reduce a su **raíz** igual que los labels,
+así *verified* encuentra `verify`, *anchors* encuentra `Anchor` y *confined* encuentra `confine`.
 
-| Coincidencia del término contra... | Puntos |
+**2. Scoring.** El label de cada node también se parte en palabras; un módulo cuenta solo su
+**nombre de archivo**, sus directorios son evidencia débil. Por término:
+
+| El término coincide con… | Peso |
 |---|---|
-| label **exacto** | +100 |
-| label **empieza con** el término | +10 |
-| label **contiene** el término | +3 |
-| el **path** del archivo contiene el término | +1 |
+| una palabra del label | 1 |
+| un prefijo de palabra del label (≥ 4 letras) | 0.6 |
+| una palabra de la clase dueña (métodos) | 0.5 |
+| una palabra de directorio del archivo | 0.3 |
 
-Se suman todos los términos; se ordena de mayor a menor; los **3 primeros** son las *seeds*.
-Desde ahí, la expansión camina en **ambas direcciones** (out + in edges) hasta
-profundidad 2 o hasta juntar 40 nodes. El resultado es un subgrafo enfocado: las esquinas más
-relevantes y las calles que las conectan.
+Cada peso se multiplica por el **IDF** del término sobre el vocabulario del propio grafo — una
+palabra que aparece en cientos de labels (`get`, `graph`) pesa poco, una rara (`confine`)
+decide. La suma escala según cuánto de la pregunta cubre el node y cuánto de su label está hecho
+de palabras de la pregunta, así `resolveHookProjectRoot` le gana a `resolve()` para "how does the
+hook resolve the project root". Un identificador escrito en la pregunta (`openFreshStore`), o
+una pregunta de una sola palabra, recibe un bonus de nombre exacto — una palabra común en inglés
+nunca. Los módulos pesan menos que funciones/clases, y **los nodes de test/mock/fixture se
+penalizan** salvo que pases `--include-tests` (MCP `includeTests`) o la pregunta sea sobre tests.
+
+**3–4. Seeds y vecindario.** Hasta 3 seeds y luego una expansión best-first: cada node propone
+como mucho 8 vecinos semánticos (primero calls e implements, después references, uses,
+imports…), ordenados por su propia relevancia y ponderados por la fuerza del node que los
+propone; `contains`/`method` solo se siguen desde un módulo/clase/interfaz hacia miembros que
+también son relevantes (como mucho 4). Los vecinos de archivo de una seed nunca entran solo por
+compartir archivo, y los nodes de test quedan fuera de la expansión por defecto. La salida lista
+cada node con su `file:line` y las edges no estructurales con la línea donde ocurre cada una.
 
 > **Por qué no es RAG vectorial:** un vector store responde "¿qué se *parece* a esto?". `query`
 > responde "¿qué está *conectado* a esto, y cómo?". Para código, la segunda pregunta es la que

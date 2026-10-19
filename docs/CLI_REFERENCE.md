@@ -39,11 +39,16 @@ count. No rebuild.
 ### `stats <dir>`
 Print node count, edge count, and an edge confidence breakdown.
 
-### `query <dir> <question> [--json]`
-Term-scored subgraph for a free-text question. Prints the resolved seeds and the
-`source --relation--> target` edges of the subgraph. With `--json` (anywhere after `<dir>`;
-it is never part of the question) prints the result as one line of JSON —
-`{seeds, nodes, edges}`, the same shape the MCP `graph_query` tool returns.
+### `query <dir> <question> [--json] [--include-tests]`
+Relevance-ranked subgraph for a free-text question in English or Spanish (stopwords
+dropped, camelCase split, stemmed, IDF-weighted — see
+[Search and queries](concepts/03-busqueda-y-consultas.md)). Prints the seeds, every node of
+the subgraph (at most 25) with its kind and `file:line`, and its semantic edges
+(`source --relation--> target` plus the `file:line` where each happens; structural
+`contains`/`method` edges are omitted). Test/mock/fixture nodes are penalised as seeds and left
+out of the neighbourhood unless `--include-tests` is passed or the question is about tests.
+With `--json` prints the result as one line of JSON — the same shape the MCP `graph_query`
+tool returns. Flags may sit anywhere after `<dir>`; they are never part of the question.
 
 ### Selecting a symbol (`affected`, `path`, `impact analyze`)
 A symbol argument is matched **exactly** — never by substring. Accepted forms, tried in
@@ -552,7 +557,7 @@ the tool's default.
 
 | CLI | MCP tool | Notes |
 |---|---|---|
-| `query` | `graph_query` | builds the graph on first use |
+| `query` | `graph_query` | builds the graph on first use; `includeTests` mirrors `--include-tests`; `maxNodes` defaults to 25 |
 | `affected` | `graph_affected` | `symbol` takes the CLI selectors; ambiguous → best match + `note` + `alternatives`; no exact match → `seed: null` + `note` + `suggestions` |
 | `path` | `graph_path` | `from`/`to` resolved like `graph_affected`; per-endpoint `note`/`alternatives`/`suggestions` under `endpoints` |
 | `stats` | `graph_stats` | |

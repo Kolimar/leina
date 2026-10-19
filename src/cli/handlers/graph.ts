@@ -6,9 +6,9 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { isStale, readManifest } from "../../application/graph/manifest.ts";
 import { acquireForegroundBuildLock, buildLockPath } from "../background-build.ts";
 import { loadFreshnessConfig } from "../../infrastructure/config/freshness.ts";
-import { affected, queryGraph, shortestPath } from "../../application/graph/query.ts";
+import { affected, queryGraph, shortestPath, type QueryResult } from "../../application/graph/query.ts";
 import { ambiguityNote, noMatchMessage, resolveSeedQuery } from "../../application/graph/seed.ts";
-import { displayLabel, nodeAt } from "../../application/graph/present.ts";
+import { displayLabel, edgeAt, nodeAt } from "../../application/graph/present.ts";
 import type { GraphNode } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
 import { openGraphRepo as openStore, openFreshStore, openEventSink, buildDefaultRegistry } from "../wiring.ts";
@@ -251,25 +251,44 @@ export function handleGraphGc(rest: string[]): void {
   if (dryRun) console.log("(dry run — registry left unchanged)");
 }
 
+const QUERY_FLAGS = new Set(["--json", "--include-tests"]);
+
 export async function handleQuery(rest: string[]): Promise<void> {
-  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: query <dir> <question> [--json]");
-  // `--json` is a flag wherever it sits after <dir>, never part of the question.
+  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: query <dir> <question> [--json] [--include-tests]");
+  // Flags are flags wherever they sit after <dir>, never part of the question.
   const asJson = rest.includes("--json");
-  const question = rest.slice(1).filter((a) => a !== "--json").join(" ");
+  const includeTests = rest.includes("--include-tests");
+  const question = rest.slice(1).filter((a) => !QUERY_FLAGS.has(a)).join(" ");
   const store = await openFreshStore(root);
-  const res = queryGraph(store, question);
-  store.close();
+  const res = queryGraph(store, question, { includeTests });
   if (asJson) {
+    store.close();
     // The registry's graph.query output contract (graphQueryOutputSchema): the same
-    // {seeds, nodes, edges} QueryResult the MCP graph_query tool returns.
+    // QueryResult the MCP graph_query tool returns.
     process.stdout.write(`${JSON.stringify(res)}\n`);
     return;
   }
-  console.log(`Seeds: ${res.seeds.map((s) => s.label).join(", ") || "(none)"}`);
-  console.log(`Subgraph: ${res.nodes.length} nodes, ${res.edges.length} edges`);
+  const label = new Map(res.nodes.map((n) => [n.id, displayLabel(store, n)]));
+  store.close();
+  printQueryText(res, label);
+}
+
+// Seeds, then every node with its kind and file:line, then the semantic edges with the
+// file:line where each happens — enough to open the right file without a second query.
+function printQueryText(res: QueryResult, label: Map<string, string>): void {
+  const name = (id: string): string => label.get(id) ?? id;
+  const seedIds = new Set(res.seeds.map((s) => s.id));
+  console.log(`Seeds: ${res.seeds.map((s) => `${name(s.id)} (${nodeAt(s)})`).join(", ") || "(none)"}`);
+  const hint = res.testsExcluded ? " (test/mock/fixture nodes left out; --include-tests to add them)" : "";
+  console.log(`Subgraph: ${res.nodes.length} nodes, ${res.edges.length} edges${hint}`);
+  if (res.nodes.length === 0) return;
+  console.log("Nodes:");
+  for (const n of res.nodes) {
+    console.log(`  ${seedIds.has(n.id) ? "*" : " "} ${name(n.id)}  ${n.kind ?? "?"}  ${nodeAt(n)}`);
+  }
+  if (res.edges.length === 0) return;
+  console.log("Edges:");
   for (const e of res.edges) {
-    const s = res.nodes.find((n) => n.id === e.source);
-    const t = res.nodes.find((n) => n.id === e.target);
-    if (s && t) console.log(`  ${s.label} --${e.relation}--> ${t.label}`);
+    console.log(`  ${name(e.source)} --${e.relation}--> ${name(e.target)}  ${edgeAt(e)}`);
   }
 }

@@ -1,9 +1,8 @@
 // Graph queries over the store: blast radius (BFS backward), shortest path,
-// and a term-scored subgraph query for query_graph.
+// and (re-exported from query-graph.ts) the term-scored subgraph for query_graph.
 
 import type { GraphEdge, GraphNode, Relation } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
-import { normalizeLabel, splitIdentifier } from "../../domain/shared/id.ts";
 import { edgeAt } from "./present.ts";
 import { resolveSeedQuery } from "./seed.ts";
 
@@ -269,116 +268,6 @@ function reconstruct(
   return steps;
 }
 
-export interface QueryResult {
-  seeds: GraphNode[];
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-}
-
-// Term-scored subgraph: score nodes by query terms, take top seeds, expand a
-// bounded neighborhood — the engine behind the query_graph tool.
-export function queryGraph(
-  store: GraphRepository,
-  question: string,
-  depth = 2,
-  maxNodes = 40,
-): QueryResult {
-  const terms = tokenize(question);
-  const scored = scoreNodes(store.allNodes(), terms);
-  scored.sort((a, b) => b.score - a.score);
-  const seeds = scored.slice(0, 3).map((s) => s.node);
-
-  const included = expandNeighborhood(store, seeds, depth, maxNodes);
-
-  const nodeList = collectNodes(store, included);
-  const edgeList = store
-    .allEdges()
-    .filter((e) => included.has(e.source) && included.has(e.target));
-
-  return { seeds, nodes: nodeList, edges: edgeList };
-}
-
-// Score every node by query-term overlap; keep only those with a positive score.
-function scoreNodes(
-  nodes: GraphNode[],
-  terms: string[],
-): { node: GraphNode; score: number }[] {
-  const scored: { node: GraphNode; score: number }[] = [];
-  for (const n of nodes) {
-    const score = scoreNode(n, terms);
-    if (score > 0) scored.push({ node: n, score });
-  }
-  return scored;
-}
-
-function scoreNode(n: GraphNode, terms: string[]): number {
-  const label = normalizeLabel(n.label);
-  const file = normalizeLabel(n.sourceFile);
-  // Word-level view of the identifier: lets "store" hit `openFreshStore` even though the
-  // normalized label ("openfreshstore") contains no standalone occurrence of the term.
-  const words = new Set(splitIdentifier(n.label));
-  let score = 0;
-  for (const t of terms) {
-    if (label === t) score += 100;
-    else if (words.has(t)) score += 12;
-    else if (label.startsWith(t)) score += 10;
-    else if (label.includes(t)) score += 3;
-    if (file.includes(t)) score += 1;
-  }
-  return score;
-}
-
-// BFS outward from the seeds on the undirected view, bounded by depth/maxNodes.
-function expandNeighborhood(
-  store: GraphRepository,
-  seeds: GraphNode[],
-  depth: number,
-  maxNodes: number,
-): Set<string> {
-  const included = new Set<string>(seeds.map((s) => s.id));
-  let frontier = [...included];
-  for (let d = 0; d < depth && included.size < maxNodes; d++) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      expandInto(store, id, included, next, maxNodes);
-    }
-    frontier = next;
-  }
-  return included;
-}
-
-function expandInto(
-  store: GraphRepository,
-  id: string,
-  included: Set<string>,
-  next: string[],
-  maxNodes: number,
-): void {
-  for (const e of [...store.outEdges(id), ...store.inEdges(id)]) {
-    const other = e.source === id ? e.target : e.source;
-    if (included.has(other) || included.size >= maxNodes) continue;
-    included.add(other);
-    next.push(other);
-  }
-}
-
-function collectNodes(store: GraphRepository, included: Set<string>): GraphNode[] {
-  const nodeList: GraphNode[] = [];
-  for (const id of included) {
-    const n = store.getNode(id);
-    if (n) nodeList.push(n);
-  }
-  return nodeList;
-}
-
-function tokenize(q: string): string[] {
-  // Subtoken the QUERY too: "GraphStore" in a question should match graph AND store.
-  const raw = q.split(/[^\p{L}\p{N}]+/u).filter((t) => t.length > 1);
-  const out = new Set<string>();
-  for (const t of raw) {
-    out.add(normalizeLabel(t));
-    for (const w of splitIdentifier(t)) if (w.length > 1) out.add(w);
-  }
-  out.delete("");
-  return [...out];
-}
+// The term-scored subgraph (`query` / graph_query) lives in query-graph.ts; re-exported
+// here so the graph read API keeps one import path.
+export { queryGraph, QUERY_DEFAULTS, type QueryOptions, type QueryResult } from "./query-graph.ts";

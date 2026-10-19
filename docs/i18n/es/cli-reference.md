@@ -41,11 +41,17 @@ recuento de archivos rastreados. No reconstruye.
 ### `stats <dir>`
 Imprime el recuento de nodes, el recuento de edges y un desglose de confianza de edges.
 
-### `query <dir> <question> [--json]`
-Subgrafo puntuado por términos para una pregunta en texto libre. Imprime los seeds resueltos
-y las edges `source --relation--> target` del subgrafo. Con `--json` (en cualquier posición
-después de `<dir>`; nunca forma parte de la pregunta) imprime el resultado como una línea de
-JSON — `{seeds, nodes, edges}`, la misma forma que devuelve la tool MCP `graph_query`.
+### `query <dir> <question> [--json] [--include-tests]`
+Subgrafo ordenado por relevancia para una pregunta en texto libre en inglés o español (sin
+stopwords, camelCase partido, stemming, ponderado por IDF — ver
+[Búsqueda y consultas](concepts/03-busqueda-y-consultas.md)). Imprime las seeds, cada node del
+subgrafo (como mucho 25) con su kind y `file:line`, y sus edges semánticas
+(`source --relation--> target` más el `file:line` donde ocurre cada una; las edges
+estructurales `contains`/`method` se omiten). Los nodes de test/mock/fixture se penalizan como
+seeds y quedan fuera del vecindario salvo que pases `--include-tests` o la pregunta sea sobre
+tests. Con `--json` imprime el resultado como una línea de JSON — la misma forma que devuelve
+la tool MCP `graph_query`. Los flags pueden ir en cualquier posición después de `<dir>`; nunca
+forman parte de la pregunta.
 
 ### Seleccionar un símbolo (`affected`, `path`, `impact analyze`)
 Un argumento de símbolo se matchea de forma **exacta** — nunca por substring. Formas
@@ -578,7 +584,7 @@ la tool.
 
 | CLI | MCP tool | Notas |
 |---|---|---|
-| `query` | `graph_query` | construye el grafo en el primer uso |
+| `query` | `graph_query` | construye el grafo en el primer uso; `includeTests` equivale a `--include-tests`; `maxNodes` por defecto 25 |
 | `affected` | `graph_affected` | `symbol` acepta los selectores de la CLI; ambiguo → mejor match + `note` + `alternatives`; sin match exacto → `seed: null` + `note` + `suggestions` |
 | `path` | `graph_path` | `from`/`to` se resuelven como en `graph_affected`; `note`/`alternatives`/`suggestions` por extremo bajo `endpoints` |
 | `stats` | `graph_stats` | |

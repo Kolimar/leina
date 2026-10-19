@@ -352,8 +352,9 @@ export function printRootHelp(): void {
       `                          expands to its members). Symbols match exactly: name,\n` +
       `                          Class.method, path/to/file.ts:name or a node id\n` +
       `  path <dir> <a> <b>      shortest path between two symbols (same selectors)\n` +
-      `  query <dir> <question> [--json]\n` +
-      `                          term-scored subgraph (--json: {seeds, nodes, edges})\n` +
+      `  query <dir> <question> [--json] [--include-tests]\n` +
+      `                          relevance-ranked subgraph with file:line per node; tests\n` +
+      `                          left out unless --include-tests (--json: graph_query shape)\n` +
       `  impact analyze [<dir>] <symbol> [--json]\n` +
       `                          bidirectional impact BFS (files/tests/services/configs)\n` +
       `  visualize <dir> [--out <path>] [--drilldown]\n` +

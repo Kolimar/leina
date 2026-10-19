@@ -286,7 +286,13 @@ function assertConsent(tool: string, root: string): void {
 // process-to-process; an MCP tool result would pull the values into model context.
 const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
   graph_query: async (a) =>
-    withFreshStore(rootOf(a), (s) => queryGraph(s, str(a, "question"), intArg(a, "depth"), intArg(a, "maxNodes"))),
+    withFreshStore(rootOf(a), (s) =>
+      queryGraph(s, str(a, "question"), {
+        depth: intArg(a, "depth"),
+        maxNodes: intArg(a, "maxNodes"),
+        includeTests: a.includeTests === true,
+      }),
+    ),
   // Seeds resolve exactly like the CLI (seed.ts selectors, no substring fallback): an
   // unresolved selector returns `seed: null` + `suggestions`, an ambiguous one the best
   // match + `alternatives` (`note` says which applies).
@@ -506,7 +512,11 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
       root: ROOT_PROP,
       question: { type: "string" },
       depth: intProp("depth", "neighbourhood hops around the seeds (default 2)"),
-      maxNodes: intProp("maxNodes", "max nodes in the returned subgraph (default 40)"),
+      maxNodes: intProp("maxNodes", "max nodes in the returned subgraph (default 25)"),
+      includeTests: {
+        type: "boolean",
+        description: "include test/mock/fixture nodes (default false: penalised as seeds, left out of the neighbourhood)",
+      },
     },
   },
   graph_affected: {

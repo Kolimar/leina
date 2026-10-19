@@ -164,6 +164,7 @@ const graphQueryInputSchema = {
     question: { type: "string" as const },
     depth: { type: "number" as const },
     maxNodes: { type: "number" as const },
+    includeTests: { type: "boolean" as const },
   },
 };
 

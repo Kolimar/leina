@@ -169,7 +169,7 @@ test("queryGraph: scores matching nodes as seeds and expands neighborhood", () =
   ];
   const edges = [edge("auth", "tok")];
   withGraph(nodes, edges, (store) => {
-    const r = queryGraph(store, "authenticate", 2, 40);
+    const r = queryGraph(store, "authenticate", { depth: 2, maxNodes: 40 });
     assert.ok(r.seeds.some((s) => s.id === "auth"));
     // neighborhood expansion pulls in the connected token node
     assert.ok(r.nodes.some((n) => n.id === "tok"));
@@ -181,7 +181,7 @@ test("queryGraph: scores matching nodes as seeds and expands neighborhood", () =
 test("queryGraph: question with no matching terms → no seeds", () => {
   const nodes = [node("a", "alpha"), node("b", "beta")];
   withGraph(nodes, [], (store) => {
-    const r = queryGraph(store, "zzz qqq", 2, 40);
+    const r = queryGraph(store, "zzz qqq", { depth: 2, maxNodes: 40 });
     assert.equal(r.seeds.length, 0);
     assert.equal(r.nodes.length, 0);
   });
@@ -195,7 +195,7 @@ test("queryGraph: maxNodes caps the returned neighborhood", () => {
     edges.push(edge("hub", `n${i}`));
   }
   withGraph(nodes, edges, (store) => {
-    const r = queryGraph(store, "hub", 2, 5);
+    const r = queryGraph(store, "hub", { depth: 2, maxNodes: 5 });
     assert.ok(r.nodes.length <= 5);
   });
 });
@@ -207,7 +207,7 @@ test("(q-subtok-1) a natural-language term hits camelCase symbols word-wise", ()
     node("noise", "restoreBackup"), // contains "store" only as substring, not as a word
   ];
   withGraph(nodes, [], (store) => {
-    const r = queryGraph(store, "how is the fresh store opened", 2, 40);
+    const r = queryGraph(store, "how is the fresh store opened", { depth: 2, maxNodes: 40 });
     assert.ok(r.seeds.some((s) => s.id === "ofs"), "openFreshStore seeds via subtokens fresh+store+open");
     // Word match must outrank the substring-only node.
     const ids = r.seeds.map((s) => s.id);
@@ -218,7 +218,7 @@ test("(q-subtok-1) a natural-language term hits camelCase symbols word-wise", ()
 test("(q-subtok-2) camelCase in the QUESTION splits too", () => {
   const nodes = [node("gs", "GraphStore"), node("other", "unrelated")];
   withGraph(nodes, [], (store) => {
-    const r = queryGraph(store, "where does graphStore live", 2, 40);
+    const r = queryGraph(store, "where does graphStore live", { depth: 2, maxNodes: 40 });
     assert.ok(r.seeds.some((s) => s.id === "gs"), "graphStore token matches GraphStore by exact + word split");
   });
 });

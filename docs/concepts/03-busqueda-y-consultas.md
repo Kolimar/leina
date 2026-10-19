@@ -17,26 +17,44 @@ four steps:
 
 ```mermaid
 flowchart TD
-    q["question:<br/>'who handles authentication'"] --> tok["1. tokenize<br/>(split, normalize, drop 1-letter tokens)"]
-    tok --> score["2. score EACH node by<br/>term overlap"]
-    score --> seeds["3. take the top 3<br/>highest-scoring nodes (seeds)"]
-    seeds --> expand["4. expand the neighborhood<br/>undirected BFS<br/>(depth=2, max 40 nodes)"]
+    q["question:<br/>'how does the hook resolve the project root'"] --> tok["1. terms<br/>(drop EN/ES stopwords, split camelCase, stem)"]
+    tok --> score["2. score EACH node<br/>(IDF-weighted, coverage, kind, test penalty)"]
+    score --> seeds["3. take up to 3 seeds<br/>(each ≥ 30% of the best score)"]
+    seeds --> expand["4. grow the neighbourhood best-first<br/>(depth=2, max 25 nodes,<br/>semantic edges first)"]
     expand --> sub["subgraph:<br/>seeds + nodes + edges"]
 ```
 
-The **scoring** rewards more specific matches:
+**1. Terms.** The question is split into words — camelCase and snake_case included
+(`graphStore` → graph, store) — English and Spanish stopwords and meta words
+("function", "code", "método"…) are dropped, and every word is **stemmed** the same way node
+labels are, so *verified* meets `verify`, *anchors* meets `Anchor`, *confined* meets `confine`.
 
-| Term match against... | Points |
+**2. Scoring.** Each node's label is split into words too; a module counts its **file name**
+only, its directories being weak evidence. Per term:
+
+| Term matches… | Weight |
 |---|---|
-| **exact** label match | +100 |
-| label **starts with** the term | +10 |
-| label **contains** the term | +3 |
-| the file's **path** contains the term | +1 |
+| a label word | 1 |
+| a label-word prefix (≥ 4 letters) | 0.6 |
+| a word of the owner class (methods) | 0.5 |
+| a directory word of the file | 0.3 |
 
-All terms are summed; results are sorted highest to lowest; the **top 3** are the *seeds*.
-From there, the neighborhood is expanded in **both directions** (out + in edges) up to
-depth 2 or until it collects 40 nodes. The result is a focused subgraph: the most
-relevant corners and the streets that connect them.
+Each weight is multiplied by the term's **IDF** over the graph's own vocabulary — a word that
+appears in hundreds of labels (`get`, `graph`) counts little, a rare one (`confine`) decides.
+The sum is scaled up by how much of the question the node covers and how much of its label
+is made of question words, so `resolveHookProjectRoot` beats `resolve()` for "how does the
+hook resolve the project root". An identifier written in the question (`openFreshStore`), or
+a one-word question, gets an exact-name bonus — an ordinary English word never does. Modules
+weigh less than functions/classes, and **test/mock/fixture nodes are penalised** unless you
+pass `--include-tests` (MCP `includeTests`) or the question is about tests.
+
+**3–4. Seeds and neighbourhood.** Up to 3 seeds, then a best-first expansion: each node
+proposes at most 8 semantic neighbours (calls and implements first, then references, uses,
+imports…), ranked by their own relevance and weighted by the strength of the node that
+proposes them; `contains`/`method` are followed only from a module/class/interface into
+members that are themselves relevant (at most 4). A seed's file-mates are never pulled in just
+for sharing its file, and test nodes stay out of the expansion by default. The output lists
+every node with its `file:line` and the non-structural edges with the line where each happens.
 
 > **Why this isn't vector RAG:** a vector store answers "what *resembles* this?". `query`
 > answers "what is *connected* to this, and how?". For code, the second question is the one
