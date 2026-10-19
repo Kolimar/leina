@@ -360,7 +360,11 @@ la DB. Útil para depurar fallas de proyecto ambiguo.
 
 ### `memory merge-projects <dir> --from <key> --to <key> [--dry-run]`
 Mueve/fusiona todas las observaciones de una project key a otra (por ejemplo, tras un rename
-del remote). `--dry-run` reporta qué se movería.
+del remote), incluidos los snapshots superseded de sus topics (el historial de revisiones viaja
+con ellas), y sus sesiones. Ante una colisión de topic gana la fila de `--to` y la de `--from`
+pasa a ser uno de sus snapshots. `--dry-run` reporta qué se movería. Las versiones anteriores
+movían solo las filas vivas; la migración de schema de 3.0 devuelve a su proyecto los
+snapshots que quedaron varados bajo la key vieja.
 
 ### `memory reanchor <dir> [--dry-run]`
 Retro-ancla observaciones **existentes** que mencionan en la prosa un archivo/símbolo real

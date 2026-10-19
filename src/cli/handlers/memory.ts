@@ -465,7 +465,8 @@ function memMergeProjects(rest: string[], dir: string): void {
     const r = store.mergeProject(fromKey, toKey, { dryRun });
     const prefix = dryRun ? "[dry-run] would move" : "moved";
     const supersededNote = r.superseded > 0 ? `; ${r.superseded} row(s) superseded (topic collision)` : "";
-    console.log(`${prefix} ${r.moved} row(s) from ${fromKey} => ${toKey}${supersededNote}`);
+    const snapshotNote = r.snapshots > 0 ? ` (+ ${r.snapshots} superseded snapshot(s) of their history)` : "";
+    console.log(`${prefix} ${r.moved} row(s) from ${fromKey} => ${toKey}${snapshotNote}${supersededNote}`);
   } finally {
     close();
   }

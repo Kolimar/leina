@@ -227,7 +227,7 @@ export interface MemoryRepository {
     from: string,
     to: string,
     opts?: { dryRun?: boolean },
-  ): { moved: number; superseded: number };
+  ): { moved: number; superseded: number; snapshots: number };
 
   // ---- lifecycle ----------------------------------------------------------
 

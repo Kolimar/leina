@@ -249,8 +249,8 @@ export class MockMemoryRepository implements MemoryRepository {
     _from: string,
     _to: string,
     _opts?: { dryRun?: boolean },
-  ): { moved: number; superseded: number } {
-    return { moved: 0, superseded: 0 };
+  ): { moved: number; superseded: number; snapshots: number } {
+    return { moved: 0, superseded: 0, snapshots: 0 };
   }
 
   exportAll(): import("../../src/domain/memory/model.ts").ExportedObservation[] {

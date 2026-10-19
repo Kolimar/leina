@@ -4,7 +4,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { LEGACY_TYPE_ALIASES, OBSERVATION_TYPES, SCOPES } from "../../domain/memory/model.ts";
 
-export const MEMORY_SCHEMA_VERSION = 7;
+export const MEMORY_SCHEMA_VERSION = 8;
 
 // Node bundles its built-in SQLite WITHOUT the FTS5 compile flag until Node 24.
 // Node 22/23 builds ship without FTS5; Node 24+ enables it (nodejs/node#56476).
@@ -82,13 +82,16 @@ export const OBS_FTS_DDL = `CREATE VIRTUAL TABLE IF NOT EXISTS obs_fts USING fts
   tokenize='porter unicode61 remove_diacritics 2'
 );`;
 
-// FTS sync triggers — guarded so superseded snapshots NEVER enter the index.
-// Invariant that makes the guards sufficient: a snapshot is born superseded (INSERT
-// with superseded_by already set), and a live row is updated in place but never
-// transitions live→superseded. So obs_ai indexes only live inserts, obs_au re-indexes
-// live-row content edits (the revision++ upsert path), and obs_ad un-indexes only rows
-// that were ever indexed (i.e. were live). Snapshots stay in the base table (retrievable
-// by get(id), full superseded_by audit trail) but are never FTS-scored.
+// FTS sync triggers — guarded so superseded snapshots NEVER enter the index. Invariant:
+// a row is in obs_fts exactly while it is live (superseded_by IS NULL). obs_ai indexes
+// live inserts (a snapshot is born superseded and skipped), obs_au re-indexes live-row
+// content edits (the revision++ upsert path), obs_ad un-indexes deleted live rows, and
+// the two transition triggers cover a row that changes side: obs_au_retire un-indexes a
+// live row that becomes superseded (merge-projects topic collisions, import topic
+// conflicts) and obs_au_revive indexes a snapshot that becomes live again (import). Before
+// v8 those two transitions had no trigger and left "ghost" index entries behind.
+// Snapshots stay in the base table (retrievable by get(id), full superseded_by audit
+// trail) but are never FTS-scored.
 const FTS_SYNC_TRIGGERS = `
 CREATE TRIGGER IF NOT EXISTS obs_ai AFTER INSERT ON observations
   WHEN new.superseded_by IS NULL
@@ -106,7 +109,36 @@ BEGIN
   INSERT INTO obs_fts(obs_fts, rowid, title, content) VALUES ('delete', old.rowid, old.title, old.content);
   INSERT INTO obs_fts(rowid, title, content) VALUES (new.rowid, new.title, new.content);
 END;
+CREATE TRIGGER IF NOT EXISTS obs_au_retire AFTER UPDATE ON observations
+  WHEN old.superseded_by IS NULL AND new.superseded_by IS NOT NULL
+BEGIN
+  INSERT INTO obs_fts(obs_fts, rowid, title, content) VALUES ('delete', old.rowid, old.title, old.content);
+END;
+CREATE TRIGGER IF NOT EXISTS obs_au_revive AFTER UPDATE ON observations
+  WHEN old.superseded_by IS NOT NULL AND new.superseded_by IS NULL
+BEGIN
+  INSERT INTO obs_fts(rowid, title, content) VALUES (new.rowid, new.title, new.content);
+END;
 `;
+
+/** Every FTS sync trigger name — LIKE mode drops them all (there is no obs_fts to feed). */
+const FTS_TRIGGER_NAMES = ["obs_ai", "obs_ad", "obs_au", "obs_au_retire", "obs_au_revive"] as const;
+
+function dropFtsTriggers(db: DatabaseSync): void {
+  for (const name of FTS_TRIGGER_NAMES) db.exec(`DROP TRIGGER IF EXISTS ${name}`);
+}
+
+// Drop + recreate obs_fts and index the LIVE rows of every project (the table is global).
+// Direct INSERT, never the FTS5 'rebuild' command: that re-reads EVERY base row, snapshots
+// included. The caller owns the transaction.
+function reindexLiveRows(db: DatabaseSync): void {
+  db.exec("DROP TABLE IF EXISTS obs_fts");
+  db.exec(OBS_FTS_DDL);
+  db.exec(
+    `INSERT INTO obs_fts(rowid, title, content)
+         SELECT rowid, title, content FROM observations WHERE superseded_by IS NULL`,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // DDL fragments — BASE_DDL contains all non-FTS5 tables and indexes.
@@ -218,14 +250,7 @@ function applyFts5Schema(db: DatabaseSync): void {
   // a known-clean index, then reindex all live observations.
   // Mirrors migrateV3toV4's approach (DROP + OBS_FTS_DDL + INSERT…SELECT).
   // Wrapped in a transaction so a crash leaves the db in the pre-rebuild state.
-  inTransaction(db, () => {
-    db.exec("DROP TABLE IF EXISTS obs_fts");
-    db.exec(OBS_FTS_DDL);
-    db.exec(
-      `INSERT INTO obs_fts(rowid, title, content)
-           SELECT rowid, title, content FROM observations WHERE superseded_by IS NULL`,
-    );
-  });
+  inTransaction(db, () => reindexLiveRows(db));
 }
 
 // LIKE branch: run schema without FTS5 virtual table or sync triggers, and drop any
@@ -237,9 +262,7 @@ function applyFts5Schema(db: DatabaseSync): void {
 function applyLikeSchema(db: DatabaseSync): void {
   inTransaction(db, () => {
     db.exec(LIKE_DDL);
-    db.exec("DROP TRIGGER IF EXISTS obs_ai");
-    db.exec("DROP TRIGGER IF EXISTS obs_ad");
-    db.exec("DROP TRIGGER IF EXISTS obs_au");
+    dropFtsTriggers(db);
   });
 }
 
@@ -276,6 +299,7 @@ function runMemoryMigrations(db: DatabaseSync, fts5: boolean): void {
   if (v < 5) migrateV4toV5(db);
   if (v < 6) migrateV5toV6(db);
   if (v < 7) migrateV6toV7(db);
+  if (v < 8) migrateV7toV8(db, fts5);
   db.exec(`PRAGMA user_version = ${MEMORY_SCHEMA_VERSION}`);
 }
 
@@ -316,9 +340,7 @@ function migrateV2toV3(db: DatabaseSync): void {
     // The unguarded triggers survived `db.exec(MEMORY_DDL)` (CREATE ... IF NOT EXISTS is a
     // no-op when a same-named trigger exists), so replace them explicitly with the guarded
     // ones that exclude superseded snapshots.
-    db.exec("DROP TRIGGER IF EXISTS obs_ai");
-    db.exec("DROP TRIGGER IF EXISTS obs_ad");
-    db.exec("DROP TRIGGER IF EXISTS obs_au");
+    dropFtsTriggers(db);
     db.exec(FTS_SYNC_TRIGGERS);
     db.exec("COMMIT");
   } catch (e) {
@@ -334,21 +356,7 @@ function migrateV2toV3(db: DatabaseSync): void {
 // rolls back to the prior (v3) index rather than leaving the db without obs_fts.
 // FTS5-only — skipped in LIKE mode.
 function migrateV3toV4(db: DatabaseSync): void {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    db.exec("DROP TABLE IF EXISTS obs_fts");
-    db.exec(OBS_FTS_DDL);
-    // Reindex live rows only. Direct INSERT (NOT the FTS 'rebuild' command, which would
-    // re-index EVERY base row including superseded snapshots).
-    db.exec(
-      `INSERT INTO obs_fts(rowid, title, content)
-         SELECT rowid, title, content FROM observations WHERE superseded_by IS NULL`,
-    );
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
+  inTransaction(db, () => reindexLiveRows(db));
 }
 
 // v4 → v5: no-op marker — the `scope` column is TEXT without a CHECK constraint, so all 9
@@ -398,5 +406,32 @@ function migrateV6toV7(db: DatabaseSync): void {
     if (!have.has("status")) db.exec("ALTER TABLE observations ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
     if (!have.has("status_changed_at")) db.exec("ALTER TABLE observations ADD COLUMN status_changed_at INTEGER");
     if (!have.has("resolution")) db.exec("ALTER TABLE observations ADD COLUMN resolution TEXT");
+  });
+}
+
+// v7 → v8: repair what the pre-3.0 `memory merge-projects` left behind.
+//   1. It re-keyed only LIVE rows, stranding their superseded snapshots under the old key
+//      (out of reach of export, compact and get for the project that owns the topic). A
+//      snapshot belongs with the row it was superseded by, so each one whose superseded_by
+//      row lives under another key follows it (repeated for snapshot→snapshot chains;
+//      bounded, and a no-op on a second run).
+//   2. Its topic-collision path (and import's topic-conflict path) turned live rows into
+//      snapshots with an UPDATE no trigger un-indexed, leaving ghost obs_fts entries. The
+//      new obs_au_retire / obs_au_revive triggers prevent new ones; the index is rebuilt
+//      over live rows once to purge any existing ghost (FTS5 only — LIKE has no index, and
+//      a later LIKE→FTS5 reopen rebuilds it anyway).
+function migrateV7toV8(db: DatabaseSync, fts5: boolean): void {
+  inTransaction(db, () => {
+    const rehome = db.prepare(
+      `UPDATE observations
+          SET project_key = (SELECT t.project_key FROM observations t WHERE t.id = observations.superseded_by)
+        WHERE superseded_by IS NOT NULL
+          AND EXISTS (SELECT 1 FROM observations t
+                       WHERE t.id = observations.superseded_by AND t.project_key <> observations.project_key)`,
+    );
+    for (let pass = 0; pass < 16; pass++) {
+      if ((rehome.run() as { changes: number }).changes === 0) break;
+    }
+    if (fts5) reindexLiveRows(db);
   });
 }

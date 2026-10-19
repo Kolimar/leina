@@ -176,7 +176,10 @@ pieces:
 
 **Live-only index:** only **live** observations (`superseded_by IS NULL`) enter the index.
 Superseded versions remain in the base table (for audit) but **never score** in searches.
-Triggers guard INSERT/UPDATE/DELETE to maintain that invariant.
+Triggers guard INSERT/UPDATE/DELETE to maintain that invariant — including a row that changes
+side (a live row retired by a `merge-projects` topic collision or an import conflict leaves
+the index; a snapshot revived by an import re-enters it). Before 3.0 that transition had no
+trigger and left "ghost" index entries; the v8 migration rebuilds the index once to purge them.
 
 ---
 

@@ -177,7 +177,11 @@ Dos detalles del tokenizer importan:
 
 **Triggers guardados:** solo las observaciones **vivas** (`superseded_by IS NULL`) entran al
 índice. Las versiones superseded quedan en la tabla base (auditoría) pero **nunca puntúan** en
-las búsquedas. Triggers dedicados custodian INSERT/UPDATE/DELETE para mantener esa invariante.
+las búsquedas. Triggers dedicados custodian INSERT/UPDATE/DELETE para mantener esa invariante —
+incluida una fila que cambia de lado (una fila viva retirada por una colisión de topic de
+`merge-projects` o por un conflicto de import sale del índice; un snapshot revivido por un
+import vuelve a entrar). Antes de 3.0 esa transición no tenía trigger y dejaba entradas
+"fantasma" en el índice; la migración v8 reconstruye el índice una vez para purgarlas.
 
 ---
 

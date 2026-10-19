@@ -262,7 +262,7 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     from: string,
     to: string,
     opts?: { dryRun?: boolean },
-  ): { moved: number; superseded: number } {
+  ): { moved: number; superseded: number; snapshots: number } {
     return this.hostRepo.mergeProject(from, to, opts);
   }
 

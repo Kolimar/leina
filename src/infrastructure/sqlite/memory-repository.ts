@@ -1529,10 +1529,12 @@ export class SQLiteMemoryRepository implements MemoryRepository {
 
   // ---- mergeProject ---------------------------------------------------------
   //
-  // Re-key all observations and sessions from `from` to `to` in a single transaction.
-  // Topic-key collisions (both from+to have a live row with the same scope+topic_key) are
-  // resolved by marking the `from` live row superseded — so only the `to` row owns the
-  // topic. `dryRun=true` computes counts then rolls back (no writes).
+  // Re-key every observation (live rows AND superseded snapshots — the audit trail follows
+  // its topic) and every session from `from` to `to` in a single transaction. Topic-key
+  // collisions (both from+to have a live row with the same scope+topic_key) are resolved by
+  // marking the `from` live row superseded — so only the `to` row owns the topic; the
+  // obs_au_retire trigger takes it out of the FTS index. `dryRun=true` computes counts then
+  // rolls back (no writes).
   //
   // Guard: `from === to` throws (nothing to do, and the UPDATE would be a no-op).
 
@@ -1540,7 +1542,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     from: string,
     to: string,
     opts?: { dryRun?: boolean },
-  ): { moved: number; superseded: number } {
+  ): { moved: number; superseded: number; snapshots: number } {
     if (from === to) throw new Error("mergeProject: from and to must differ");
     const dryRun = opts?.dryRun ?? false;
 
@@ -1567,19 +1569,22 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       }
       const superseded = collisions.length;
 
-      // 3. Bulk re-key non-superseded rows.
-      const movedObs = (
-        this.db
-          .prepare(
-            "UPDATE observations SET project_key=? WHERE project_key=? AND superseded_by IS NULL",
-          )
-          .run(to, from) as { changes: number }
-      ).changes;
+      // 3. Bulk re-key the live rows, then the superseded ones (older revisions plus the
+      //    rows step 2 just retired). Leaving snapshots behind stranded them under a key
+      //    whose live row had moved away.
+      const rekey = (live: boolean): number =>
+        (
+          this.db
+            .prepare(
+              `UPDATE observations SET project_key=? WHERE project_key=? AND superseded_by IS ${live ? "" : "NOT "}NULL`,
+            )
+            .run(to, from) as { changes: number }
+        ).changes;
+      const moved = rekey(true);
+      const snapshots = rekey(false);
 
       // 4. Re-key sessions (no topic_key collision possible on sessions).
       this.db.prepare("UPDATE sessions SET project_key=? WHERE project_key=?").run(to, from);
-
-      const moved = movedObs;
 
       if (dryRun) {
         this.db.exec("ROLLBACK");
@@ -1587,7 +1592,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
         this.db.exec("COMMIT");
       }
 
-      return { moved, superseded };
+      return { moved, superseded, snapshots };
     } catch (e) {
       try { this.db.exec("ROLLBACK"); } catch { /* ignore */ }
       throw e;

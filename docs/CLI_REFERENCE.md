@@ -332,8 +332,11 @@ Print the derived `project_key`, the detection `method`, and the raw name — no
 Useful to debug ambiguous-project failures.
 
 ### `memory merge-projects <dir> --from <key> --to <key> [--dry-run]`
-Move/merge all observations from one project key to another (after a remote rename, say).
-`--dry-run` reports what would move.
+Move/merge all observations from one project key to another (after a remote rename, say),
+including the superseded snapshots of their topics (the revision history moves with them),
+and its sessions. On a topic collision the `--to` row wins and the `--from` row becomes one of
+its snapshots. `--dry-run` reports what would move. Older versions moved only live rows; the
+3.0 schema migration re-homes snapshots they stranded under the old key.
 
 ### `memory reanchor <dir> [--dry-run]`
 Retro-anchor **existing** observations that reference a real file/symbol in prose but were

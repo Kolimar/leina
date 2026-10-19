@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { SQLiteMemoryRepository as MemoryStore } from "../src/infrastructure/sqlite/memory-repository.ts";
 
 function tmpStore(suffix = ""): { store: MemoryStore; path: string; dir: string } {
@@ -344,6 +345,126 @@ test("(scope-3) anchor reads and writes are confined to the repository's project
     assert.deepEqual(p.recentAnchoredObservations("shared/node", 10).map((r) => r.observationId), [obs.id]);
   } finally {
     p.close(); q.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// mergeProject keeps history and the FTS index consistent (3.0)
+// ---------------------------------------------------------------------------
+
+/** Rowids the FTS index returns for a MATCH, read straight from obs_fts. */
+function ftsRowids(path: string, match: string): number[] {
+  const db = new DatabaseSync(path);
+  try {
+    return (db.prepare("SELECT rowid FROM obs_fts WHERE obs_fts MATCH ?").all(match) as { rowid: number }[]).map((r) => r.rowid);
+  } finally {
+    db.close();
+  }
+}
+
+test("(mergeProject-5) superseded snapshots move with their topic; nothing stays under the old key", () => {
+  const { store: unusedStore, dir, path } = tmpStore("merge5");
+  unusedStore.close();
+  try {
+    const src = new MemoryStore(path, "src");
+    for (const v of ["v1", "v2", "v3"]) src.save({ title: "plan", content: v, type: "decision", topicKey: "sdd/x/plan" });
+    src.close();
+
+    const dst = new MemoryStore(path, "dst");
+    const r = dst.mergeProject("src", "dst");
+    assert.deepEqual(r, { moved: 1, superseded: 0, snapshots: 2 });
+    const history = dst.exportAll().filter((o) => o.topicKey === "sdd/x/plan");
+    assert.equal(history.length, 3, "live row + 2 snapshots now under dst");
+    dst.close();
+
+    const left = new MemoryStore(path, "src");
+    assert.equal(left.exportAll().length, 0, "no stranded snapshot under the old key");
+    left.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(mergeProject-6) a topic collision leaves no ghost FTS entry; later writes and compact stay clean", () => {
+  const { store: unusedStore, dir, path } = tmpStore("merge6");
+  unusedStore.close();
+  try {
+    const src = new MemoryStore(path, "src");
+    src.save({ title: "Source obs", content: "zebracorn only here", type: "manual", topicKey: "shared/topic" });
+    src.close();
+    const dst = new MemoryStore(path, "dst");
+    dst.save({ title: "Dest obs", content: "dst content", type: "manual", topicKey: "shared/topic" });
+    const r = dst.mergeProject("src", "dst");
+    assert.equal(r.superseded, 1);
+    assert.equal(r.snapshots, 1, "the retired row travels as a snapshot");
+    assert.deepEqual(ftsRowids(path, "zebracorn"), [], "the retired row left the index");
+    assert.equal(dst.search("zebracorn").length, 0);
+    assert.equal(dst.search("dst content")[0]?.title, "Dest obs");
+    // Deleting the snapshot and writing new rows must not trip over a stale entry.
+    dst.compact();
+    dst.save({ title: "after", content: "zebracorn again", type: "manual" });
+    assert.deepEqual(dst.search("zebracorn").map((h) => h.title), ["after"]);
+    dst.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(fts-transition-1) a row leaving / re-entering the live set leaves / re-enters the index", () => {
+  const { store, dir, path } = tmpStore("ftstrans");
+  try {
+    const a = store.save({ title: "keeper", content: "alpha", type: "manual" }).observation;
+    const b = store.save({ title: "mover", content: "quokka", type: "manual" }).observation;
+    store.close();
+    const db = new DatabaseSync(path);
+    db.prepare("UPDATE observations SET superseded_by=? WHERE id=?").run(a.id, b.id);
+    db.close();
+    assert.deepEqual(ftsRowids(path, "quokka"), [], "retired");
+    const db2 = new DatabaseSync(path);
+    db2.prepare("UPDATE observations SET superseded_by=NULL, content='quokka revived' WHERE id=?").run(b.id);
+    db2.close();
+    assert.equal(ftsRowids(path, "revived").length, 1, "revived with its current content");
+    const reopened = new MemoryStore(path, "test-project");
+    assert.equal(reopened.search("quokka")[0]?.id, b.id);
+    reopened.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(mig-v8) an old db: stranded snapshots re-homed, ghost index entries purged, idempotent", () => {
+  const { store, dir, path } = tmpStore("migv8");
+  try {
+    // Recreate what a 2.x merge left behind: a live row retired WITHOUT un-indexing it
+    // (a ghost) and snapshots stranded under the old key.
+    store.save({ title: "plan", content: "first", type: "decision", topicKey: "t/x/plan" });
+    const live = store.save({ title: "plan", content: "second", type: "decision", topicKey: "t/x/plan" }).observation;
+    const other = store.save({ title: "keeper", content: "kept", type: "manual" }).observation;
+    const ghost = store.save({ title: "ghosty", content: "phantasm", type: "manual" }).observation;
+    store.close();
+    const db = new DatabaseSync(path);
+    db.exec("DROP TRIGGER obs_au_retire");
+    db.prepare("UPDATE observations SET superseded_by=? WHERE id=?").run(other.id, ghost.id);
+    db.prepare("UPDATE observations SET project_key='old-key' WHERE superseded_by=?").run(live.id);
+    db.exec("PRAGMA user_version = 7");
+    db.close();
+    assert.equal(ftsRowids(path, "phantasm").length, 1, "fixture: a ghost entry exists");
+
+    for (let i = 0; i < 2; i++) {
+      const s = new MemoryStore(path, "test-project");
+      const history = s.exportAll().filter((o) => o.topicKey === "t/x/plan");
+      assert.equal(history.length, 2, "the stranded snapshot is back with its live row");
+      s.close();
+      assert.deepEqual(ftsRowids(path, "phantasm"), [], "ghost purged");
+      const check = new DatabaseSync(path);
+      const n = (check.prepare("SELECT COUNT(*) AS n FROM observations WHERE project_key='old-key'").get() as { n: number }).n;
+      const triggers = (check.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name LIKE 'obs_au_re%'").get() as { n: number }).n;
+      check.close();
+      assert.equal(n, 0);
+      assert.equal(triggers, 2, "transition triggers installed");
+    }
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
