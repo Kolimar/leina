@@ -125,8 +125,9 @@ Everything is re-extracted when there is no previous build, when the leina versi
 graph schema, `tsconfig`, `package.json` or a lockfile changed, when a file that declares
 globals changed (a script without imports/exports, `declare global`, `declare module "x"`,
 triple-slash references), when a non-TypeScript file the checker reads changed (a
-`.js`/`.json` import), when half the files or more would be re-extracted anyway, or when
-`LEINA_TS_FULL_EXTRACT=1` is set. The build prints `ts extract cache: N reused, K
+`.js`/`.json` import), when half the files or more would be re-extracted anyway, when
+`LEINA_TS_FULL_EXTRACT=1` is set, or on `leina refresh` — the escape hatch when a cached result
+looks wrong: it never reuses one (and leaves a fresh cache behind). The build prints `ts extract cache: N reused, K
 re-extracted` when it reused results.
 
 A local rename resolves to the declaration it names: after

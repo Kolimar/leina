@@ -56,7 +56,10 @@ with `cannot build the graph: no such directory: <abs>` and create, build and re
 (previously a mistyped argument created the directory and registered an empty project).
 
 ### `refresh <dir>`
-Force a rebuild now, ignoring freshness. Prints node/edge/file counts.
+Force a full rebuild now, ignoring freshness. Unlike `build`, it never reuses a per-file
+extraction cached by a previous build (`.leina/extract-cache.db`) — every file is extracted
+again — so it is the escape hatch from any incremental-cache problem. Prints node/edge/file
+counts.
 
 ### `status <dir>`
 Report freshness (`fresh`/`STALE` + reason), posture, last build time, and tracked file

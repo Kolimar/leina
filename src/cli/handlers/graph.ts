@@ -114,7 +114,8 @@ export async function handleRefresh(rest: string[]): Promise<void> {
     const registry = await buildDefaultRegistry();
     const store = openStore(root);
     console.log(`Rebuilding graph for ${resolvePath(root)} ...`);
-    const report = await buildGraph(root, store, registry);
+    // The escape hatch from any incremental-cache problem: never reuse a per-file result.
+    const report = await buildGraph(root, store, registry, { fullExtraction: "refresh requested" });
     store.close();
     printBuildDone(report);
     await emitEvent(

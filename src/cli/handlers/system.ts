@@ -341,7 +341,7 @@ export function printRootHelp(): void {
       `                          per-repo teardown (inverse of init): strip managed blocks +\n` +
       `                          set consent=disabled + remove .devin/hooks.v1.json. Idempotent.\n` +
       `  build <dir> [--json]    build the graph\n` +
-      `  refresh <dir>           rebuild the graph now\n` +
+      `  refresh <dir>           full rebuild now (re-extracts every file, no cache reuse)\n` +
       `  sidecar [build|install|status|clean|verify] [csharp|java] [--force]\n` +
       `                          manage on-demand C#/Java compiler sidecars\n` +
       `                          verify: exit 0 (skip/ok), exit 1 (fail)\n` +

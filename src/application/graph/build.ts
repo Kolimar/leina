@@ -78,6 +78,10 @@ export interface BuildOptions {
    *  for explicitly — the read path's stale auto-rebuild, the MCP server — where per-build
    *  chatter is noise; the report still carries the diagnostics' outcome (degraded). */
   quiet?: boolean;
+  /** Re-extract every file even when the previous build's per-file caches are reusable,
+   *  for this reason (`leina refresh` passes "refresh requested"). Absent: the build basis
+   *  decides (fullExtractionReason). */
+  fullExtraction?: string;
 }
 
 /** Run a single extractor over its candidate files; null on unexpected throw. */
@@ -167,8 +171,9 @@ export async function buildGraph(
     );
   });
   // Read the previous build's manifest before this build overwrites it: extractor caches
-  // are reusable only on the same leina, extractor schema and resolution configs.
-  const fullExtraction = fullExtractionReason(root, project.configs);
+  // are reusable only on the same leina, extractor schema and resolution configs — unless
+  // the caller asked for a full extraction outright.
+  const fullExtraction = opts.fullExtraction ?? fullExtractionReason(root, project.configs);
   const listMs = Date.now() - t0;
   const extractorTimings: BuildTimings["extractors"] = [];
   const acc: ExtractionAcc = {

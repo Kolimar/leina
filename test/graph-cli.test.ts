@@ -83,6 +83,25 @@ test("(GC-3) refresh: rebuilds the graph", () => {
   }
 });
 
+test("(GC-3b) refresh re-extracts every file; a second build reuses the cache", () => {
+  const dir = tmpProject();
+  try {
+    runCli(["build", dir]);
+    // An unchanged rebuild reuses the per-file TypeScript extraction cache...
+    const again = runCli(["build", dir]);
+    assert.equal(again.code, 0, `exit 0. stderr: ${again.stderr}`);
+    assert.match(again.stderr, /ts extract cache: \d+ reused, 0 re-extracted/);
+    // ...refresh, the escape hatch from any cache problem, never does.
+    const r = runCli(["refresh", dir]);
+    assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
+    assert.doesNotMatch(r.stderr, /ts extract cache/, "refresh extracts everything");
+    // And it leaves a cache the next build can reuse again.
+    assert.match(runCli(["build", dir]).stderr, /ts extract cache: \d+ reused, 0 re-extracted/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(GC-4) status: reports freshness, posture and last build", () => {
   const dir = tmpProject();
   try {

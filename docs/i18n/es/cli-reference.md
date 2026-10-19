@@ -61,7 +61,11 @@ diagnósticos de extractores.
 (antes un argumento mal escrito creaba el directorio y registraba un proyecto vacío).
 
 ### `refresh <dir>`
-Fuerza una reconstrucción ahora mismo, ignorando la freshness.
+Fuerza una reconstrucción completa ahora mismo, ignorando la freshness. A diferencia de `build`,
+nunca reutiliza una extracción por archivo cacheada por un build anterior
+(`.leina/extract-cache.db`) — vuelve a extraer cada archivo —, así que es la salida de
+emergencia ante cualquier problema de la caché incremental. Imprime los conteos de
+nodos/edges/archivos.
 
 ### `status <dir>`
 Reporta la freshness (`fresh`/`STALE` + motivo), la posture, la hora del último build y el

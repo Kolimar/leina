@@ -127,7 +127,9 @@ esquema del grafo, `tsconfig`, `package.json` o un lockfile, cuando cambió un a
 declara globales (un script sin imports/exports, `declare global`, `declare module "x"`,
 referencias triple-slash), cuando cambió un archivo que no es TypeScript y que el checker lee
 (un import de `.js`/`.json`), cuando de todos modos habría que re-extraer la mitad de los
-archivos o más, o con `LEINA_TS_FULL_EXTRACT=1`. El build imprime `ts extract cache: N
+archivos o más, con `LEINA_TS_FULL_EXTRACT=1`, o con `leina refresh` — la salida de emergencia
+cuando un resultado cacheado parece incorrecto: nunca reutiliza ninguno (y deja una caché nueva
+para el próximo build). El build imprime `ts extract cache: N
 reused, K re-extracted` cuando reutilizó resultados.
 
 Un renombre local se resuelve a la declaración que nombra: después de
