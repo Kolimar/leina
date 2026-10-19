@@ -11,6 +11,7 @@ import { writeFileSync } from "node:fs";
 import { detectWorkspaceMode } from "../../application/project/detect-key.ts";
 import { isStaleWorkspace } from "../../application/workspace/manifest.ts";
 import { openWorkspaceFreshStore, openWorkspaceMemoryRepo } from "../wiring.ts";
+import { usageError } from "../io.ts";
 
 /**
  * `leina workspace build [dir] [--json]`
@@ -100,10 +101,7 @@ type WorkspaceMemoryStore = ReturnType<typeof openWorkspaceMemoryRepo>["store"];
 // `workspace memory search [dir] <query>` — federated full-text search across members.
 function runWorkspaceMemorySearch(store: WorkspaceMemoryStore, dir: string, memRest: string[]): void {
   const query = memRest.filter((a) => a !== dir && !a.startsWith("--")).join(" ");
-  if (!query) {
-    process.stderr.write("Usage: leina workspace memory search [dir] <query>\n");
-    process.exit(1);
-  }
+  if (!query) usageError("missing <query>", "workspace memory search");
   const hits = store.search(query, { limit: 20 });
   if (hits.length === 0) {
     console.log("(no results)");
@@ -139,11 +137,9 @@ function runWorkspaceMemoryContext(store: WorkspaceMemoryStore): void {
 export function handleWorkspaceMemory(rest: string[]): void {
   const [memorySub, ...memRest] = rest;
 
+  // The dispatcher only routes `context` / `search` here.
   if (memorySub !== "context" && memorySub !== "search") {
-    process.stderr.write(
-      "Usage: leina workspace memory <context|search> [dir] [query]\n",
-    );
-    process.exit(1);
+    usageError(`unknown sub-command '${memorySub ?? ""}'`, "workspace memory");
   }
 
   const dir = memRest.find((a) => !a.startsWith("--") && !a.startsWith("-")) ?? ".";

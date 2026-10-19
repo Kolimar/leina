@@ -10,6 +10,33 @@ command, its flags, and what it prints.
 - **Graph DB:** `<dir>/.leina/graph.db` (per project, git-ignored).
 - **Memory DB:** `~/.leina/memory.db` (global, keyed by derived project key).
 
+### Help, usage errors and exit codes
+
+One command table (`src/cli/commands.ts`) drives the help and the argument checks:
+
+- `leina --help` (or `leina help`, or `leina` alone) prints the root help: the everyday
+  commands first, then every command grouped by area.
+- `leina <command> --help`, `leina <command> -h` and `leina help <command>` print that
+  command's own help — usage forms, flags, positional rules and examples. Groups work the
+  same way (`leina memory --help`, `leina harness contract --help`); a group run without a
+  sub-command prints its help (except `mcp`, `sidecar`, `scip` and `audit`, which run bare).
+- Before any handler runs, the dispatcher rejects an unknown command, sub-command or flag and
+  a flag missing its value, with a suggestion for near misses (`did you mean 'memory'?`) and
+  for a swapped order (`leina memory . context` → `the sub-command comes first`).
+- `--flag=value` is accepted wherever `--flag value` is. Everything after `--` belongs to
+  another program (`env exec -- <cmd...>`) and is never checked. The hook entry points
+  (`agent-hook`, `harness hook`) are never validated: they fail open.
+
+| Exit code | Meaning | Where it is printed |
+|-----------|---------|---------------------|
+| `0` | Success (help included) | stdout |
+| `1` | Runtime failure: no graph, no match (`did you mean`), a failed check, I/O or DB error | stderr |
+| `2` | Usage error: unknown command / sub-command / flag, a missing or invalid argument (`--limit six`) | stderr, as `leina <command>: <message>` plus `run 'leina <command> --help' for usage` |
+
+Command-specific contracts keep their documented codes: `harness verify` (`0` complete, `1`
+blocking failure, `2` engine or config error), `verify` (`1` when a check fails), `env exec`
+(the child's code) and the hook entry points, which follow their host's hook contract.
+
 ---
 
 ## Graph commands
@@ -876,8 +903,10 @@ CLI `Exec` grant, removes the user-global hooks from the Devin config and
 ### `version` (aliases: `--version`, `-v`)
 Print the installed package version and exit. No project or DB access.
 
-### `help` (aliases: `--help`, `-h`)
-Print the root usage text. The same text is printed for any unknown command.
+### `help [<command>]` (aliases: `--help`, `-h`)
+Print the root help, or one command's help (`leina help memory search` is the same as
+`leina memory search --help`). An unknown command is a usage error (exit `2`), not the root
+help.
 
 ### `doctor [dir] [--json]`
 Diagnose install + project health. Each check reports at one of four severities — **ok** /
@@ -885,8 +914,8 @@ Diagnose install + project health. Each check reports at one of four severities 
 trailing **info** section, and a final summary line. With `--json` emits the full `DoctorReport`,
 including the `repoIdentity` aggregate (`{projectKey, strategy, confidence: "high"|"medium"|"low",
 pathHash, rootCommit?, normalizedRemote?}`). `pathHash` is a cross-OS-deterministic SHA-256 of the
-normalised absolute path; `normalizedRemote` is the `host/org/repo` canonical form. `doctor` never
-changes its exit code (it is informational). The project group includes a **workspace trust**
+normalised absolute path; `normalizedRemote` is the `host/org/repo` canonical form. `doctor`
+exits `1` when any check is `fail` (warn-only exits `0`), like `verify`. The project group includes a **workspace trust**
 check: ok when trusted on this machine; warn when consent is `enabled` but there is no trust
 record (hint: re-run `leina init <root>`); info when consent is `disabled` or the repo was
 never initialized. The **hooks** group checks every managed entry in the four hook files

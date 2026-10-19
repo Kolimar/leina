@@ -1,14 +1,16 @@
 // cli/args.ts — argv parsing helpers shared by the CLI command handlers.
 
-import { fail } from "./io.ts";
+import { fail, usageError } from "./io.ts";
 
 // Read a --flag's value. Absent → fallback. Present but with no value (end of args, or the next
-// token is itself a --flag) → hard fail, so a typo never silently swallows the next flag as a path.
+// token is itself a --flag) → usage error, so a typo never silently swallows the next flag as a
+// path. (The dispatcher already rejects that for every command in the table; this covers the
+// in-process callers — the TUI — too.)
 export function optFlag(args: string[], name: string, fallback: string | undefined): string | undefined {
   const i = args.indexOf(name);
   if (i < 0) return fallback;
   const v = args[i + 1];
-  if (v === undefined || v.startsWith("--")) fail(`${name} requires a value`);
+  if (v === undefined || v.startsWith("--")) usageError(`${name} requires a value`);
   return v;
 }
 
@@ -35,7 +37,7 @@ export function positiveIntFlag(args: string[], name: string, fallback: number):
   const raw = optFlag(args, name, undefined);
   if (raw === undefined) return fallback;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1) fail(`${name} must be a positive integer`);
+  if (!Number.isInteger(n) || n < 1) usageError(`${name} must be a positive integer, got '${raw}'`);
   return n;
 }
 

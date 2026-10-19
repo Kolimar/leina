@@ -10,7 +10,7 @@ import { openFreshStore } from "../wiring.ts";
 import { analyzeSymbolImpact, type ImpactResult } from "../../application/graph/impact.ts";
 import { ambiguityNote, noMatchMessage, resolutionInfo } from "../../application/graph/seed.ts";
 import type { GraphNode } from "../../domain/graph/model.ts";
-import { fail } from "../io.ts";
+import { usageError } from "../io.ts";
 
 // Convención: si hay dos args no-flag → args[0]=dir, args[1]=symbol
 //             si hay un arg → dir=".", symbol=args[0]
@@ -35,7 +35,7 @@ async function runImpactAnalyze(source: string[]): Promise<void> {
 
   const { dir, symbolArg } = parseImpactArgs(args);
   if (!symbolArg) {
-    fail("usage: leina impact analyze [<dir>] <symbol> [--json]");
+    usageError("missing <symbol>");
   }
 
   const store = await openFreshStore(dir);
@@ -60,13 +60,7 @@ async function runImpactAnalyze(source: string[]): Promise<void> {
 
 export async function handleImpact(rest: string[]): Promise<void> {
   const [sub, ...subRest] = rest;
-  if (sub !== "analyze" && sub !== undefined) {
-    process.stderr.write(
-      `Unknown impact sub-command: "${sub}"\n` +
-        `Usage: leina impact analyze [<dir>] <symbol> [--json]\n`,
-    );
-    process.exit(1);
-  }
-  // `impact [analyze]` — análisis de impacto
-  await runImpactAnalyze(sub === "analyze" ? subRest : rest);
+  // The dispatcher only routes `impact analyze` here.
+  if (sub !== "analyze") usageError(`unknown sub-command '${sub ?? ""}'`, "impact");
+  await runImpactAnalyze(subRest);
 }

@@ -270,10 +270,23 @@ test("(envf-2) a write that fails midway (ENOSPC) leaves every stored secret int
 test("(envc-4) invalid subcommands and key names fail with usage", () => {
   const { env, cleanup } = makeSandbox();
   try {
-    assert.equal(runEnv(env, []).status, 1);
-    assert.match(runEnv(env, ["set", "BAD NAME"]).stderr, /Usage|invalid variable name/);
-    assert.match(runEnv(env, ["get", "NOPE"]).stderr, /not set/);
-    assert.match(runEnv(env, ["exec"]).stderr, /missing command/);
+    // Bare group → its help on stdout, exit 0.
+    const bare = runEnv(env, []);
+    assert.equal(bare.status, 0);
+    assert.match(bare.stdout, /leina env — /);
+    // Usage errors → stderr + exit 2; a missing variable is a runtime failure (exit 1).
+    const unknown = runEnv(env, ["frob"]);
+    assert.equal(unknown.status, 2);
+    assert.match(unknown.stderr, /unknown sub-command 'frob'/);
+    const bad = runEnv(env, ["set", "BAD NAME"]);
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /invalid variable name/);
+    const nope = runEnv(env, ["get", "NOPE"]);
+    assert.equal(nope.status, 1);
+    assert.match(nope.stderr, /not set/);
+    const exec = runEnv(env, ["exec"]);
+    assert.equal(exec.status, 2);
+    assert.match(exec.stderr, /missing command/);
   } finally {
     cleanup();
   }

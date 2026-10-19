@@ -45,7 +45,8 @@ import { globalMemoryPath } from "../../infrastructure/install/share-paths.ts";
 import { memOpenGuarded, openEventSink } from "../wiring.ts";
 import { makeLeinaEvent } from "../../domain/events/model.ts";
 import { emitEvent } from "../../application/events/emit.ts";
-import { fail, readStdin } from "../io.ts";
+import { fail, readStdin, usageError } from "../io.ts";
+import { renderHelp } from "../commands.ts";
 import { hasFlag, optFlag, parseBatchInput, positionals, positiveIntFlag } from "../args.ts";
 
 // MemSubHandler allows async sub-handlers (needed for memSave which calls emitEvent — D3).
@@ -574,43 +575,6 @@ function memCompact(rest: string[], dir: string): void {
   }
 }
 
-function memHelp(): void {
-  console.log(
-    `leina memory <sub-command> <dir>\n\n` +
-      `  save <dir> --title "..." --content "..." [--type decision|bugfix|...] [--topic key]\n` +
-      `             [--scope project|personal|workspace|path|skill|process|technology|security|infra]\n` +
-      `             [--anchors a,b]\n` +
-      `  save <dir> --batch [--atomic]      (stdin: JSON array of {title,content,type?,topicKey?,scope?,anchors?})\n` +
-      `  update <dir> <id> [--title ..] [--content ..] [--type ..] [--anchors a,b]\n` +
-      `                    [--status active|resolved|obsolete] [--resolution "..."]\n` +
-      `  update <dir> --batch [--atomic]    (stdin: JSON array of {id,title?,content?,type?,anchors?,status?,resolution?})\n` +
-      `  resolve <dir> <id> [--note "..."] [--obsolete]   (close a note: hidden from context, kept in search)\n` +
-      `  resolve <dir> --batch [--atomic]   (stdin: JSON array of ids or {id,note?,obsolete?})\n` +
-      `  reopen <dir> <id>                  (back to active)\n` +
-      `  search <dir> <query> [--type ..]\n` +
-      `         [--scope project|personal|workspace|path|skill|process|technology|security|infra]\n` +
-      `         [--limit N]\n` +
-      `  verified <dir> <query> [--type ..]\n` +
-      `           [--scope project|personal|workspace|path|skill|process|technology|security|infra]\n` +
-      `           [--limit N]   (drift-checked context)\n` +
-      `  get <dir> <id>\n` +
-      `  get <dir> --batch                  (stdin: JSON array of id strings)\n` +
-      `  context <dir> [--limit N]\n` +
-      `  session <dir> --content "summary" [--title "..."]\n` +
-      `  session-start <dir> [--title "..."]\n` +
-      `  suggest-topic <dir> --title "..." [--type ..]\n` +
-      `  current-project <dir>              (show derived project key + detection method)\n` +
-      `  merge-projects <dir> --from <key> --to <key> [--dry-run]  (rename/merge project keys)\n` +
-      `  reanchor <dir> [--dry-run]         (retro-anchor notes; upgrade whole-file anchors to symbols)\n` +
-      `  compact <dir> [--keep N] [--sessions-older-than DAYS] [--keep-sessions N] [--dry-run]\n` +
-      `                                     (GC superseded snapshots — live rows always kept;\n` +
-      `                                      --keep N retains N newest snapshots per topic, default 0;\n` +
-      `                                      sessions untouched unless --sessions-older-than; then VACUUM)\n` +
-      `  export <dir> [--out file.jsonl]    (dump this project's observations+anchors as JSONL)\n` +
-      `  import <dir> [--in file.jsonl]     (merge an export from stdin/file; newer revision wins)\n` +
-      `  sync <dir>                         (two-way merge with committable .leina/memory-export.jsonl)\n`,
-  );
-}
 
 
 // ---------------------------------------------------------------------------
@@ -729,7 +693,12 @@ const MEM_HANDLERS: Record<string, MemSubHandler> = {
 
 export async function handleMemory(rest: string[]): Promise<void> {
   const sub = rest[0];
+  if (sub === undefined) {
+    console.log(renderHelp("memory"));
+    return;
+  }
+  // The dispatcher validates the sub-command; this guards the in-process callers.
+  const handler = MEM_HANDLERS[sub] ?? usageError(`unknown sub-command '${sub}'`, "memory");
   const dir = rest[1] && !rest[1].startsWith("--") ? rest[1] : ".";
-  const handler: MemSubHandler = (sub !== undefined ? MEM_HANDLERS[sub] : undefined) ?? memHelp;
   await handler(rest, dir);
 }

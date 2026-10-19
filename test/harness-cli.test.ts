@@ -496,8 +496,8 @@ describe("leina harness (group)", () => {
   it("prints the group help without a sub-command", async () => {
     const res = await run([]);
     assert.equal(res.code, 0);
-    assert.match(res.stdout, /leina harness — rules \+ executable gates/);
-    assert.match(res.stdout, /contract new/);
+    assert.match(res.stdout, /leina harness — task harness/);
+    assert.match(res.stdout, /contract <new\|show\|edit\|end>/);
   });
 
   it("unknown sub-command → help + exit 2 (usage error)", async () => {

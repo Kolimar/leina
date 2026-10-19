@@ -13,6 +13,7 @@
 import path from "node:path";
 import { hasFlag } from "../args.ts";
 import { readStdin } from "../io.ts";
+import { renderHelp } from "../commands.ts";
 import { gatesOf, MAX_RETRIES_CAP, type TaskContract } from "../../domain/harness/model.ts";
 import { type HarnessPorts } from "../../domain/harness/ports.ts";
 import { endContract, loadContract, saveContract, writeChecklist } from "../../application/harness/contract-io.ts";
@@ -283,7 +284,7 @@ async function handleContract(repoRoot: string, rest: string[]): Promise<void> {
       await contractEnd(repoRoot);
       return;
     default:
-      err("Usage: leina harness contract <new|show|edit|end> [flags]");
+      err(`unknown contract sub-command '${sub ?? ""}'\nrun 'leina harness contract --help' for usage`);
       process.exitCode = 2;
   }
 }
@@ -488,29 +489,7 @@ export async function runHarnessHookEvent(event: string, rawPayload: string, rep
 // ---------------------------------------------------------------------------
 
 function printHarnessHelp(): void {
-  out(
-    `leina harness — rules + executable gates for agent tasks (.harness/)\n\n` +
-      `  contract new --goal "<t>" [--type <t>] [--scope <glob>]... [--out-of-scope <glob>]...\n` +
-      `               [--criterion <text>]... [--max-retries <n>]\n` +
-      `                          declare the task contract (records the git base ref)\n` +
-      `  contract show           print the active contract\n` +
-      `  contract edit [--goal <t>] [--add-scope <g>]... [--add-out-of-scope <g>]...\n` +
-      `               [--add-criterion <t>]... [--check-criterion <t>]...\n` +
-      `                          amend the contract (scope widening is explicit, never silent)\n` +
-      `  contract end            archive the task state and close the contract\n` +
-      `  verify [--json] [--phase p1,p2] [--rule <id>]\n` +
-      `                          run the gates; exit 0 = complete, 1 = blocking failure,\n` +
-      `                          2 = engine/config error\n` +
-      `  sync [--check] [--force] [--platforms a,b]   (alias: compile)\n` +
-      `                          regenerate platform artifacts from the canonical rules\n` +
-      `                          (idempotent); --check exits 1 on drift (CI mode);\n` +
-      `                          --platforms touches only the named platforms\n` +
-      `  list [--phase <p>] [--tag <t>] [--json]\n` +
-      `                          resolved rules with source layer and enforcement\n` +
-      `  hook <event>            platform hook entry point (session-start, pre-edit,\n` +
-      `                          pre-bash, stop, cursor-shell, cursor-after-edit,\n` +
-      `                          cursor-stop, idle); reads event JSON from stdin`,
-  );
+  out(renderHelp("harness"));
 }
 
 export async function handleHarness(rest: string[]): Promise<void> {
@@ -543,7 +522,7 @@ async function dispatchHarness(rest: string[]): Promise<void> {
     case "hook": {
       const event = subRest[0];
       if (event === undefined) {
-        err("Usage: leina harness hook <event>   (payload JSON on stdin)");
+        err("missing <event> (payload JSON on stdin)\nrun 'leina harness hook --help' for usage");
         process.exitCode = 2;
         break;
       }
@@ -558,8 +537,7 @@ async function dispatchHarness(rest: string[]): Promise<void> {
       printHarnessHelp();
       break;
     default:
-      err(`unknown harness sub-command "${sub}"`);
-      printHarnessHelp();
+      err(`unknown harness sub-command "${sub}"\nrun 'leina harness --help' for usage`);
       process.exitCode = 2;
   }
 }

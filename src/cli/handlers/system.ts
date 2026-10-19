@@ -1,9 +1,9 @@
-// cli/handlers/system.ts — diagnostics, hook bridge, sidecar, capabilities, verify and root help.
+// cli/handlers/system.ts — diagnostics, hook bridge, sidecar, capabilities and verify.
 
 import { runDoctor, formatDoctor } from "../doctor.ts";
 import { parseAgentHookArgs, runAgentGate, runHarnessAgentGate, resolveHookRoots, shouldDeferInvocation } from "../agent-gate.ts";
 import { readPackageVersion } from "../../version.ts";
-import { readStdin } from "../io.ts";
+import { readStdin, usageError } from "../io.ts";
 import { capabilities } from "../../application/capabilities/registry.ts";
 import type { Capability } from "../../domain/capabilities/model.ts";
 import { WIRED_SCIP_LANGS } from "../../infrastructure/extractors/semantic/scip-indexer.ts";
@@ -263,12 +263,8 @@ function serializeCapability(c: Capability) {
 }
 
 export function handleCapabilities(rest: string[]): void {
-  const sub = rest[0];
-  if (sub !== "list") {
-    // Unknown sub-command or missing sub: print usage and exit 1.
-    process.stderr.write("Usage: leina capabilities list [--json]\n");
-    process.exit(1);
-  }
+  // The dispatcher only routes `capabilities list` here; anything else is a usage error.
+  if (rest[0] !== "list") usageError(`unknown sub-command '${rest[0] ?? ""}'`, "capabilities");
   const wantJson = rest.includes("--json");
   const caps = capabilities.map((cc) => cc.capability);
 
@@ -300,115 +296,4 @@ export function handleVerify(rest: string[]): never {
     console.log(formatDoctor(report, { color: useColor() }));
   }
   process.exit(report.exitCode);
-}
-
-// Top-level help, shared by the `help`/`--help`/`-h` commands and the unknown-command default.
-export function printRootHelp(): void {
-  console.log(
-    `leina — code knowledge graph + project memory (CLI-only)\n\n` +
-      `  setup --hosts devin,claude [--no-user-hooks] [--preset ...] [--skills ...] [--agents ...]\n` +
-      `        [--mcp --mcp-hosts claude,cursor,windsurf]\n` +
-      `                          machine-wide: activate (share + symlinks + user-global grant/hooks)\n` +
-      `                          + turn blanket ON; subsequent 'init' takes LIGHT path. Idempotent.\n` +
-      `                          --hosts is REQUIRED — leina never picks an AI host for you.\n` +
-      `                          --mcp registers the MCP server user-globally on --mcp-hosts\n` +
-      `  disable                 machine-wide: remove managed symlinks + revoke user-global grant/hooks\n` +
-      `                          + turn blanket OFF. Idempotent when already disabled.\n` +
-      `  activate --hosts devin,claude [--no-user-hooks] [--preset minimal|sdd|full]\n` +
-      `           [--skills a,b|all|none] [--agents a,b|all|none] [--mcp --mcp-hosts claude,cursor]\n` +
-      `                          populate ~/.leina/share + symlink skills/agents into the\n` +
-      `                          hosts' global dirs; merge the user-global hooks of each selected\n` +
-      `                          host (Devin config, ~/.claude/settings.json; default ON — a\n` +
-      `                          deselected host or --no-user-hooks strips ours).\n` +
-      `                          Selection flags choose WHICH bundled assets install (see\n` +
-      `                          assets/catalog.json); omit them to keep the previous choice\n` +
-      `  deactivate              global teardown: remove managed symlinks + revoke user-global\n` +
-      `                          grant + hooks. Does NOT touch blanket sentinel. Idempotent.\n` +
-      `  init [dir] --hosts h1,h2 --profile devin|windsurf [--freshness auto|refuse]\n` +
-      `       [--build] [--name <n>] [--mcp] [--harness] [--harness-preset generic|leina-native]\n` +
-      `                          per-repo opt-in: consent=enabled + .gitignore; standalone (no\n` +
-      `                          blanket) also AGENTS.md protocol + per-host wiring (devin →\n` +
-      `                          .devin/*, claude → .claude/settings.json hooks). --hosts is\n` +
-      `                          REQUIRED (or a prior persisted choice); a full init also requires\n` +
-      `                          --profile. --build builds the graph now; --name locks the project\n` +
-      `                          key; --mcp registers the server in\n` +
-      `                          the project .mcp.json (committable, for teams). --harness seeds\n` +
-      `                          + syncs the task harness (opt-in; a repo that already has\n` +
-      `                          .harness/config.json is always refreshed). --harness-preset\n` +
-      `                          (implies --harness) generic seeds it WITHOUT the leina-* rules\n` +
-      `                          (leina-native, the default, keeps them)\n` +
-      `  deinit [<dir> | --project <dir>]\n` +
-      `                          per-repo teardown (inverse of init): strip managed blocks +\n` +
-      `                          set consent=disabled + remove .devin/hooks.v1.json. Idempotent.\n` +
-      `  build <dir> [--json]    build the graph\n` +
-      `  refresh <dir>           full rebuild now (re-extracts every file, no cache reuse)\n` +
-      `  sidecar [build|install|status|clean|verify] [csharp|java] [--force]\n` +
-      `                          manage on-demand C#/Java compiler sidecars\n` +
-      `                          verify: exit 0 (skip/ok), exit 1 (fail)\n` +
-      `  scip [status|verify|install] [go|rust|python]\n` +
-      `                          detect/verify third-party SCIP indexer binaries\n` +
-      `                          (compiler-grade precision, ahead of tree-sitter);\n` +
-      `                          install: detect+instruct only, never auto-installs;\n` +
-      `                          verify: exit 0 (skip/ok), exit 1 (fail)\n` +
-      `  doctor [dir] [--json]   diagnose install + project health\n` +
-      `  repair [dir] [--no-user-hooks]\n` +
-      `                          re-run the idempotent install writers for whatever doctor\n` +
-      `                          finds broken (share/symlinks/config + repo wiring); scoped\n` +
-      `                          to prior installs, respects deinit, never touches DBs\n` +
-      `  verify [dir] [--json]   re-run doctor with actionable exit code (exit 1 on fail)\n` +
-      `  capabilities list [--json]\n` +
-      `                          list the system capabilities + schemas\n` +
-      `  status <dir>            freshness vs current sources + posture + last build\n` +
-      `  stats <dir>             node/edge counts + confidence breakdown\n` +
-      `  affected <dir> <symbol|file>  blast radius (who depends on it; a file\n` +
-      `                          expands to its members). Symbols match exactly: name,\n` +
-      `                          Class.method, path/to/file.ts:name or a node id\n` +
-      `  path <dir> <a> <b>      shortest path between two symbols (same selectors)\n` +
-      `  query <dir> <question> [--json] [--include-tests]\n` +
-      `                          relevance-ranked subgraph with file:line per node; tests\n` +
-      `                          left out unless --include-tests (--json: graph_query shape)\n` +
-      `  impact analyze [<dir>] <symbol> [--json]\n` +
-      `                          bidirectional impact BFS (files/tests/services/configs)\n` +
-      `  visualize <dir> [--out <path>] [--drilldown]\n` +
-      `                          export an interactive offline HTML graph viewer; on a\n` +
-      `                          workspace root renders constellation (or --drilldown) mode\n` +
-      `  graph serve [dir] [--port <n>] [--host <h>]\n` +
-      `                          foreground read-only HTTP server: stats/tree/search/node\n` +
-      `                          detail + anchored memories over the graph; JSON API only,\n` +
-      `                          loopback-bound (127.0.0.1/::1/localhost), Ctrl+C to stop\n` +
-      `  graph gc [--dry-run] [--json]\n` +
-      `                          prune vanished roots from the global project registry\n` +
-      `                          (~/.leina/projects.json); reads already ignore them\n` +
-      `  workspace <build|status|detect|memory|visualize> [dir]\n` +
-      `                          multi-repo workspace: merged graph, per-member freshness,\n` +
-      `                          federated memory (context|search), constellation viz\n` +
-      `  audit [dir] [--format md|json|html] [--from <id,...>]\n` +
-      `                          source->sink candidate paths + findings[] (evidence for\n` +
-      `                          triage); subs: catalog | reachability | pack | visualize\n` +
-      `  events tail [dir] [--json]\n` +
-      `                          print the local event outbox (off unless\n` +
-      `                          LEINA_EVENTS_PERSIST=1)\n` +
-      `  memory <sub> <dir>      local memory: save|update|get|search|verified|context|session|\n` +
-      `                          session-start|suggest-topic|current-project|merge-projects|reanchor|\n` +
-      `                          compact|export|import|sync  (run 'leina memory' for each sub-command's flags)\n` +
-      `  mcp                     MCP server over stdio (tools = the capability registry);\n` +
-      `                          register with your host: command "leina", args ["mcp"]\n` +
-      `  mcp <register|unregister|status> [--hosts claude,cursor,windsurf]\n` +
-      `                          user-global registration: one server entry per host covers\n` +
-      `                          every project (tools take root; default = and confined to the\n` +
-      `                          workspace cwd, LEINA_MCP_ALLOW_ROOTS allow-lists others)\n` +
-      `  tui [dir]               interactive console: install/update (asset groups), init/deinit,\n` +
-      `                          status, repair, env vars, uninstall — same logic as the commands\n` +
-      `  env <sub>               variables for skills that call services (names-not-values:\n` +
-      `                          set KEY [hidden prompt/stdin] | list [masked] | get KEY [--reveal]\n` +
-      `                          | unset KEY | exec [--only K1,K2] -- <cmd...> [injects values])\n` +
-      `  harness <sub>           task harness (rules + executable gates in .harness/):\n` +
-      `                          contract new|show|edit|end · verify [--json] · sync\n` +
-      `                          [--check|--force] · list · hook <event>; run\n` +
-      `                          'leina harness' for the full per-sub-command flags\n` +
-      `  agent-hook <Event> [--host claude|devin] [--scope user]\n` +
-      `                          host-neutral agent hook gate (stdin = payload JSON;\n` +
-      `                          alias: devin-hook); the installers write the flags\n` +
-      `  version | --version     print the leina version\n`,
-  );
 }

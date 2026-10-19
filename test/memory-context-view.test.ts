@@ -103,7 +103,7 @@ test("(ctxv-3) CLI: context prints ranked notes with short ids that get / resolv
     assert.doesNotMatch(runCli(["memory", "context", proj], env).stdout, /key decision/);
 
     const bad = runCli(["memory", "context", proj, "--limit", "zero"], env);
-    assert.equal(bad.code, 1);
+    assert.equal(bad.code, 2, "an invalid flag value is a usage error");
     assert.match(bad.stderr, /--limit must be a positive integer/);
   } finally {
     rmSync(home, { recursive: true, force: true });

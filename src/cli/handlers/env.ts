@@ -31,11 +31,8 @@ import {
   upsertEnvVar,
 } from "../../application/env/store.ts";
 import { envFilePath, envFilePermsTooOpen, readEnvFile, writeEnvFile } from "../../infrastructure/env/env-file.ts";
-import { fail, readStdin } from "../io.ts";
+import { fail, readStdin, usageError } from "../io.ts";
 import { hasFlag, optFlag } from "../args.ts";
-
-const USAGE =
-  "Usage: leina env <list | set <KEY> | get <KEY> [--reveal] | unset <KEY> | exec [--only K1,K2] -- <cmd...>>";
 
 /** Read a secret from an interactive terminal without echoing it. */
 function promptHidden(question: string): Promise<string> {
@@ -78,8 +75,8 @@ function promptHidden(question: string): Promise<string> {
 }
 
 function requireKey(key: string | undefined): string {
-  if (!key || key.startsWith("--")) fail(USAGE);
-  if (!ENV_KEY_RE.test(key)) fail(`invalid variable name "${key}" (expected letters/digits/_)`);
+  if (!key || key.startsWith("--")) usageError("missing <KEY>");
+  if (!ENV_KEY_RE.test(key)) usageError(`invalid variable name "${key}" (expected letters/digits/_)`);
   return key;
 }
 
@@ -141,9 +138,7 @@ function envUnset(key: string): void {
 
 function envExec(rest: string[]): void {
   const sep = rest.indexOf("--");
-  if (sep === -1 || sep === rest.length - 1) {
-    fail(`env exec: missing command — ${USAGE}`);
-  }
+  if (sep === -1 || sep === rest.length - 1) usageError("missing command — usage: leina env exec [--only K1,K2] -- <cmd...>");
   const only = optFlag(rest.slice(0, sep), "--only", undefined)
     ?.split(",")
     .map((s) => s.trim())
@@ -192,6 +187,7 @@ export async function handleEnv(rest: string[]): Promise<void> {
       envExec(rest.slice(1));
       break;
     default:
-      fail(USAGE);
+      // The dispatcher only routes known sub-commands here.
+      usageError(`unknown sub-command '${sub ?? ""}'`, "env");
   }
 }

@@ -210,15 +210,18 @@ test("(MC-17) no sub-command prints the memory help", () => {
   withEnv(({ env }) => {
     const r = runCli(["memory"], { env });
     assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
-    assert.match(r.stdout, /leina memory <sub-command> <dir>/);
+    assert.match(r.stdout, /leina memory <sub-command> \[<dir>\]/);
+    assert.match(r.stdout, /save \[<dir>\] --title/);
   });
 });
 
-test("(MC-18) unknown sub-command falls back to help", () => {
+test("(MC-18) unknown sub-command is a usage error (exit 2, hint on stderr)", () => {
   withEnv(({ env, dir }) => {
     const r = runCli(["memory", "bogus", dir], { env });
-    assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
-    assert.match(r.stdout, /save <dir> --title/);
+    assert.equal(r.code, 2, `exit 2. stderr: ${r.stderr}`);
+    assert.equal(r.stdout, "");
+    assert.match(r.stderr, /unknown sub-command 'bogus'/);
+    assert.match(r.stderr, /run 'leina memory --help' for usage/);
   });
 });
 

@@ -80,8 +80,9 @@ test("(SC-4) help: prints the root help banner", () => {
   const r = runCli(["help"]);
   assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
   assert.match(r.stdout, /leina — code knowledge graph \+ project memory/);
-  // The dispatcher reads `memory <sub> <dir>` (handleMemory: rest[0] = sub).
-  assert.match(r.stdout, /memory <sub> <dir>/);
+  // Everyday commands lead, with the optional-dir forms an agent types.
+  assert.match(r.stdout, /^Everyday:\n {2}query \[<dir>\] <question\.\.\.>/m);
+  assert.match(r.stdout, /^ {2}memory <sub>/m);
 });
 
 test("(SC-5) --help alias prints the same banner", () => {
@@ -90,16 +91,20 @@ test("(SC-5) --help alias prints the same banner", () => {
   assert.match(r.stdout, /leina — code knowledge graph/);
 });
 
-test("(SC-6) unknown command falls back to root help", () => {
+test("(SC-6) unknown command is a usage error: stderr hint, exit 2, nothing on stdout", () => {
   const r = runCli(["definitely-not-a-command"]);
-  assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
-  assert.match(r.stdout, /^ {2}activate --hosts/m);
+  assert.equal(r.code, 2);
+  assert.equal(r.stdout, "");
+  assert.match(r.stderr, /leina: unknown command 'definitely-not-a-command'/);
+  assert.match(r.stderr, /run 'leina --help' for the list of commands/);
+  // A near miss gets a suggestion.
+  assert.match(runCli(["memroy"]).stderr, /did you mean 'memory'\?/);
 });
 
 test("(SC-6b) root help lists every dispatched command family", () => {
   const r = runCli(["help"]);
   assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
-  for (const cmd of ["visualize", "workspace", "audit", "events tail", "env", "tui", "sidecar"]) {
+  for (const cmd of ["visualize", "workspace", "audit", "events", "env", "tui", "sidecar", "harness", "scip", "mcp"]) {
     assert.match(r.stdout, new RegExp(`^  ${cmd}`, "m"), `root help must list '${cmd}'; got:\n${r.stdout}`);
   }
 });

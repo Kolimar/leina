@@ -150,7 +150,7 @@ test("(srank-8) CLI: flag values never leak into the query", () => {
     const hit = run("memory", "search", proj, "--limit", "6", "confiable");
     assert.match(hit.stdout, /\[decision\] confiable/);
     const bad = run("memory", "search", proj, "confiable", "--limit", "six");
-    assert.equal(bad.status, 1);
+    assert.equal(bad.status, 2, "an invalid flag value is a usage error");
     assert.match(bad.stderr, /--limit must be a positive integer/);
   } finally {
     rmSync(home, { recursive: true, force: true });

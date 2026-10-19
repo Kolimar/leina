@@ -5,11 +5,12 @@
 // resolve <dir> from their first arg; before the fix, `leina stats --help` (etc.) treated
 // "--help" as a directory and opened/built a graph in a folder literally named "--help"
 // (a stray `--help/.leina/graph.db` appeared in the repo). Two layers now prevent it:
-//   1. the dispatcher intercepts --help/-h before delegating and prints root help;
-//   2. the dir-resolving handlers reject a leading "--" token as a directory.
+//   1. the dispatcher intercepts --help/-h before delegating and prints the help of the
+//      command it resolved (src/cli/commands.ts);
+//   2. the dir-resolving handlers never take a "-"-prefixed token as a directory.
 //
-// This test spawns the real CLI in a temp cwd and asserts, for each form, that (a) root
-// help is printed, (b) exit code is 0, and (c) no "--help"/"-h" directory is created.
+// This test spawns the real CLI in a temp cwd and asserts, for each form, that (a) that
+// command's own help is printed, (b) exit code is 0, and (c) nothing is written to cwd.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -20,7 +21,6 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
-const HELP_MARKER = "code knowledge graph + project memory";
 
 // The regression this guards against BUILDS a graph (registering it in
 // $LEINA_HOME/projects.json), so the spawns get an isolated LEINA_HOME.
@@ -37,27 +37,29 @@ function runCli(args: string[], cwd: string): { stdout: string; code: number } {
 }
 
 // Each case is a subcommand invocation where "--help"/"-h" lands in (or before) the <dir>
-// positional slot. None may create a directory named after the flag.
-const CASES: string[][] = [
-  ["stats", "--help"],
-  ["status", "--help"],
-  ["build", "--help"],
-  ["refresh", "--help"],
-  ["query", "--help", "someterm"],
-  ["affected", "--help", "SomeSymbol"],
-  ["path", "--help", "a", "b"],
-  ["graph", "serve", "--help"],
-  ["stats", "-h"],
-  ["visualize", "--help"],
+// positional slot, paired with the command whose help must be printed. None may create a
+// directory named after the flag.
+const CASES: [string[], string][] = [
+  [["stats", "--help"], "stats"],
+  [["status", "--help"], "status"],
+  [["build", "--help"], "build"],
+  [["refresh", "--help"], "refresh"],
+  [["query", "--help", "someterm"], "query"],
+  [["affected", "--help", "SomeSymbol"], "affected"],
+  [["path", "--help", "a", "b"], "path"],
+  [["graph", "serve", "--help"], "graph serve"],
+  [["stats", "-h"], "stats"],
+  [["visualize", "--help"], "visualize"],
+  [["memory", "search", "--help"], "memory search"],
 ];
 
-for (const args of CASES) {
+for (const [args, command] of CASES) {
   test(`\`leina ${args.join(" ")}\` prints help and creates no flag-named dir`, () => {
     const dir = mkdtempSync(join(tmpdir(), "leina-help-"));
     try {
       const { stdout, code } = runCli(args, dir);
       assert.equal(code, 0, `expected exit 0, got ${code}`);
-      assert.ok(stdout.includes(HELP_MARKER), "expected root help on stdout");
+      assert.ok(stdout.startsWith(`leina ${command} — `), `expected the help of '${command}', got:\n${stdout}`);
       assert.ok(!existsSync(join(dir, "--help")), "must not create a '--help' directory");
       assert.ok(!existsSync(join(dir, "-h")), "must not create a '-h' directory");
       // Nothing at all should be written to cwd by a help invocation.

@@ -59,8 +59,9 @@ enforcement, change the other.
 - **Reversibility is a feature.** Anything that writes to a user's machine or repo needs an
   inverse and must respect the consent flag (see the install handlers for the pattern).
 - **Docs travel with the change.** If you add or change a command or flag, update
-  `docs/CLI_REFERENCE.md` (and the root help in `src/cli/handlers/system.ts` — a test
-  checks that every command family is listed there).
+  `docs/CLI_REFERENCE.md` and its entry in the command table `src/cli/commands.ts` — the
+  single source of the root help, `leina <command> --help` and the dispatcher's flag checks
+  (an undeclared flag is rejected as a usage error; `test/cli-help.test.ts` covers the table).
 
 ## Reporting bugs
 

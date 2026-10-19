@@ -10,6 +10,35 @@ comando, sus flags y qué imprime.
 - **Graph DB:** `<dir>/.leina/graph.db` (por proyecto, git-ignored).
 - **Memory DB:** `~/.leina/memory.db` (global, indexada por la project key derivada).
 
+### Ayuda, errores de uso y códigos de salida
+
+Una sola tabla de comandos (`src/cli/commands.ts`) gobierna la ayuda y la validación de argumentos:
+
+- `leina --help` (o `leina help`, o `leina` a secas) imprime la ayuda raíz: primero los
+  comandos de uso diario y luego todos los comandos agrupados por área.
+- `leina <command> --help`, `leina <command> -h` y `leina help <command>` imprimen la ayuda
+  propia de ese comando: formas de uso, flags, reglas de posicionales y ejemplos. Los grupos
+  funcionan igual (`leina memory --help`, `leina harness contract --help`); un grupo sin
+  subcomando imprime su ayuda (salvo `mcp`, `sidecar`, `scip` y `audit`, que corren a secas).
+- Antes de ejecutar cualquier handler, el dispatcher rechaza un comando, subcomando o flag
+  desconocido y un flag sin su valor, con sugerencia para errores cercanos
+  (`did you mean 'memory'?`) y para el orden invertido (`leina memory . context` →
+  `the sub-command comes first`).
+- `--flag=valor` se acepta donde se acepta `--flag valor`. Todo lo que va después de `--`
+  pertenece a otro programa (`env exec -- <cmd...>`) y nunca se valida. Los puntos de entrada
+  de hooks (`agent-hook`, `harness hook`) nunca se validan: fallan en abierto.
+
+| Código | Significado | Dónde se imprime |
+|--------|-------------|------------------|
+| `0` | Éxito (incluida la ayuda) | stdout |
+| `1` | Fallo en ejecución: sin grafo, sin coincidencia (`did you mean`), un check fallido, error de E/S o de DB | stderr |
+| `2` | Error de uso: comando / subcomando / flag desconocido, argumento faltante o inválido (`--limit six`) | stderr, como `leina <command>: <mensaje>` más `run 'leina <command> --help' for usage` |
+
+Los contratos propios de algunos comandos mantienen sus códigos documentados: `harness verify`
+(`0` completo, `1` fallo bloqueante, `2` error de motor o de config), `verify` (`1` cuando un
+check falla), `env exec` (el código del hijo) y los puntos de entrada de hooks, que siguen el
+contrato de hooks de su host.
+
 ---
 
 ## Comandos de grafo
@@ -936,8 +965,10 @@ sentinel intacto** (eso es competencia de `disable`). Strip-inverse, idempotente
 ### `version` (alias: `--version`, `-v`)
 Imprime la versión instalada del paquete y sale. Sin acceso a proyecto ni a DB.
 
-### `help` (alias: `--help`, `-h`)
-Imprime el texto de uso raíz. Se imprime el mismo texto para cualquier comando desconocido.
+### `help [<command>]` (alias: `--help`, `-h`)
+Imprime la ayuda raíz o la de un comando (`leina help memory search` equivale a
+`leina memory search --help`). Un comando desconocido es un error de uso (exit `2`), no la
+ayuda raíz.
 
 ### `doctor [dir] [--json]`
 Diagnostica la salud de la instalación + del proyecto. Reporta **cada check en una de cuatro
@@ -946,8 +977,8 @@ aplicable en una sección `info` al final. Sin `--json` imprime el reporte human
 emite el `DoctorReport` completo — incluyendo el agregado `repoIdentity` (`{projectKey,
 strategy, confidence: "high"|"medium"|"low", pathHash, rootCommit?, normalizedRemote?}`).
 `pathHash` es un SHA-256 determinístico entre SO de la ruta absoluta normalizada;
-`normalizedRemote` es la forma canónica `host/org/repo`. `doctor` es informativo — nunca
-cambia su exit code. El grupo de proyecto incluye un chequeo **workspace trust**: ok cuando
+`normalizedRemote` es la forma canónica `host/org/repo`. `doctor` sale con `1` cuando algún
+chequeo es `fail` (solo warns sale con `0`), igual que `verify`. El grupo de proyecto incluye un chequeo **workspace trust**: ok cuando
 hay confianza en esta máquina; warn cuando el consent es `enabled` pero no hay registro de
 confianza (pista: volvé a correr `leina init <root>`); info cuando el consent es `disabled`
 o el repo nunca se inicializó. El grupo **hooks** revisa cada entrada gestionada en los cuatro

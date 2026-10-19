@@ -24,15 +24,19 @@ function run(env: NodeJS.ProcessEnv, ...args: string[]) {
   });
 }
 
-test("(sc-1) unknown `graph` sub-command → usage message, exit 1; build/visualize untouched", () => {
+test("(sc-1) unknown `graph` sub-command → usage error, exit 2; build/visualize untouched", () => {
   const home = mkdtempSync(join(tmpdir(), "leina-serve-cli-home1-"));
   const dir = mkdtempSync(join(tmpdir(), "leina-serve-cli-proj1-"));
   const env = sandboxEnv(home);
   try {
     const bad = run(env, "graph", "nope");
-    assert.equal(bad.status, 1);
-    assert.match(bad.stderr, /Usage: leina graph <serve\|gc>/);
-    assert.match(bad.stderr, /gc \[--dry-run\]/);
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /leina graph: unknown sub-command 'nope'/);
+    assert.match(bad.stderr, /run 'leina graph --help' for usage/);
+    const help = run(env, "graph", "--help");
+    assert.equal(help.status, 0);
+    assert.match(help.stdout, /serve \[<dir>\]/);
+    assert.match(help.stdout, /gc/);
 
     // build stays a top-level command, not moved under `graph` (design: "visualize intacto").
     const built = run(env, "build", dir);

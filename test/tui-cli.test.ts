@@ -28,5 +28,5 @@ test("(tui-2) tui appears in the root help", () => {
     ["--no-warnings", "--experimental-strip-types", CLI, "help"],
     { encoding: "utf8" },
   );
-  assert.match(r.stdout ?? "", /tui \[dir\]/);
+  assert.match(r.stdout ?? "", /^ {2}tui \[<dir>\]/m);
 });

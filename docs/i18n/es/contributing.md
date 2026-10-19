@@ -62,8 +62,10 @@ Si cambiás uno de los dos mecanismos de control, cambiá el otro.
   repo de un usuario necesita un inverso y debe respetar el flag de consentimiento (ver los
   handlers de instalación para el patrón).
 - **La documentación viaja con el cambio.** Si agregás o cambiás un comando o flag, actualizá
-  `docs/CLI_REFERENCE.md` (y la ayuda raíz en `src/cli/handlers/system.ts` — un test verifica
-  que cada familia de comandos esté listada ahí).
+  `docs/CLI_REFERENCE.md` y su entrada en la tabla de comandos `src/cli/commands.ts` — la
+  única fuente de la ayuda raíz, de `leina <command> --help` y de la validación de flags del
+  dispatcher (un flag no declarado se rechaza como error de uso; `test/cli-help.test.ts`
+  cubre la tabla).
 
 ## Reportar bugs
 
