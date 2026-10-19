@@ -45,14 +45,33 @@ Term-scored subgraph for a free-text question. Prints the resolved seeds and the
 it is never part of the question) prints the result as one line of JSON —
 `{seeds, nodes, edges}`, the same shape the MCP `graph_query` tool returns.
 
-### `affected <dir> <label> [depth]`
-Blast radius — what (transitively, up to `depth`, default 3) depends on the symbol matching
-`<label>`. **Run this before renaming or migrating a symbol.** Prints each dependent with its
-relation and source location.
+### Selecting a symbol (`affected`, `path`, `impact analyze`)
+A symbol argument is matched **exactly** — never by substring. Accepted forms, tried in
+this order:
+
+| Form | Example |
+|---|---|
+| node id | `src_cli_doctor_ts:checkgraph` |
+| `<path>:<symbol>` — the path is the file or a `/`-aligned suffix of it | `src/cli/doctor.ts:checkGraph`, `memory-repository.ts:SQLiteMemoryRepository.search` |
+| name — `()` optional, case-insensitive allowed | `checkGraph`, `src/cli/doctor.ts` |
+| `Class.method` (or `Class#method`) | `SQLiteMemoryRepository.search` |
+| a `/`-aligned file path suffix (selects the module) | `handlers/graph.ts` |
+
+When several nodes match, the best one is used — case-exact before case-insensitive,
+production code before test/mock/fixture paths, function/method/class before
+interface/type before anything else before modules, then file path and line — and a
+`note:` on stderr lists the other matches, each with a selector that picks it. With no
+exact match the command prints `no exact match for "X"; did you mean:` with up to 5
+candidates (and their selectors) and exits 1.
+
+### `affected <dir> <symbol> [depth]`
+Blast radius — what (transitively, up to `depth`, default 3) depends on `<symbol>` (see
+[Selecting a symbol](#selecting-a-symbol-affected-path-impact-analyze)). **Run this before
+renaming or migrating a symbol.** Prints each dependent with its relation and source location.
 
 ### `path <dir> <from> <to>`
-Shortest dependency path between two symbols. Prints each hop as
-`--relation(confidence)--> node`.
+Shortest dependency path between two symbols (both resolved like `affected`'s). Prints each
+hop as `--relation(confidence)--> node`.
 
 ### `impact analyze [<dir>] <symbol> [--json]`
 First-level **impact analysis**: a bidirectional traversal from the node matching `<symbol>`
@@ -60,9 +79,10 @@ over the impact relation set (code relations plus infra relations `deploys|reads
 categorising every reached node into `{files, tests, services, configs}`. It crosses
 code→test→config→service through **real graph edges** (e.g. a `docker-compose` service whose
 `build.context` points at a module emits a `reads` edge to that code node). With `--json`
-prints `{"impacted":{"files":[…],"tests":[…],"services":[…],"configs":[…]}}`; always exits 0
-(an unknown symbol yields an empty shape). Routes through the freshness gate like the other
-graph reads.
+prints `{"impacted":{"files":[…],"tests":[…],"services":[…],"configs":[…]}}`. `<symbol>` is
+resolved like `affected`'s; with no exact match it exits 1 after the did-you-mean message
+(with `--json`, stdout still carries the empty shape plus `seed: null`, `note` and
+`suggestions`). Routes through the freshness gate like the other graph reads.
 
 ### `visualize <dir> [--out <path>] [--drilldown] [--single|--workspace]`
 Export an interactive, self-contained HTML graph viewer (vis-network inlined, offline) to `<path>`
@@ -525,12 +545,12 @@ the tool's default.
 | CLI | MCP tool | Notes |
 |---|---|---|
 | `query` | `graph_query` | builds the graph on first use |
-| `affected` | `graph_affected` | |
-| `path` | `graph_path` | |
+| `affected` | `graph_affected` | `symbol` takes the CLI selectors; ambiguous → best match + `note` + `alternatives`; no exact match → `seed: null` + `note` + `suggestions` |
+| `path` | `graph_path` | `from`/`to` resolved like `graph_affected`; per-endpoint `note`/`alternatives`/`suggestions` under `endpoints` |
 | `stats` | `graph_stats` | |
 | `status` | `graph_status` | |
 | `build` / `refresh` | `graph_build` | concurrent calls for the same root share one build; reads wait for it |
-| `impact analyze` | `impact_analyze` | resolves `symbol` like the CLI; honours `depth`; returns `{seed, impacted, note?}` (`seed: null` when nothing matches) |
+| `impact analyze` | `impact_analyze` | resolves `symbol` like the CLI; honours `depth`; returns `{seed, impacted, note?, alternatives?, suggestions?}` (`seed: null` + `suggestions` when nothing matches exactly) |
 | `visualize` | `graph_visualize` | returns the PATH of the generated HTML; `out` is resolved against `root`, confined like `root`, and must end in `.html` |
 | `audit` | `audit_run` | |
 | `doctor` | `doctor_run` | consent-exempt (diagnosis always allowed) |

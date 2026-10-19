@@ -199,7 +199,7 @@ test("(ia-ac3-makeId-bridge) makeId produce el mismo id en YAML extractor y tree
 // C) CLI `impact analyze --json`
 // ---------------------------------------------------------------------------
 
-test("(ia-cli-1) impact analyze nonexistent --json → shape vacío, exit 0", async () => {
+test("(ia-cli-1) impact analyze nonexistent --json → shape vacío + suggestions, exit 1", async () => {
   // Este test necesita un grafo existente. Usamos el fixture mixed-repo.
   const tmp = mkdtempSync(join(tmpdir(), "impact-cli-"));
   try {
@@ -224,7 +224,9 @@ test("(ia-cli-1) impact analyze nonexistent --json → shape vacío, exit 0", as
       { encoding: "utf8", cwd: REPO_ROOT, env: { ...process.env, LEINA_HOME: join(tmp, "leina-home") } },
     );
 
-    assert.strictEqual(result.status, 0, `exit code debe ser 0. stderr: ${result.stderr}`);
+    // Sin coincidencia exacta: exit 1 + "did you mean" en stderr; stdout sigue siendo el shape JSON.
+    assert.strictEqual(result.status, 1, `exit code debe ser 1. stderr: ${result.stderr}`);
+    assert.match(result.stderr, /no exact match for "nonexistent-symbol-xyz"/);
     let parsed: unknown;
     assert.doesNotThrow(() => { parsed = JSON.parse(result.stdout); }, `stdout debe ser JSON válido: ${result.stdout}`);
     const obj = parsed as { impacted: { files: unknown[]; tests: unknown[]; services: unknown[]; configs: unknown[] } };
@@ -234,6 +236,10 @@ test("(ia-cli-1) impact analyze nonexistent --json → shape vacío, exit 0", as
     assert.ok(Array.isArray(obj.impacted?.configs), "impacted.configs debe ser array");
     assert.deepStrictEqual(obj.impacted.files, []);
     assert.deepStrictEqual(obj.impacted.services, []);
+    const extra = parsed as { seed: unknown; note?: string; suggestions?: unknown[] };
+    assert.strictEqual(extra.seed, null);
+    assert.match(extra.note ?? "", /no exact match/);
+    assert.ok(Array.isArray(extra.suggestions), "suggestions debe ser array");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

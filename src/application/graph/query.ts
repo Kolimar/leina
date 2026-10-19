@@ -4,6 +4,7 @@
 import type { GraphEdge, GraphNode, Relation } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
 import { normalizeLabel, splitIdentifier } from "../../domain/shared/id.ts";
+import { resolveSeedQuery } from "./seed.ts";
 
 // Relations that propagate impact through the graph (blast radius, `affected` command).
 const AFFECTED_RELATIONS: ReadonlySet<Relation> = new Set<Relation>([
@@ -118,12 +119,11 @@ function affectedHitFor(
   return { node, depth, viaRelation: e.relation };
 }
 
-// Resolve a free-text query to a seed node id: exact id -> exact label -> substring.
+// Resolve a selector to its best EXACT match (id, label, Owner.member, path:symbol — see
+// seed.ts); null when nothing matches exactly. Callers that report ambiguity or
+// suggestions use resolveSeedQuery directly.
 export function resolveSeed(store: GraphRepository, query: string): GraphNode | null {
-  const direct = store.getNode(query);
-  if (direct) return direct;
-  const byLabel = store.findByLabel(query);
-  return byLabel[0] ?? null;
+  return resolveSeedQuery(store, query).seed;
 }
 
 export interface PathStep {

@@ -61,6 +61,14 @@ flowchart BT
     style d stroke-dasharray: 4 4,color:#999
 ```
 
+**¿Qué nodo es la semilla?** El argumento se matchea de forma exacta — un nombre,
+`Clase.metodo`, `path:nombre` o un id de nodo (ver la [referencia de la CLI](../cli-reference.md#seleccionar-un-símbolo-affected-path-impact-analyze)).
+Un nombre que comparten varios nodos se resuelve de forma determinista (código de producción
+antes que tests y mocks, funciones/clases antes que tipos, antes que módulos) y se listan los
+demás candidatos para que elijas uno; un nombre que no matchea nada exactamente nunca se
+cambia por uno parecido — recibís sugerencias y un código de salida distinto de cero. `path`
+e `impact analyze` resuelven sus símbolos de la misma forma.
+
 Dos reglas hacen que el resultado sea **confiable**:
 
 1. **Solo ciertas relaciones propagan impacto**: `calls`, `references`,

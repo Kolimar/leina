@@ -1,11 +1,14 @@
 // cli/handlers/impact.ts — handler para `leina impact analyze <symbol> [--json]`.
 //
-// Reutiliza openFreshStore + analyzeSymbolImpact (resolveSeed del path de query; el
-// mismo use-case que el tool MCP `impact_analyze`).
-// Nunca lanza error al usuario: símbolo no encontrado → listas vacías, exit 0.
+// Reutiliza openFreshStore + analyzeSymbolImpact (la misma resolución de selectores que
+// affected/path; el mismo use-case que el tool MCP `impact_analyze`).
+// Símbolo sin coincidencia exacta → mensaje "did you mean" en stderr + exit 1 (con --json,
+// además el shape vacío con `note` y `suggestions` en stdout). Símbolo ambiguo → nota en
+// stderr y se usa la mejor coincidencia.
 
 import { openFreshStore } from "../wiring.ts";
 import { analyzeSymbolImpact, type ImpactResult } from "../../application/graph/impact.ts";
+import { ambiguityNote, noMatchMessage, resolutionInfo } from "../../application/graph/seed.ts";
 import type { GraphNode } from "../../domain/graph/model.ts";
 import { fail } from "../io.ts";
 
@@ -17,10 +20,9 @@ function parseImpactArgs(args: string[]): { dir: string; symbolArg: string | und
 }
 
 // Formato humano legible
-function printHumanImpact(result: ImpactResult, seed: GraphNode | null, symbolArg: string): void {
+function printHumanImpact(result: ImpactResult, seed: GraphNode): void {
   const { files, tests, services, configs } = result.impacted;
-  const symLabel = seed ? `${seed.label} (${seed.sourceFile})` : `"${symbolArg}" (not found)`;
-  console.log(`Impact analysis for ${symLabel}:`);
+  console.log(`Impact analysis for ${seed.label} (${seed.sourceFile}):`);
   console.log(`  files    (${files.length}): ${files.join(", ") || "(none)"}`);
   console.log(`  tests    (${tests.length}): ${tests.join(", ") || "(none)"}`);
   console.log(`  services (${services.length}): ${services.join(", ") || "(none)"}`);
@@ -37,14 +39,22 @@ async function runImpactAnalyze(source: string[]): Promise<void> {
   }
 
   const store = await openFreshStore(dir);
-  // Símbolo no encontrado → seed null + listas vacías, sin error
-  const { seed, ...result } = analyzeSymbolImpact(store, symbolArg);
+  const { seed, resolution, ...result } = analyzeSymbolImpact(store, symbolArg);
   store.close();
 
+  if (!seed) {
+    // exitCode, not process.exit: let the JSON on stdout drain (async pipes on macOS).
+    if (wantJson) process.stdout.write(`${JSON.stringify({ ...result, seed: null, ...resolutionInfo(resolution) })}\n`);
+    console.error(noMatchMessage(resolution));
+    process.exitCode = 1;
+    return;
+  }
+  const note = ambiguityNote(resolution);
+  if (note) console.error(note);
   if (wantJson) {
-    process.stdout.write(`${JSON.stringify(result)  }\n`);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
   } else {
-    printHumanImpact(result, seed, symbolArg);
+    printHumanImpact(result, seed);
   }
 }
 

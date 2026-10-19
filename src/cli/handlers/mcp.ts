@@ -26,7 +26,8 @@ import { runVerify } from "../../application/harness/verify.ts";
 import { isPhase, type Phase } from "../../domain/harness/model.ts";
 import { ShellProcessRunner } from "../../infrastructure/harness/exec.ts";
 import { HarnessGit } from "../../infrastructure/harness/git.ts";
-import { affected, queryGraph, resolveSeed, shortestPath } from "../../application/graph/query.ts";
+import { affected, queryGraph, shortestPath } from "../../application/graph/query.ts";
+import { resolutionInfo, resolveSeedQuery } from "../../application/graph/seed.ts";
 import { analyzeSymbolImpact } from "../../application/graph/impact.ts";
 import { graphStatus } from "../../application/graph/manifest.ts";
 import { searchMemory, getVerifiedContext } from "../../application/memory/query.ts";
@@ -286,18 +287,26 @@ function assertConsent(tool: string, root: string): void {
 const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
   graph_query: async (a) =>
     withFreshStore(rootOf(a), (s) => queryGraph(s, str(a, "question"), intArg(a, "depth"), intArg(a, "maxNodes"))),
+  // Seeds resolve exactly like the CLI (seed.ts selectors, no substring fallback): an
+  // unresolved selector returns `seed: null` + `suggestions`, an ambiguous one the best
+  // match + `alternatives` (`note` says which applies).
   graph_affected: async (a) =>
     withFreshStore(rootOf(a), (s) => {
-      const seed = resolveSeed(s, str(a, "symbol"));
-      if (!seed) return { seed: null, dependents: [], note: `no graph node matches "${str(a, "symbol")}"` };
-      return { seed: { id: seed.id, label: seed.label }, dependents: affected(s, seed.id, intArg(a, "depth")) };
+      const res = resolveSeedQuery(s, str(a, "symbol"));
+      if (!res.seed) return { seed: null, dependents: [], ...resolutionInfo(res) };
+      return {
+        seed: { id: res.seed.id, label: res.seed.label },
+        ...resolutionInfo(res),
+        dependents: affected(s, res.seed.id, intArg(a, "depth")),
+      };
     }),
   graph_path: async (a) =>
     withFreshStore(rootOf(a), (s) => {
-      const from = resolveSeed(s, str(a, "from"));
-      const to = resolveSeed(s, str(a, "to"));
-      if (!from || !to) return { path: null, note: "one or both endpoints did not resolve to graph nodes" };
-      return { path: shortestPath(s, from.id, to.id) };
+      const from = resolveSeedQuery(s, str(a, "from"));
+      const to = resolveSeedQuery(s, str(a, "to"));
+      const endpoints = { from: resolutionInfo(from), to: resolutionInfo(to) };
+      if (!from.seed || !to.seed) return { path: null, endpoints };
+      return { path: shortestPath(s, from.seed.id, to.seed.id), endpoints };
     }),
   graph_stats: async (a) => {
     // Ungated read, but never of a graph another call in this process is still building
@@ -318,12 +327,11 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
   graph_build: async (a) => buildGraphShared(rootOf(a)),
   impact_analyze: async (a) =>
     withFreshStore(rootOf(a), (s) => {
-      // Same seed resolution as the CLI (label/file → node id); analyzeImpact alone
+      // Same seed resolution as the CLI (seed.ts selectors); analyzeImpact alone
       // expects a node id and silently returned empty lists for a symbol name.
-      const symbol = str(a, "symbol");
-      const { seed, impacted } = analyzeSymbolImpact(s, symbol, intArg(a, "depth"));
-      if (!seed) return { seed: null, impacted, note: `no graph node matches "${symbol}"` };
-      return { seed: { id: seed.id, label: seed.label, sourceFile: seed.sourceFile }, impacted };
+      const { seed, resolution, impacted } = analyzeSymbolImpact(s, str(a, "symbol"), intArg(a, "depth"));
+      if (!seed) return { seed: null, impacted, ...resolutionInfo(resolution) };
+      return { seed: { id: seed.id, label: seed.label, sourceFile: seed.sourceFile }, ...resolutionInfo(resolution), impacted };
     }),
   memory_add: (a) =>
     withMemStore(rootOf(a), (s) => {

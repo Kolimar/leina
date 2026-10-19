@@ -62,6 +62,14 @@ flowchart BT
     style d stroke-dasharray: 4 4,color:#999
 ```
 
+**Which node is the seed?** The argument is matched exactly — a name, `Class.method`,
+`path:name` or a node id (see the [CLI reference](../CLI_REFERENCE.md#selecting-a-symbol-affected-path-impact-analyze)).
+A name shared by several nodes resolves deterministically (production code before tests and
+mocks, functions/classes before types before modules) and the other candidates are listed so
+you can pick one; a name that matches nothing exactly is never swapped for a lookalike — you
+get suggestions and a non-zero exit instead. `path` and `impact analyze` resolve their
+symbols the same way.
+
 Two rules make the result **trustworthy**:
 
 1. **Only certain relations propagate impact**: `calls`, `references`,

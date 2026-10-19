@@ -5,7 +5,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -129,7 +129,46 @@ test("(GC-7) affected: unknown symbol fails with a message", () => {
     runCli(["build", dir]);
     const r = runCli(["affected", dir, "doesNotExistSymbol"]);
     assert.notEqual(r.code, 0, "should fail for an unknown symbol");
-    assert.match(r.stderr, /no node matches/);
+    assert.match(r.stderr, /no exact match for "doesNotExistSymbol"/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(GC-13) affected/path: a near-miss is never resolved by substring — did-you-mean + exit 1", () => {
+  const dir = tmpProject();
+  try {
+    runCli(["build", dir]);
+    // "alph" is a substring of alpha(): it used to resolve silently.
+    const r = runCli(["affected", dir, "alph"]);
+    assert.equal(r.code, 1, `exit 1. stdout: ${r.stdout}`);
+    assert.match(r.stderr, /no exact match for "alph"; did you mean:\n {2}alpha +a\.ts:2/);
+    assert.doesNotMatch(r.stdout, /Blast radius/);
+    const p = runCli(["path", dir, "alpha", "bet"]);
+    assert.equal(p.code, 1);
+    assert.match(p.stderr, /no exact match for "bet"; did you mean:\n {2}beta /);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(GC-14) affected: an ambiguous name uses the best match and lists the others with selectors", () => {
+  const dir = tmpProject();
+  try {
+    writeFileSync(join(dir, "c.ts"), `export function beta(): number { return 2; }\n`);
+    mkdirSync(join(dir, "test"));
+    writeFileSync(join(dir, "test", "beta.test.ts"), `export function beta(): number { return 3; }\n`);
+    runCli(["build", dir]);
+    const r = runCli(["affected", dir, "beta"]);
+    assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
+    // Production before tests, then path order: b.ts wins over c.ts and test/beta.test.ts.
+    assert.match(r.stderr, /^note: "beta" matches 3 nodes; using b\.ts:beta \(b\.ts:1\)/);
+    assert.match(r.stderr, /\n {2}c\.ts:beta +c\.ts:1\n {2}test\/beta\.test\.ts:beta +test\/beta\.test\.ts:1/);
+    assert.match(r.stdout, /Blast radius of beta\(\) \(b\.ts/);
+    // The listed selector picks that node, unambiguously (no note).
+    const pick = runCli(["affected", dir, "c.ts:beta"]);
+    assert.equal(pick.stderr, "");
+    assert.match(pick.stdout, /Blast radius of beta\(\) \(c\.ts/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

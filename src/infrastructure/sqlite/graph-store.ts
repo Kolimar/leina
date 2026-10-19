@@ -370,6 +370,18 @@ export class GraphStore implements GraphRepository {
     return functionalExact.length > 0 ? functionalExact : like;
   }
 
+  // Exact (NOCASE) label lookup for several spellings at once — the seed resolver asks for
+  // `name` and `name()` together. One index seek per label on idx_nodes_label_nocase;
+  // never falls back to a substring scan.
+  findByLabelExact(labels: readonly string[]): GraphNode[] {
+    const stmt = this.db.prepare("SELECT * FROM nodes WHERE label = ? COLLATE NOCASE");
+    const byId = new Map<string, GraphNode>();
+    for (const label of new Set(labels)) {
+      for (const r of stmt.all(label) as unknown as NodeRow[]) byId.set(r.id, rowToNode(r));
+    }
+    return [...byId.values()];
+  }
+
   allNodes(): GraphNode[] {
     return (
       this.db.prepare("SELECT * FROM nodes").all() as unknown as NodeRow[]

@@ -47,14 +47,34 @@ y las edges `source --relation--> target` del subgrafo. Con `--json` (en cualqui
 después de `<dir>`; nunca forma parte de la pregunta) imprime el resultado como una línea de
 JSON — `{seeds, nodes, edges}`, la misma forma que devuelve la tool MCP `graph_query`.
 
-### `affected <dir> <label> [depth]`
-Blast radius — qué depende (transitivamente, hasta `depth`, por defecto 3) del símbolo que
-matchea `<label>`. **Ejecutá esto antes de renombrar o migrar un símbolo.** Imprime cada
-dependiente con su relation y su ubicación de origen.
+### Seleccionar un símbolo (`affected`, `path`, `impact analyze`)
+Un argumento de símbolo se matchea de forma **exacta** — nunca por substring. Formas
+aceptadas, en este orden:
+
+| Forma | Ejemplo |
+|---|---|
+| id de node | `src_cli_doctor_ts:checkgraph` |
+| `<path>:<símbolo>` — el path es el archivo o un sufijo alineado en `/` | `src/cli/doctor.ts:checkGraph`, `memory-repository.ts:SQLiteMemoryRepository.search` |
+| nombre — `()` opcional, se admite sin distinguir mayúsculas | `checkGraph`, `src/cli/doctor.ts` |
+| `Clase.metodo` (o `Clase#metodo`) | `SQLiteMemoryRepository.search` |
+| un sufijo de path alineado en `/` (selecciona el módulo) | `handlers/graph.ts` |
+
+Si matchean varios nodes se usa el mejor — exacto en mayúsculas antes que sin distinguirlas,
+código de producción antes que paths de test/mock/fixture, function/method/class antes que
+interface/type, antes que cualquier otro, antes que módulos; luego path de archivo y línea —
+y una `note:` en stderr lista los demás, cada uno con un selector que lo elige. Sin match
+exacto el comando imprime `no exact match for "X"; did you mean:` con hasta 5 candidatos (y
+sus selectores) y sale con código 1.
+
+### `affected <dir> <symbol> [depth]`
+Blast radius — qué depende (transitivamente, hasta `depth`, por defecto 3) de `<symbol>` (ver
+[Seleccionar un símbolo](#seleccionar-un-símbolo-affected-path-impact-analyze)). **Ejecutá esto
+antes de renombrar o migrar un símbolo.** Imprime cada dependiente con su relation y su
+ubicación de origen.
 
 ### `path <dir> <from> <to>`
-Camino de dependencia más corto entre dos símbolos. Imprime cada salto como
-`--relation(confidence)--> node`.
+Camino de dependencia más corto entre dos símbolos (ambos resueltos como en `affected`).
+Imprime cada salto como `--relation(confidence)--> node`.
 
 ### `impact analyze [<dir>] <symbol> [--json]`
 **Análisis de impacto** de primer nivel: un BFS bidireccional desde el node que matchea
@@ -63,9 +83,10 @@ Camino de dependencia más corto entre dos símbolos. Imprime cada salto como
 `{files, tests, services, configs}`. Cruza code→test→config→service a través de **edges
 reales del grafo** (por ejemplo, un service de `docker-compose` cuyo `build.context` apunta
 a un módulo emite una edge `reads` hacia ese node de código). Con `--json` imprime
-`{"impacted":{"files":[…],"tests":[…],"services":[…],"configs":[…]}}`; siempre sale con
-código 0 (un symbol desconocido produce una forma vacía). Pasa por la freshness gate igual
-que las demás lecturas de grafo.
+`{"impacted":{"files":[…],"tests":[…],"services":[…],"configs":[…]}}`. `<symbol>` se
+resuelve como en `affected`; sin match exacto sale con código 1 tras el mensaje "did you
+mean" (con `--json`, stdout igual trae la forma vacía más `seed: null`, `note` y
+`suggestions`). Pasa por la freshness gate igual que las demás lecturas de grafo.
 
 ### `visualize <dir> [--out <path>] [--drilldown] [--single|--workspace]`
 Exporta un visor de grafo HTML interactivo y autocontenido (vis-network incluido inline,
@@ -549,12 +570,12 @@ la tool.
 | CLI | MCP tool | Notas |
 |---|---|---|
 | `query` | `graph_query` | construye el grafo en el primer uso |
-| `affected` | `graph_affected` | |
-| `path` | `graph_path` | |
+| `affected` | `graph_affected` | `symbol` acepta los selectores de la CLI; ambiguo → mejor match + `note` + `alternatives`; sin match exacto → `seed: null` + `note` + `suggestions` |
+| `path` | `graph_path` | `from`/`to` se resuelven como en `graph_affected`; `note`/`alternatives`/`suggestions` por extremo bajo `endpoints` |
 | `stats` | `graph_stats` | |
 | `status` | `graph_status` | |
 | `build` / `refresh` | `graph_build` | las llamadas concurrentes para el mismo root comparten un solo build; las lecturas lo esperan |
-| `impact analyze` | `impact_analyze` | resuelve `symbol` igual que la CLI; respeta `depth`; devuelve `{seed, impacted, note?}` (`seed: null` si nada matchea) |
+| `impact analyze` | `impact_analyze` | resuelve `symbol` igual que la CLI; respeta `depth`; devuelve `{seed, impacted, note?, alternatives?, suggestions?}` (`seed: null` + `suggestions` si nada matchea exactamente) |
 | `visualize` | `graph_visualize` | devuelve el PATH del HTML generado; `out` se resuelve contra `root`, se confina igual que `root` y tiene que terminar en `.html` |
 | `audit` | `audit_run` | |
 | `doctor` | `doctor_run` | exento de consentimiento (el diagnóstico siempre está permitido) |

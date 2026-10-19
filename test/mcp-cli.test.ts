@@ -434,7 +434,7 @@ test("(mcps-10) impact_analyze resolves the symbol like the CLI and honours dept
     const missing = parse(4);
     assert.equal(missing.seed, null);
     assert.deepEqual(missing.impacted.files, []);
-    assert.match(missing.note ?? "", /no graph node matches/);
+    assert.match(missing.note ?? "", /no exact match for "no_such_symbol"/);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });

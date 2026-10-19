@@ -6,7 +6,10 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { isStale, readManifest } from "../../application/graph/manifest.ts";
 import { acquireForegroundBuildLock, buildLockPath } from "../background-build.ts";
 import { loadFreshnessConfig } from "../../infrastructure/config/freshness.ts";
-import { affected, queryGraph, resolveSeed, shortestPath } from "../../application/graph/query.ts";
+import { affected, queryGraph, shortestPath } from "../../application/graph/query.ts";
+import { ambiguityNote, noMatchMessage, resolveSeedQuery } from "../../application/graph/seed.ts";
+import type { GraphNode } from "../../domain/graph/model.ts";
+import type { GraphRepository } from "../../domain/graph/ports.ts";
 import { openGraphRepo as openStore, openFreshStore, openEventSink, buildDefaultRegistry } from "../wiring.ts";
 import { makeLeinaEvent } from "../../domain/events/model.ts";
 import { emitEvent } from "../../application/events/emit.ts";
@@ -158,13 +161,25 @@ export function handleStats(rest: string[]): void {
   }
 }
 
+// Resolve one CLI selector to its seed: no exact match → the did-you-mean message on
+// stderr + exit 1; several exact matches → the ambiguity note on stderr, best one used.
+function resolveOrFail(store: GraphRepository, selector: string): GraphNode {
+  const res = resolveSeedQuery(store, selector);
+  if (!res.seed) {
+    store.close();
+    fail(noMatchMessage(res));
+  }
+  const note = ambiguityNote(res);
+  if (note) console.error(note);
+  return res.seed;
+}
+
 export async function handleAffected(rest: string[]): Promise<void> {
   const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: affected <dir> <symbol|file> [depth]");
   const label = rest[1] ?? fail("usage: affected <dir> <symbol|file> [depth]");
   const depth = rest[2] ? Number(rest[2]) : 3;
   const store = await openFreshStore(root);
-  const seed = resolveSeed(store, label);
-  if (!seed) fail(`no node matches "${label}"`);
+  const seed = resolveOrFail(store, label);
   const hits = affected(store, seed.id, depth);
   store.close();
   console.log(`Blast radius of ${seed.label} (${seed.sourceFile}):`);
@@ -178,10 +193,11 @@ export async function handleAffected(rest: string[]): Promise<void> {
 
 export async function handlePath(rest: string[]): Promise<void> {
   const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: path <dir> <from> <to>");
+  const from = rest[1] ?? fail("usage: path <dir> <from> <to>");
+  const to = rest[2] ?? fail("usage: path <dir> <from> <to>");
   const store = await openFreshStore(root);
-  const a = resolveSeed(store, rest[1] ?? fail("missing <from>"));
-  const b = resolveSeed(store, rest[2] ?? fail("missing <to>"));
-  if (!a || !b) fail("could not resolve endpoints");
+  const a = resolveOrFail(store, from);
+  const b = resolveOrFail(store, to);
   const steps = shortestPath(store, a.id, b.id);
   store.close();
   if (!steps) {

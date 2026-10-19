@@ -56,6 +56,13 @@ export interface GraphRepository {
    * (normalised label equals normalised query) → substring (shortest first, ≤50).
    */
   findByLabel(query: string): GraphNode[];
+  /**
+   * OPTIONAL — exact label lookup: every node whose label equals one of `labels`
+   * (ASCII case-insensitive), with NO substring fallback. Seed resolution
+   * (application/graph/seed.ts) ranks and disambiguates the result itself. Read-only
+   * overlays may omit it; the caller then filters allNodes() (same result, unindexed).
+   */
+  findByLabelExact?(labels: readonly string[]): GraphNode[];
   /** Return all nodes. */
   allNodes(): GraphNode[];
   /** Return all edges. */
