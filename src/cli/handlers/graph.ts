@@ -12,7 +12,17 @@ import { displayLabel, nodeAt } from "../../application/graph/present.ts";
 import { compactQuery, type CompactQuery } from "../../application/graph/payloads.ts";
 import type { GraphNode } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
-import { openGraphRepo as openStore, openFreshStore, openEventSink, buildDefaultRegistry, buildRootProblem, graphDbPath } from "../wiring.ts";
+import {
+  openGraphRepo as openStore,
+  openFreshStore,
+  openEventSink,
+  openWorkspaceFreshStore,
+  buildDefaultRegistry,
+  buildRootProblem,
+  graphDbPath,
+} from "../wiring.ts";
+import { isWorkspaceRoot } from "../../application/project/detect-key.ts";
+import { handleWorkspaceStatus } from "./workspace.ts";
 import { makeLeinaEvent } from "../../domain/events/model.ts";
 import { emitEvent } from "../../application/events/emit.ts";
 import { fail, shellArg, usageError } from "../io.ts";
@@ -75,8 +85,23 @@ function acquireLockOrFail(root: string): void {
   if ("timeout" in result) fail(lockTimeoutMessage(root, result.holderPid, result.holderStartedAt));
 }
 
+// `build`/`refresh` on a multi-repo workspace root: building it as one repo would index none
+// of its members and overwrite the merged graph, so build the members and merge them instead
+// (`leina workspace build`; each member is rebuilt only when stale).
+async function buildWorkspaceRoot(root: string): Promise<void> {
+  console.log(`${root} is a multi-repo workspace root: building its members and merging (leina workspace build) ...`);
+  const merged = await openWorkspaceFreshStore(root).catch((err: unknown) => fail(err instanceof Error ? err.message : String(err)));
+  try {
+    const s = merged.stats();
+    console.log(`Done. merged graph: ${s.nodes} nodes, ${s.edges} edges.`);
+  } finally {
+    merged.close();
+  }
+}
+
 export async function handleBuild(rest: string[]): Promise<void> {
   const root = dirOnly("build", rest);
+  if (isWorkspaceRoot(root)) return buildWorkspaceRoot(root);
   acquireLockOrFail(root);
   try {
     const { buildGraph } = await import("../../application/graph/build.ts");
@@ -110,6 +135,10 @@ export async function handleBuild(rest: string[]): Promise<void> {
 
 export async function handleRefresh(rest: string[]): Promise<void> {
   const root = dirOnly("refresh", rest);
+  if (isWorkspaceRoot(root)) {
+    console.log(`(to re-extract a member in full, run 'leina refresh <member>')`);
+    return buildWorkspaceRoot(root);
+  }
   acquireLockOrFail(root);
   try {
     const { buildGraph } = await import("../../application/graph/build.ts");
@@ -138,6 +167,12 @@ export async function handleRefresh(rest: string[]): Promise<void> {
 
 export function handleStatus(rest: string[]): void {
   const root = dirOnly("status", rest);
+  if (isWorkspaceRoot(root)) {
+    // Its graph is the merge of the members' graphs: report each member's freshness.
+    console.log(`root: ${root}`);
+    handleWorkspaceStatus([root]);
+    return;
+  }
   const s = isStale(root);
   const manifest = readManifest(root);
   const posture = loadFreshnessConfig(root);

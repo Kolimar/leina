@@ -289,6 +289,40 @@ test("(mcps-4) consent=disabled blocks tools with isError; doctor_run stays exem
   }
 });
 
+test("(mcps-16) graph and memory tools from a subdirectory act on the repo's project", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home16-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo16-"));
+  const env = sandboxEnv(home);
+  try {
+    assert.equal(spawnSync("git", ["init", "-q", dir]).status, 0);
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "a.ts"), "export function greet(): string { return callee(); }\nexport function callee(): string { return \"hi\"; }\n");
+    const sub = join(dir, "src");
+
+    const responses = await driveMcp(sub, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "graph_affected", arguments: { symbol: "callee" } } },
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+    assert.ok(!byId.get(2)?.result?.isError, byId.get(2)?.result?.content?.[0]?.text);
+    assert.ok(existsSync(join(dir, ".leina", "graph.db")), "graph built at the repo root");
+    assert.ok(!existsSync(join(sub, ".leina")), "no second project in the subdirectory");
+
+    // The repo's consent flag governs a server launched below it.
+    writeFileSync(join(dir, ".leina", "consent"), "disabled");
+    const blocked = await driveMcp(sub, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "memory_search", arguments: { query: "x" } } },
+    ]);
+    assert.equal(blocked.find((r) => r.id === 2)?.result?.isError, true, "disabled at the repo root → blocked in its subdirectory");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(mcps-5) graph_visualize returns the path of a generated HTML file", async () => {
   const home = mkdtempSync(join(tmpdir(), "leina-mcp-home5-"));
   const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo5-"));

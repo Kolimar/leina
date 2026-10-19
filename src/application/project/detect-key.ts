@@ -157,6 +157,21 @@ export function detectWorkspaceMode(
   return { mode: "single", members: [], source: "git-root" };
 }
 
+/**
+ * Whether the single-repo graph paths (read-path rebuild, `build`, `refresh`) must hand `dir`
+ * to the workspace build instead of building it as one repo: it lies outside any git
+ * repository and detectWorkspaceMode calls it a workspace (workspace.json, or ≥2 child repos).
+ * Built as one repo it would index none of its members (nested repositories are skipped) and
+ * overwrite the merged graph with an empty one. A git repository is never routed — not even
+ * one holding a workspace.json (an Nx monorepo has one) or nested clones — so its own graph
+ * keeps working; `leina workspace build` still treats it as a workspace when asked.
+ */
+export function isWorkspaceRoot(dir: string): boolean {
+  const resolved = resolve(dir);
+  if (findGitToplevel(resolved) !== undefined) return false;
+  return readWorkspaceConfig(resolved) !== null || findChildRepos(resolved).length >= 2;
+}
+
 /** Build workspace members from child repos, honouring exclude list. */
 function buildMembers(resolved: string, exclude: string[]): WorkspaceMember[] {
   const excludeSet = new Set(exclude);

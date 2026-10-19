@@ -19,7 +19,13 @@ import {
   type AnchorUpgrader,
 } from "../application/memory/anchor-verify.ts";
 import { makeGitFileHistory } from "../infrastructure/git/file-history.ts";
-import { AmbiguousProjectError, deriveProjectKey, deriveWorkspaceRootKey, detectWorkspaceMode } from "../application/project/detect-key.ts";
+import {
+  AmbiguousProjectError,
+  deriveProjectKey,
+  deriveWorkspaceRootKey,
+  detectWorkspaceMode,
+  isWorkspaceRoot,
+} from "../application/project/detect-key.ts";
 import { globalMemoryPath, leinaHome } from "../infrastructure/install/share-paths.ts";
 import { isStale } from "../application/graph/manifest.ts";
 import { forgetSourceList, withSourceListMemo } from "../application/graph/sources.ts";
@@ -162,6 +168,17 @@ export function memOpenGuarded(dir: string): ReturnType<typeof openMemoryRepo> {
  * wants; the CLI keeps its explicit "run leina build" guidance instead.
  */
 export async function openFreshStoreOrThrow(
+  root: string,
+  opts: { buildIfMissing?: boolean } = {},
+): Promise<GraphRepository> {
+  // A multi-repo workspace root is served by its merged graph: the single-repo rebuild below
+  // would index none of its members and overwrite that graph with an empty one.
+  if (isWorkspaceRoot(root)) return openWorkspaceFreshStore(root);
+  return openRepoFreshStoreOrThrow(root, opts);
+}
+
+/** openFreshStoreOrThrow for one repository (no workspace routing). */
+async function openRepoFreshStoreOrThrow(
   root: string,
   opts: { buildIfMissing?: boolean } = {},
 ): Promise<GraphRepository> {
@@ -340,7 +357,7 @@ export async function openWorkspaceFreshStore(
 
   if (detection.mode === "single") {
     // Fall back to single-repo path (covers --single override)
-    return openFreshStoreOrThrow(resolved);
+    return openRepoFreshStoreOrThrow(resolved);
   }
 
   const mergedDbPath = graphDbPath(wsRoot); // reuse same path helper for the workspace root

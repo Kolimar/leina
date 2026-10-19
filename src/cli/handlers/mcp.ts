@@ -44,7 +44,7 @@ import {
 } from "../../domain/memory/model.ts";
 import { readConsentFlag } from "../../application/install/consent.ts";
 import { isTrustedWorkspaceDir } from "../../application/install/trust.ts";
-import { findHarnessRoot, resolveTrustRoot } from "../../application/project/root.ts";
+import { findHarnessRoot, resolveGraphRoot, resolveTrustRoot } from "../../application/project/root.ts";
 import { shellArg } from "../io.ts";
 import {
   awaitGraphBuild,
@@ -52,7 +52,9 @@ import {
   memOpenOrThrow,
   openFreshStoreOrThrow,
   openGraphRepo,
+  openWorkspaceFreshStore,
 } from "../wiring.ts";
+import { isWorkspaceRoot } from "../../application/project/detect-key.ts";
 import { runDoctor } from "../doctor.ts";
 import { readPackageVersion } from "../../version.ts";
 
@@ -252,6 +254,15 @@ const rootOf = (a: ToolArgs): string =>
   confineRoot(optStr(a, "root"), process.cwd(), process.env.LEINA_MCP_ALLOW_ROOTS);
 
 /**
+ * The project a (confined) tool root belongs to — the root the CLI's per-project commands act
+ * on (resolveGraphRoot: the nearest enclosing leina project, else the git toplevel). A server
+ * launched in a subdirectory therefore reads the repo's graph, memory and consent flag
+ * instead of building a second graph there. The walk only ever reaches the project that
+ * encloses the confined root, never a sibling, so the confinement above still holds.
+ */
+const projectRootOf = (a: ToolArgs): string => resolveGraphRoot(rootOf(a));
+
+/**
  * The harness repo root for a (confined) tool root — the nearest ancestor holding `.harness/`
  * or `.git`, exactly what `leina harness <sub>` uses for its cwd — so a server launched in a
  * subdirectory or a nested worktree reads and writes the same contract and rules as the CLI.
@@ -311,7 +322,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
   // `{id, label, kind, at}`, edges `{source, target, relation, at}` — no signatures or
   // community ids, a `file:line` on everything (COMPACT_TOOLS: serialised unindented).
   graph_query: async (a) =>
-    withFreshStore(rootOf(a), (s) =>
+    withFreshStore(projectRootOf(a), (s) =>
       compactQuery(
         s,
         queryGraph(s, str(a, "question"), {
@@ -325,7 +336,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
   // unresolved selector returns `seed: null` + `suggestions`, an ambiguous one the best
   // match + `alternatives` (`note` says which applies).
   graph_affected: async (a) =>
-    withFreshStore(rootOf(a), (s) => {
+    withFreshStore(projectRootOf(a), (s) => {
       const res = resolveSeedQuery(s, str(a, "symbol"));
       if (!res.seed) return { seed: null, dependents: [], ...resolutionInfo(res) };
       return {
@@ -335,7 +346,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       };
     }),
   graph_path: async (a) =>
-    withFreshStore(rootOf(a), (s) => {
+    withFreshStore(projectRootOf(a), (s) => {
       const from = resolveSeedQuery(s, str(a, "from"));
       const to = resolveSeedQuery(s, str(a, "to"));
       const info = { from: resolutionInfo(from), to: resolutionInfo(to) };
@@ -348,7 +359,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
   graph_stats: async (a) => {
     // Ungated read, but never of a graph another call in this process is still building
     // (a first build's db is empty until it commits).
-    const root = rootOf(a);
+    const root = projectRootOf(a);
     await awaitGraphBuild(root);
     const s = openGraphRepo(root);
     try {
@@ -357,13 +368,24 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       s.close();
     }
   },
-  graph_status: (a) => graphStatus(rootOf(a)),
+  graph_status: (a) => graphStatus(projectRootOf(a)),
   // Single-flight: a graph_build issued while another build of the same root runs in
   // this server (graph_build or a stale-gate rebuild) joins it instead of racing it.
   // buildGraphShared lazy-imports the extractor stack exactly like the CLI does.
-  graph_build: async (a) => buildGraphShared(rootOf(a)),
+  // A multi-repo workspace root builds its members and merges them (built as one repo it
+  // would overwrite the merged graph with an empty one).
+  graph_build: async (a) => {
+    const root = projectRootOf(a);
+    if (!isWorkspaceRoot(root)) return buildGraphShared(root);
+    const merged = await openWorkspaceFreshStore(root);
+    try {
+      return { workspace: true, ...merged.stats() };
+    } finally {
+      merged.close();
+    }
+  },
   impact_analyze: async (a) =>
-    withFreshStore(rootOf(a), (s) => {
+    withFreshStore(projectRootOf(a), (s) => {
       // Same seed resolution as the CLI (seed.ts selectors); analyzeImpact alone
       // expects a node id and silently returned empty lists for a symbol name.
       const { seed, resolution, impacted } = analyzeSymbolImpact(s, str(a, "symbol"), intArg(a, "depth"));
@@ -371,7 +393,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       return { seed: compactNode(s, seed), ...resolutionInfo(resolution), impacted };
     }),
   memory_add: (a) =>
-    withMemStore(rootOf(a), (s) => {
+    withMemStore(projectRootOf(a), (s) => {
       // Batch form (schemaVersion 2): `items` array — same per-item normalisation and
       // defaults as the CLI `memory save --batch` path.
       if (Array.isArray(a.items)) {
@@ -398,18 +420,18 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       return s.store.save(input);
     }),
   memory_search: (a) =>
-    withMemStore(rootOf(a), (s) =>
+    withMemStore(projectRootOf(a), (s) =>
       searchMemory(s.store, str(a, "query"), { type: optType(a), limit: intArg(a, "limit") }),
     ),
   memory_verified: (a) =>
-    withMemStore(rootOf(a), (mem) =>
+    withMemStore(projectRootOf(a), (mem) =>
       getVerifiedContext(mem.store, str(a, "query"), mem.verifyNode, {
         type: optType(a),
         limit: intArg(a, "limit"),
       }),
     ),
   memory_context: (a) =>
-    withMemStore(rootOf(a), (s) => {
+    withMemStore(projectRootOf(a), (s) => {
       // Same ranked selection as the session injection and `memory context` (active notes,
       // type × recency, ≤2 per topic prefix); full:true swaps previews for whole bodies.
       const ctx = s.store.recentContext({ limit: CONTEXT_POOL, sessionLimit: intArg(a, "sessionLimit") });
@@ -418,13 +440,13 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       return buildContextView(ctx, { limit });
     }),
   memory_get: (a) =>
-    withMemStore(rootOf(a), (s) => {
+    withMemStore(projectRootOf(a), (s) => {
       // Batch form (schemaVersion 2): `ids` array.
       if (Array.isArray(a.ids)) return s.store.getBatch(a.ids as string[]);
       return s.store.get(str(a, "id")) ?? { error: `no observation with id "${str(a, "id")}"` };
     }),
   memory_update: (a) =>
-    withMemStore(rootOf(a), (s) => {
+    withMemStore(projectRootOf(a), (s) => {
       const fields: UpdateFields = {
         title: optStr(a, "title"),
         content: optStr(a, "content"),
@@ -436,16 +458,16 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       return s.store.update(str(a, "id"), fields);
     }),
   memory_suggest_topic: (a) =>
-    withMemStore(rootOf(a), (s) =>
+    withMemStore(projectRootOf(a), (s) =>
       s.store.suggestTopicKeyWithMatches(str(a, "title"), optStr(a, "type") ?? "manual"),
     ),
   memory_session: (a) =>
-    withMemStore(rootOf(a), (s) =>
+    withMemStore(projectRootOf(a), (s) =>
       s.store.saveSession(str(a, "content"), { title: optStr(a, "title") }),
     ),
-  context_build: (a) => buildActiveContext(rootOf(a)),
+  context_build: (a) => buildActiveContext(projectRootOf(a)),
   audit_run: async (a) =>
-    withFreshStore(rootOf(a), (s) => runAudit(s, { fromIds: Array.isArray(a.fromIds) ? (a.fromIds as string[]) : undefined })),
+    withFreshStore(projectRootOf(a), (s) => runAudit(s, { fromIds: Array.isArray(a.fromIds) ? (a.fromIds as string[]) : undefined })),
   // Harness — same use-cases as `leina harness <sub>`; the driven ports
   // (ShellProcessRunner + HarnessGit) are composed here, mirroring the CLI
   // composition root. NOT consent-exempt: harness tools write under .harness/.
@@ -500,22 +522,23 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
     return outcome;
   },
   harness_rules_list: async (a) => harnessRulesList(harnessRootOf(a)),
-  doctor_run: (a) => runDoctor(readPackageVersion(), rootOf(a)),
+  doctor_run: (a) => runDoctor(readPackageVersion(), projectRootOf(a)),
   graph_visualize: async (a) => {
     // Heavy path: lazy-import like graph_build (pulls the html-export + wiring stack).
     // Returns the PATH of the generated HTML, never the HTML itself (megabytes of
     // inlined vis-network would flood the model context).
     // The default target is confined too: a repo-shipped `.leina` symlink must not
-    // redirect the write outside the workspace.
-    const root = rootOf(a);
+    // redirect the write outside the workspace. `out` resolves against the confined root
+    // (the project root may enclose the server cwd, and nothing is written outside it).
+    const confined = rootOf(a);
     const out = confineOut(
       optStr(a, "out") ?? join(".leina", "graph.html"),
-      root,
+      confined,
       process.cwd(),
       process.env.LEINA_MCP_ALLOW_ROOTS,
     );
     const { runVisualizeToFile } = await import("./visualize.ts");
-    return runVisualizeToFile(root, { out, drilldown: a.drilldown === true });
+    return runVisualizeToFile(resolveGraphRoot(confined), { out, drilldown: a.drilldown === true });
   },
 };
 
@@ -525,7 +548,9 @@ const ROOT_PROP = {
   type: "string",
   description:
     "Project directory (default: server cwd). Must resolve, symlinks included, inside the " +
-    "server cwd; paths outside it are rejected unless allow-listed via LEINA_MCP_ALLOW_ROOTS.",
+    "server cwd; paths outside it are rejected unless allow-listed via LEINA_MCP_ALLOW_ROOTS. " +
+    "Graph and memory tools act on the project it belongs to (nearest leina project, else the " +
+    "git toplevel), like the CLI.",
 };
 
 /** Schema for a numeric arg: integer, with the same bounds intArg clamps to. */
@@ -785,7 +810,7 @@ export async function handleMcp(_rest: string[]): Promise<void> {
     }
     try {
       const args = (req.params.arguments ?? {}) as ToolArgs;
-      assertConsent(name, rootOf(args));
+      assertConsent(name, projectRootOf(args));
       const result = await executor(args);
       const text = COMPACT_TOOLS.has(name) ? JSON.stringify(result) : JSON.stringify(result, null, 2);
       return { content: [{ type: "text", text }] };
