@@ -194,6 +194,35 @@ test("(fed-get) get() finds observation from a member repo", () => {
   }
 });
 
+// Repositories are confined to their own project, so the federator — the one place that
+// legitimately reads across member projects — must route id-keyed anchor calls to the
+// member that owns the observation, and federate the node-keyed ones.
+test("(fed-anchors) anchor calls reach the member repo that owns the observation", () => {
+  const dir = tmpDir();
+  const dbPath = join(dir, "memory.db");
+  try {
+    const wsRepo = scopedRepo(dbPath, "ws-key");
+    const memberA = scopedRepo(dbPath, "svc-a");
+    try {
+      const { observation } = memberA.save({ title: "a", content: "c", type: "architecture", anchors: ["node/x"] });
+      const hostObs = wsRepo.save({ title: "h", content: "c", type: "architecture", anchors: ["node/x"] }).observation;
+      const federator = new WorkspaceMemoryFederator(wsRepo, [memberA]);
+
+      assert.equal(federator.anchorsForObservation(observation.id).length, 1, "member anchors visible");
+      assert.equal(federator.addAnchorsIfMissing(observation.id, [{ nodeId: "node/y" }]), 1, "write lands in the owner");
+      assert.equal(memberA.anchorsForObservation(observation.id).length, 2);
+
+      const recent = federator.recentAnchoredObservations("node/x", 10).map((r) => r.observationId).sort();
+      assert.deepEqual(recent, [hostObs.id, observation.id].sort(), "node-keyed reads federate");
+      assert.equal(federator.anchorsForNode("node/x").length, 2);
+    } finally {
+      wsRepo.close(); memberA.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // close() is a no-op
 // ---------------------------------------------------------------------------

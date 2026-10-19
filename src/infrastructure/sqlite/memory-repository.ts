@@ -637,9 +637,10 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     const ts = now ?? Date.now();
 
     // Read-check (inside the caller's transaction is fine; throws are caught by caller).
+    // Project-scoped like every id-keyed verb here: another project's id reads as absent.
     const existing = this.db
-      .prepare("SELECT * FROM observations WHERE id=?")
-      .get(id) as unknown as ObsRow | undefined;
+      .prepare("SELECT * FROM observations WHERE id=? AND project_key=?")
+      .get(id, this.projectKey) as unknown as ObsRow | undefined;
 
     if (!existing) {
       throw new Error(`no observation with id ${id}`);
@@ -666,9 +667,9 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       params.push(fields.type);
     }
 
-    params.push(id); // WHERE id=?
+    params.push(id, this.projectKey); // WHERE id=? AND project_key=?
     this.db
-      .prepare(`UPDATE observations SET ${sets.join(", ")} WHERE id=?`)
+      .prepare(`UPDATE observations SET ${sets.join(", ")} WHERE id=? AND project_key=?`)
       .run(...params);
 
     // Re-resolve anchors whenever the caller provides them — an anchors-only
@@ -704,16 +705,8 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     const nid = stripIdPrefix(id);
 
     // Read-check outside the transaction so error messages are clean.
-    const existing = this.db
-      .prepare("SELECT * FROM observations WHERE id=?")
-      .get(nid) as unknown as ObsRow | undefined;
-
-    if (!existing) {
-      throw new Error(`no observation with id ${nid}`);
-    }
-    if (existing.superseded_by !== null) {
-      throw new Error(`cannot update superseded snapshot ${nid}`);
-    }
+    const precheckError = this._updatableError(nid);
+    if (precheckError !== null) throw new Error(precheckError);
 
     this.db.exec("BEGIN");
     try {
@@ -820,12 +813,12 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     }
   }
 
-  // Pre-check (outside any transaction) that an observation exists and is live, for
-  // clean error messages — returns the error string, or null when updatable.
+  // Pre-check (outside any transaction) that an observation exists IN THIS PROJECT and is
+  // live, for clean error messages — returns the error string, or null when updatable.
   private _updatableError(id: string): string | null {
     const existing = this.db
-      .prepare("SELECT * FROM observations WHERE id=?")
-      .get(id) as unknown as ObsRow | undefined;
+      .prepare("SELECT * FROM observations WHERE id=? AND project_key=?")
+      .get(id, this.projectKey) as unknown as ObsRow | undefined;
     if (!existing) {
       return `no observation with id ${id}`;
     }
@@ -1111,10 +1104,14 @@ export class SQLiteMemoryRepository implements MemoryRepository {
 
   // ---- get ------------------------------------------------------------------
 
+  // Ids are unique across the GLOBAL memory.db, but a repository only ever answers for its
+  // own project: another project's id reads as absent (`memory get <dirQ> <id-of-P>` and
+  // MCP memory_get must not leak P's text). Cross-project reads go through
+  // WorkspaceMemoryFederator, which asks each member's own repository.
   get(id: string): Observation | undefined {
     const r = this.db
-      .prepare("SELECT * FROM observations WHERE id=?")
-      .get(stripIdPrefix(id)) as unknown as ObsRow | undefined;
+      .prepare("SELECT * FROM observations WHERE id=? AND project_key=?")
+      .get(stripIdPrefix(id), this.projectKey) as unknown as ObsRow | undefined;
     return r ? rowToObs(r) : undefined;
   }
 
@@ -1215,6 +1212,10 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   }
 
   // ---- anchors --------------------------------------------------------------
+  //
+  // memory_anchors has no project_key column: every anchor read/write is confined to this
+  // project through its observation (graph node ids such as a module path repeat across
+  // projects, and observation ids must not be usable to reach another project's rows).
 
   anchorsForNode(nodeId: string): {
     observationId: string;
@@ -1230,10 +1231,12 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     }
     const rows = this.db
       .prepare(
-        `SELECT observation_id, role, anchor_label, anchor_file
-           FROM memory_anchors WHERE node_id=?`,
+        `SELECT ma.observation_id, ma.role, ma.anchor_label, ma.anchor_file
+           FROM memory_anchors ma
+           JOIN observations o ON o.id = ma.observation_id
+          WHERE ma.node_id = ? AND o.project_key = ?`,
       )
-      .all(nodeId) as unknown as AnchorRow[];
+      .all(nodeId, this.projectKey) as unknown as AnchorRow[];
     return rows.map((r) => ({
       observationId: r.observation_id,
       role: r.role,
@@ -1261,10 +1264,12 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     }
     const rows = this.db
       .prepare(
-        `SELECT node_id, role, anchor_label, anchor_file, anchor_hash
-           FROM memory_anchors WHERE observation_id=?`,
+        `SELECT ma.node_id, ma.role, ma.anchor_label, ma.anchor_file, ma.anchor_hash
+           FROM memory_anchors ma
+           JOIN observations o ON o.id = ma.observation_id
+          WHERE ma.observation_id = ? AND o.project_key = ?`,
       )
-      .all(observationId) as unknown as AnchorRow[];
+      .all(observationId, this.projectKey) as unknown as AnchorRow[];
     return rows.map((r) => ({
       nodeId: r.node_id,
       role: r.role,
@@ -1296,11 +1301,11 @@ export class SQLiteMemoryRepository implements MemoryRepository {
         `SELECT ma.observation_id, ma.role, ma.anchor_label, ma.anchor_file, o.updated_at
            FROM memory_anchors ma
            JOIN observations o ON o.id = ma.observation_id
-          WHERE ma.node_id = ? AND o.superseded_by IS NULL
+          WHERE ma.node_id = ? AND o.project_key = ? AND o.superseded_by IS NULL
           ORDER BY o.updated_at DESC
           LIMIT ?`,
       )
-      .all(nodeId, limit) as unknown as Row[];
+      .all(nodeId, this.projectKey, limit) as unknown as Row[];
     return rows.map((r) => ({
       observationId: r.observation_id,
       role: r.role,
@@ -1315,7 +1320,8 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   // skipped rather than replaced. Anchors passed in are already resolved+verified by the
   // caller (application/memory/reanchor.ts) — this method never re-resolves labels itself.
   // Returns how many rows this call actually inserted (used to compute the "minted" count
-  // in reanchor's report without a second existence check).
+  // in reanchor's report without a second existence check). An observation outside this
+  // project gets nothing (0).
   addAnchorsIfMissing(
     observationId: string,
     anchors: {
@@ -1326,6 +1332,10 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       anchorHash?: string;
     }[],
   ): number {
+    const owned = this.db
+      .prepare("SELECT 1 FROM observations WHERE id=? AND project_key=?")
+      .get(observationId, this.projectKey);
+    if (owned === undefined) return 0;
     const stmt = this.db.prepare(
       `INSERT OR IGNORE INTO memory_anchors
          (observation_id, node_id, role, anchor_label, anchor_file, anchor_hash, created_at)

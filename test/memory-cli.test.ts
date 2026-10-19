@@ -347,3 +347,22 @@ test("(MC-anchors-3) update --batch: anchors-only item is applied (no silent no-
     assert.doesNotMatch(v.stdout, /old\.ts/, "old anchor no longer attached");
   });
 });
+
+test("(MC-scope-1) get/update in project Q never reach project P's observation by id", () => {
+  withEnv(({ env, dir }) => {
+    const other = mkdtempSync(join(tmpdir(), "leina-memcli-projq-"));
+    try {
+      const id = idFrom(runCli(["memory", "save", dir, "--title", "P only", "--content", "p secret"], { env }).stdout);
+
+      const get = runCli(["memory", "get", other, id], { env });
+      assert.match(get.stdout, /No observation found/);
+      assert.doesNotMatch(get.stdout, /p secret/);
+
+      const upd = runCli(["memory", "update", other, id, "--content", "hijacked"], { env });
+      assert.notEqual(upd.code, 0, "update of a foreign id fails");
+      assert.match(runCli(["memory", "get", dir, id], { env }).stdout, /p secret/, "P's row untouched");
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+});

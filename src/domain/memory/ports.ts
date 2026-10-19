@@ -103,7 +103,11 @@ export interface MemoryRepository {
 
   // ---- read ---------------------------------------------------------------
 
-  /** Look up an observation by id. Tolerates a leading "#" prefix. */
+  /**
+   * Look up an observation by id. Tolerates a leading "#" prefix. Like every id-keyed
+   * method here, it only answers for this repository's project: another project's id
+   * reads as absent (and `update` rejects it as unknown).
+   */
   get(id: string): Observation | undefined;
 
   /** Batch variant of `get`. */

@@ -278,3 +278,72 @@ test("(anchors-update-3) updateBatch with anchors-only items takes effect", () =
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// project confinement
+//
+// memory.db is ONE global file keyed by project_key. A repository scoped to project Q must
+// never read or write project P's rows by id, even when handed P's (exported, committed,
+// or guessed) observation id — through the CLI, MCP memory_get/memory_update, or batches.
+// ---------------------------------------------------------------------------
+
+function twoProjects(suffix: string): { p: MemoryStore; q: MemoryStore; dir: string } {
+  const dir = mkdtempSync(join(tmpdir(), `leina-store-${suffix}-`));
+  const path = join(dir, "memory.db");
+  return { p: new MemoryStore(path, "proj-p"), q: new MemoryStore(path, "proj-q"), dir };
+}
+
+test("(scope-1) get/getBatch never return another project's observation", () => {
+  const { p, q, dir } = twoProjects("scope1");
+  try {
+    const obs = p.save({ title: "P secret", content: "p only", type: "decision" }).observation;
+    assert.equal(q.get(obs.id), undefined, "Q cannot read P's row by id");
+    assert.equal(q.get(`#${obs.id}`), undefined, "nor via the '#' presentation form");
+    assert.deepEqual(q.getBatch([obs.id]), [{ ok: false, error: "not found" }]);
+    assert.equal(p.get(obs.id)?.content, "p only", "P still reads its own row");
+  } finally {
+    p.close(); q.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(scope-2) update/updateBatch cannot modify another project's observation", () => {
+  const { p, q, dir } = twoProjects("scope2");
+  try {
+    const obs = p.save({ title: "P", content: "original", type: "decision", anchors: ["src/p.ts"] }).observation;
+    assert.throws(() => q.update(obs.id, { content: "hijacked" }), /no observation with id/);
+    const nonAtomic = q.updateBatch([{ id: obs.id, fields: { content: "hijacked" } }]);
+    assert.deepEqual(nonAtomic, [{ ok: false, error: `no observation with id ${obs.id}` }]);
+    const atomic = q.updateBatch([{ id: obs.id, fields: { content: "hijacked", anchors: [] } }], { atomic: true });
+    assert.equal(atomic[0]!.ok, false, "atomic batch rejects the foreign id too");
+
+    const after = p.get(obs.id)!;
+    assert.equal(after.content, "original", "P's content untouched");
+    assert.equal(p.anchorsForObservation(obs.id).length, 1, "P's anchors untouched");
+  } finally {
+    p.close(); q.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(scope-3) anchor reads and writes are confined to the repository's project", () => {
+  const { p, q, dir } = twoProjects("scope3");
+  try {
+    const obs = p.save({ title: "P", content: "c", type: "architecture", anchors: ["shared/node"] }).observation;
+    q.save({ title: "Q", content: "c", type: "architecture", anchors: ["shared/node"] });
+
+    assert.deepEqual(q.anchorsForObservation(obs.id), [], "Q sees no anchors of P's observation");
+    assert.equal(q.addAnchorsIfMissing(obs.id, [{ nodeId: "planted" }]), 0, "Q cannot add anchors to P's row");
+    assert.equal(p.anchorsForObservation(obs.id).length, 1, "P's anchors unchanged");
+
+    // Same graph node id in both projects: each side only sees its own observations.
+    const qRecent = q.recentAnchoredObservations("shared/node", 10);
+    assert.equal(qRecent.length, 1);
+    assert.notEqual(qRecent[0]!.observationId, obs.id);
+    assert.ok(q.anchorsForNode("shared/node").every((a) => a.observationId !== obs.id));
+    assert.deepEqual(p.recentAnchoredObservations("shared/node", 10).map((r) => r.observationId), [obs.id]);
+  } finally {
+    p.close(); q.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -1,7 +1,8 @@
 // application/workspace/federation.ts
 // WorkspaceMemoryFederator: presents a virtual MemoryRepository view that
 // aggregates search/read across multiple per-member-repo memory scopes within
-// the same global memory.db. Writes always go to a single designated "host" repo.
+// the same global memory.db. Writes go to a single designated "host" repo, except
+// anchor additions, which target an existing observation and so go to its owner.
 //
 // Design: memory.db is a single global store keyed by projectKey.
 // A workspace has members each with their own projectKey.
@@ -191,7 +192,16 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     return this.hostRepo.saveSession(summary, opts);
   }
 
-  // ---- Anchors → delegate to host (anchors stored with host projectKey) ---
+  // ---- Anchors -------------------------------------------------------------
+  //
+  // Each repository only answers for its own project (an id from another project reads
+  // as absent), so this federator is the explicit cross-project path: id-keyed calls go
+  // to the member that OWNS the observation, node-keyed reads merge every member.
+
+  // The repo whose project owns `observationId`, host first; undefined when none does.
+  private ownerOf(observationId: string): MemoryRepository | undefined {
+    return this.allRepos.find((r) => r.get(observationId) !== undefined);
+  }
 
   anchorsForNode(nodeId: string): {
     observationId: string;
@@ -199,7 +209,7 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     anchorLabel?: string;
     anchorFile?: string;
   }[] {
-    return this.hostRepo.anchorsForNode(nodeId);
+    return this.allRepos.flatMap((r) => r.anchorsForNode(nodeId));
   }
 
   anchorsForObservation(observationId: string): {
@@ -209,7 +219,7 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     anchorFile?: string;
     anchorHash?: string;
   }[] {
-    return this.hostRepo.anchorsForObservation(observationId);
+    return this.ownerOf(observationId)?.anchorsForObservation(observationId) ?? [];
   }
 
   recentAnchoredObservations(nodeId: string, limit: number): {
@@ -219,14 +229,17 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
     anchorFile?: string;
     updatedAt: number;
   }[] {
-    return this.hostRepo.recentAnchoredObservations(nodeId, limit);
+    return this.allRepos
+      .flatMap((r) => r.recentAnchoredObservations(nodeId, limit))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, limit);
   }
 
   addAnchorsIfMissing(
     observationId: string,
     anchors: Parameters<MemoryRepository["addAnchorsIfMissing"]>[1],
   ): number {
-    return this.hostRepo.addAnchorsIfMissing(observationId, anchors);
+    return this.ownerOf(observationId)?.addAnchorsIfMissing(observationId, anchors) ?? 0;
   }
 
   // ---- Topic suggestion → host repo ---------------------------------------
