@@ -10,13 +10,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { claudeHooksJson, removeClaudeHooks } from "../src/application/install/claude-hooks.ts";
-import { parseAgentHookArgs, resolveHookProjectRoot } from "../src/cli/agent-gate.ts";
+import { CLAUDE_PRE_TOOL_MATCHER, claudeHooksJson, removeClaudeHooks } from "../src/application/install/claude-hooks.ts";
+import { HARNESS_BASH_TOOLS, HARNESS_EDIT_TOOLS, parseAgentHookArgs, resolveHookProjectRoot } from "../src/cli/agent-gate.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
 const cliBase = { command: "/usr/bin/node", args: ["/pkg/dist/cli/index.js"] };
 
-test("(ch-1) writer registers the four managed events, idempotently, preserving foreign hooks", () => {
+test("(ch-1) writer registers the five managed events, idempotently, preserving foreign hooks", () => {
   const existing = JSON.stringify({
     hooks: { SessionStart: [{ hooks: [{ type: "command", command: "other-tool warmup" }] }] },
     permissions: { allow: ["Bash(ls:*)"] },
@@ -24,7 +24,7 @@ test("(ch-1) writer registers the four managed events, idempotently, preserving 
   const merged = claudeHooksJson(cliBase, existing)!;
   const cfg = JSON.parse(merged);
 
-  for (const ev of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
+  for (const ev of ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]) {
     const entries = cfg.hooks[ev];
     assert.ok(Array.isArray(entries), `${ev} registered`);
     const ours = entries.flatMap((e: { hooks: { command: string }[] }) => e.hooks).filter((h: { command: string }) => h.command.includes(" agent-hook "));
@@ -125,6 +125,44 @@ test("(ch-4) e2e: init --claude-hooks wires the repo; a Claude-shaped Bash paylo
     assert.equal(run(["deinit", "--project", dir]).status, 0);
     const after = readFileSync(join(dir, ".claude", "settings.json"), "utf8");
     assert.ok(!after.includes("agent-hook"), "managed entries stripped");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(ch-5) PreToolUse is wired for every tool the harness enforcement branch acts on", () => {
+  const cfg = JSON.parse(claudeHooksJson(cliBase, null)!);
+  const pre = cfg.hooks.PreToolUse.at(-1) as { matcher: string; hooks: { command: string }[] };
+  assert.equal(pre.matcher, CLAUDE_PRE_TOOL_MATCHER);
+  assert.match(pre.hooks[0]!.command, / agent-hook PreToolUse --host claude$/);
+  const listed = new Set(pre.matcher.split("|"));
+  // Claude Code tool names are capitalized; Devin's lowercase names never reach this file.
+  for (const tool of [...HARNESS_EDIT_TOOLS, ...HARNESS_BASH_TOOLS].filter((t) => /^[A-Z]/.test(t))) {
+    assert.ok(listed.has(tool), `${tool} reaches the harness gate`);
+  }
+});
+
+test("(ch-6) e2e: in a trusted Claude-wired repo the PreToolUse hook refuses an Edit of the harness config", () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-ch-home-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-ch-proj-"));
+  const env = { ...process.env, LEINA_HOME: join(home, ".leina"), HOME: home, USERPROFILE: home, CLAUDE_PROJECT_DIR: dir };
+  const run = (args: string[], input?: string) =>
+    spawnSync(process.execPath, ["--no-warnings", "--experimental-strip-types", CLI, ...args], {
+      encoding: "utf8", env, cwd: dir, input,
+    });
+  try {
+    assert.equal(run(["init", "--project", dir, "--hosts", "claude", "--profile", "devin"]).status, 0);
+    const payload = (file: string) => JSON.stringify({
+      hook_event_name: "PreToolUse",
+      tool_name: "Edit",
+      tool_input: { file_path: join(dir, file), old_string: "a", new_string: "b" },
+    });
+    const sealed = run(["agent-hook", "PreToolUse", "--host", "claude"], payload(".harness/config.json"));
+    assert.equal(sealed.status, 2, "the integrity seal blocks (exit 2)");
+    assert.match(sealed.stderr, /BLOCKED/);
+    const plain = run(["agent-hook", "PreToolUse", "--host", "claude"], payload("src/a.ts"));
+    assert.equal(plain.status, 0, "an ordinary edit passes");
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });

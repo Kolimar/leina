@@ -18,12 +18,22 @@ import { agentHookCommand, type HookScope, parseManagedHookCommand } from "./hoo
 /** Token every managed gate command carries — a cheap "is there leina wiring here?" probe. */
 export const AGENT_HOOK_MARK = " agent-hook ";
 
+/**
+ * The Claude Code tools the harness enforcement branch acts on (agent-gate.ts
+ * HARNESS_EDIT_TOOLS / HARNESS_BASH_TOOLS): the integrity seal, the contract scope and the
+ * commit guard only run when Claude Code fires PreToolUse for them. `Bash` also carries the
+ * advisory (git commit, grep). An exact-name list — Claude Code matches `|`-separated names
+ * literally.
+ */
+export const CLAUDE_PRE_TOOL_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
+
 /** Gate events registered for Claude Code, with each event's tool matcher. */
 const MANAGED_EVENTS: { event: string; matcher?: string }[] = [
   // startup|resume|clear|compact: context injection. Claude Code's `compact` source re-fires
   // SessionStart, covering what Devin models as PostCompaction.
   { event: "SessionStart" },
   { event: "UserPromptSubmit" },
+  { event: "PreToolUse", matcher: CLAUDE_PRE_TOOL_MATCHER },
   // The gate reacts to shell commands (memory markers) and native search (nudge).
   { event: "PostToolUse", matcher: "Bash|Grep|Read|Glob" },
   { event: "Stop" },

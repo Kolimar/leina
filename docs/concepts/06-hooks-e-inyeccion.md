@@ -22,7 +22,7 @@ writers, and a single gate holds the decision logic.
 | `SessionStart` | (all) | clears the markers and **injects** memory + graph stats |
 | `PostCompaction` | (all) | re-injects the context after a compaction |
 | `UserPromptSubmit` | (all) | on the first turn, injects context if it hasn't loaded yet |
-| `PreToolUse` | `edit\|write\|exec` | advisory tip (e.g. before `git commit` or `grep`) |
+| `PreToolUse` | Devin `edit\|write\|exec`, `grep\|glob`; Claude Code `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash` | advisory tip (e.g. before `git commit` or `grep`); in a trusted workspace, the harness integrity seal, contract scope and commit guard |
 | `PostToolUse` | `edit\|write` → `refresh`; `exec` → gate | refreshes the graph; detects memory load/save |
 | `Stop` | (all) | reminds you to persist the session if it wasn't saved |
 

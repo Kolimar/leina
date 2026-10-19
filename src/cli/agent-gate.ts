@@ -588,8 +588,8 @@ export function hasActiveHarnessContract(cwd: string): boolean {
 // NotebookEdit/Bash). Deliberately NOT added to HOST_TOOL_ALIASES: that map
 // feeds the ADVISORY decision, and widening it would change advisory behaviour
 // in guided repos without a contract — forbidden by the invariant above.
-const HARNESS_EDIT_TOOLS = new Set(["edit", "write", "Edit", "Write", "MultiEdit", "NotebookEdit"]);
-const HARNESS_BASH_TOOLS = new Set(["exec", "Bash"]);
+export const HARNESS_EDIT_TOOLS: ReadonlySet<string> = new Set(["edit", "write", "Edit", "Write", "MultiEdit", "NotebookEdit"]);
+export const HARNESS_BASH_TOOLS: ReadonlySet<string> = new Set(["exec", "Bash"]);
 /** Events the enforcement branch acts on besides PreToolUse. */
 const HARNESS_EVENTS = new Set(["Stop", "UserPromptSubmit", "SessionStart"]);
 

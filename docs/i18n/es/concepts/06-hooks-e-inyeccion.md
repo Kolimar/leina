@@ -21,7 +21,7 @@ escribe `init` (FULL).
 | `SessionStart` | (todos) | borra los markers e **inyecta** memoria + stats del grafo |
 | `PostCompaction` | (todos) | re-inyecta el contexto tras una compactación |
 | `UserPromptSubmit` | (todos) | en el primer turno, inyecta contexto si aún no se cargó |
-| `PreToolUse` | `edit\|write\|exec` | consejo advisory (p. ej. ante `git commit` o `grep`) |
+| `PreToolUse` | Devin `edit\|write\|exec`, `grep\|glob`; Claude Code `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash` | consejo advisory (p. ej. ante `git commit` o `grep`); en un workspace de confianza, el sello de integridad, el scope del contract y el guard de commit del harness |
 | `PostToolUse` | `edit\|write` → `refresh`; `exec` → gate | refresca el grafo; detecta carga/guardado de memoria |
 | `Stop` | (todos) | recuerda persistir la sesión si no se guardó |
 
