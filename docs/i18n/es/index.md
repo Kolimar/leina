@@ -298,8 +298,12 @@ conectar cualquier otro host.**
 Store global en `~/.leina/.env` (0600, texto plano). Contrato NOMBRES-NO-VALORES: un
 agente de IA solo maneja nombres de variables — los valores entran vía prompt de TTY
 oculto (o stdin para scripts), los listados quedan enmascarados, `--reveal` requiere una
-terminal real, y `env exec` inyecta valores proceso a proceso para que una skill llame a
-un servicio autenticado sin que la credencial entre nunca al contexto del modelo.
+terminal interactiva (un chequeo de TTY — frena la captura accidental por pipes, no a un
+runner de agentes que asigna una PTY; por eso los agentes no deben correr `--reveal`
+jamás), y `env exec` inyecta valores proceso a proceso para que una skill llame a un
+servicio autenticado sin que la credencial entre al contexto del modelo — siempre que el
+comando hijo no la imprima (nada de `curl -v`; ver la sección de riesgos residuales de la
+skill `authenticated-api`).
 
 ```bash
 leina env set MY_SERVICE_TOKEN        # prompts (hidden); or: echo "$V" | ... env set KEY

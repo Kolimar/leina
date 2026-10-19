@@ -47,6 +47,25 @@ your task.
    process-to-process into the child command; `--only` limits the injection to the one
    variable the task needs (never inject the whole store).
 
+## Residual risks — the contract's honest limits (READ BEFORE USING)
+
+The names-not-values contract keeps the value out of leina's argv, logs, and listings.
+Two doors remain open, and both are YOURS to keep closed:
+
+1. **`--reveal` trusts `isTTY`, and `isTTY` is not proof of a human.** The check refuses
+   piped stdout, but an agent runner that allocates a pseudo-terminal (node-pty is common
+   in agent harnesses) makes `process.stdout.isTTY === true` — a `--reveal` executed by
+   an agent inside such a PTY prints the plain value straight into the agent's context.
+   Rule: **never run `env get --reveal` yourself, PTY or not.** It exists for the human's
+   own terminal; there is no legitimate agent use of `--reveal`.
+2. **`env exec` inherits the terminal — the child's output IS model context.** The value
+   travels process-to-process, but anything the child *prints* comes back into the
+   conversation: `curl -v`/`--trace` prints the `Authorization:` header, a crashing tool
+   may dump its environment, `env exec -- env` prints everything. Rule: keep child output
+   minimal (`curl -sf`, never `-v`), never run commands that echo their environment, and
+   if a secret does surface in output, treat it as a leak to report to the human — not
+   something to quietly ignore.
+
 ## GET pattern (tier 1 — expansion in the child shell)
 
 **Single quotes** are the key: your shell does not expand `$SONAR_TOKEN` (it does not

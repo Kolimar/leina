@@ -285,9 +285,12 @@ other host.**
 
 Global store at `~/.leina/.env` (0600, plain text). NAMES-NOT-VALUES contract: an AI
 agent only ever handles variable names — values enter via hidden TTY prompt (or piped
-stdin for scripts), listings are masked, `--reveal` requires a real terminal, and
-`env exec` injects values process-to-process so a skill can call an authenticated service
-without the credential ever entering the model context.
+stdin for scripts), listings are masked, `--reveal` requires an interactive terminal (a
+TTY check — it stops accidental capture via pipes, not an agent runner that allocates a
+PTY, which is why agents must never run `--reveal`), and `env exec` injects values
+process-to-process so a skill can call an authenticated service without the credential
+entering the model context — as long as the child command does not print it (no
+`curl -v`; see the `authenticated-api` skill's residual-risks section).
 
 ```bash
 leina env set MY_SERVICE_TOKEN        # prompts (hidden); or: echo "$V" | ... env set KEY

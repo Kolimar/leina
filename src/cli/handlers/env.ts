@@ -5,14 +5,22 @@
 //                          (scripts). NEVER via argv: argv lands in shell history and
 //                          agent transcripts.
 //   env list               names + masked values only.
-//   env get KEY [--reveal] masked by default; --reveal requires a real TTY on stdout, so
-//                          a driving agent cannot capture the plain value by piping.
+//   env get KEY [--reveal] masked by default; --reveal requires a TTY on stdout, so a
+//                          driving agent cannot capture the plain value by PIPING.
+//                          Honest limit: isTTY is not proof of a human — see envGet.
 //   env unset KEY          remove.
 //   env exec [--only A,B] -- <cmd...>
 //                          run <cmd> with the stored variables injected into its
 //                          environment. This is how a skill calls an authenticated
 //                          service without ever seeing the credential: the secret
 //                          travels process-to-process, not through the model context.
+//                          Honest limit: the CHILD's output is not covered — see envExec.
+//
+// What the contract does and does not guarantee: the value never touches leina's own
+// argv, logs, or listings. It does NOT make the value unreachable from a determined
+// agent's session (PTY-backed --reveal, or a child that prints it) — those residual
+// risks are documented inline below and, for the consumer, in
+// assets/skills/authenticated-api/SKILL.md ("Residual risks").
 
 import { spawnSync } from "node:child_process";
 import {
@@ -107,6 +115,14 @@ function envGet(key: string, reveal: boolean): void {
   }
   // Reveal only onto a real terminal: piping `env get --reveal` into a file/capture is
   // exactly the leak the names-not-values contract exists to prevent.
+  //
+  // HONEST LIMIT: isTTY is the best local signal we have, but it is NOT proof of a
+  // human. Agent runners that allocate a pseudo-terminal (node-pty and friends) present
+  // isTTY === true, so a --reveal executed BY the agent inside such a PTY prints the
+  // plain value straight into the agent's context. This gate stops accidental capture
+  // (pipes, redirects), not a driving agent with a PTY. Changing the flow (confirmation
+  // prompt on the controlling terminal, etc.) is a separate debate — for now the
+  // authenticated-api skill instructs agents to never run --reveal at all.
   if (!process.stdout.isTTY) {
     fail(`--reveal requires an interactive terminal (stdout is piped). Use 'leina env exec' to consume the value.`);
   }
@@ -145,6 +161,13 @@ function envExec(rest: string[]): void {
   }
   const childEnv = { ...process.env };
   for (const e of entries) childEnv[e.key] = e.value;
+  // stdio:"inherit" — the child's stdout/stderr go to the caller's terminal, and in an
+  // agent session that terminal IS the model context. The names-not-values contract
+  // covers leina's own surfaces (argv, logs, listings); it ends at the child's output:
+  // a child that PRINTS the secret (curl -v tracing the Authorization header, a crash
+  // dumping its environment, a plain `env`) leaks it into the transcript. The safe
+  // consumption patterns (-sf, no -v, never echo the environment) live in
+  // assets/skills/authenticated-api/SKILL.md ("Residual risks").
   const r = spawnSync(cmd[0]!, cmd.slice(1), { stdio: "inherit", env: childEnv });
   if (r.error) fail(`env exec: ${r.error.message}`);
   process.exit(r.status ?? 1);
