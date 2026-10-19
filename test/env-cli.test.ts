@@ -93,6 +93,24 @@ test("(envs-4) invalid names and multi-line values are rejected", () => {
   assert.throws(() => upsertEnvVar(null, "A", "x\ny"), /single-line/);
 });
 
+test("(envs-5) unset/set match every line the parser reads as KEY (hand-edited spacing)", () => {
+  const edited = "# keep me: TOKEN=not-a-var\n  TOKEN =secret\nB=2\n";
+  assert.deepEqual(parseEnvFile(edited), [{ key: "TOKEN", value: "secret" }, { key: "B", value: "2" }]);
+
+  assert.equal(removeEnvVar(edited, "TOKEN"), "# keep me: TOKEN=not-a-var\nB=2\n", "the spaced line is removed, the comment kept");
+
+  const replaced = upsertEnvVar(edited, "TOKEN", "fresh");
+  assert.deepEqual(parseEnvFile(replaced), [{ key: "TOKEN", value: "fresh" }, { key: "B", value: "2" }], "replaced in place, not appended");
+  assert.match(replaced, /# keep me: TOKEN=not-a-var/);
+});
+
+test("(envs-6) duplicate keys: one value everywhere, collapsed on write, all removed on unset", () => {
+  const dup = "A=1\nB=2\nA=3\n";
+  assert.deepEqual(parseEnvFile(dup), [{ key: "A", value: "3" }, { key: "B", value: "2" }], "last wins, listed once");
+  assert.equal(upsertEnvVar(dup, "A", "9"), "A=9\nB=2\n", "set collapses the duplicates");
+  assert.equal(removeEnvVar(dup, "A"), "B=2\n", "unset removes every occurrence");
+});
+
 // ---------------------------------------------------------------------------
 // (envc-*) CLI end-to-end (piped stdin path)
 // ---------------------------------------------------------------------------
@@ -158,6 +176,28 @@ test("(envc-3) exec injects the stored values into the child process only", () =
     // child exit code propagates
     const failCmd = runEnv(env, ["exec", "--", process.execPath, "-e", "process.exit(3)"]);
     assert.equal(failCmd.status, 3);
+  } finally {
+    cleanup();
+  }
+});
+
+test("(envc-5) unset/set on a hand-edited 'TOKEN =value' line: removed for real; get and exec agree", () => {
+  const { env, home, cleanup } = makeSandbox();
+  try {
+    const envFile = join(home, ".leina", ".env");
+    runEnv(env, ["set", "OTHER"], "x\n");
+    writeFileSync(envFile, `${readFileSync(envFile, "utf8")}TOKEN =old-secret\nTOKEN=shadow\n`, { mode: 0o600 });
+
+    const set = runEnv(env, ["set", "TOKEN"], "new-secret\n");
+    assert.equal(set.status, 0, set.stderr);
+    assert.equal(readFileSync(envFile, "utf8").match(/TOKEN/g)?.length, 1, "a single TOKEN line remains");
+    const r = runEnv(env, ["exec", "--only", "TOKEN", "--", process.execPath, "-e", "console.log(process.env.TOKEN)"]);
+    assert.match(r.stdout, /new-secret/);
+
+    const unset = runEnv(env, ["unset", "TOKEN"]);
+    assert.match(unset.stdout, /TOKEN removed/);
+    assert.doesNotMatch(readFileSync(envFile, "utf8"), /TOKEN/);
+    assert.match(runEnv(env, ["get", "TOKEN"]).stderr, /not set/);
   } finally {
     cleanup();
   }

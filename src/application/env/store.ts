@@ -11,7 +11,10 @@
 //
 // File format: `KEY=value` lines, one per variable, single-line values, `#` comments and
 // blank lines preserved verbatim on rewrite. Values are stored raw after the first `=`
-// (a surrounding quote pair is stripped on parse for dotenv compatibility).
+// (a surrounding quote pair is stripped on parse for dotenv compatibility). A hand-edited
+// file may space the key (`TOKEN =x`) or repeat it: every verb identifies a line by the
+// SAME parsed key (lineKey), a repeated key resolves to its last value (dotenv/shell
+// semantics), and `set` collapses the repeats into one line.
 
 export interface EnvEntry {
   key: string;
@@ -21,28 +24,46 @@ export interface EnvEntry {
 /** KEY validation: conventional environment variable names. */
 export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+// The variable a line assigns, exactly as parseEnvFile reads it; null for comments,
+// blanks and lines it skips.
+function lineKey(line: string): string | null {
+  const t = line.trim();
+  if (t === "" || t.startsWith("#")) return null;
+  const eq = t.indexOf("=");
+  if (eq <= 0) return null;
+  const key = t.slice(0, eq).trim();
+  return ENV_KEY_RE.test(key) ? key : null;
+}
+
 export function parseEnvFile(content: string | null): EnvEntry[] {
   if (content === null) return [];
   const out: EnvEntry[] = [];
+  const at = new Map<string, number>();
   for (const line of content.split("\n")) {
+    const key = lineKey(line);
+    if (key === null) continue;
     const t = line.trim();
-    if (t === "" || t.startsWith("#")) continue;
-    const eq = t.indexOf("=");
-    if (eq <= 0) continue;
-    const key = t.slice(0, eq).trim();
-    if (!ENV_KEY_RE.test(key)) continue;
-    let value = t.slice(eq + 1);
+    let value = t.slice(t.indexOf("=") + 1);
     if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
       value = value.slice(1, -1);
     }
-    out.push({ key, value });
+    // A repeated key keeps its first position but takes the last value, so `get`,
+    // `list` and `exec` all agree on one value.
+    const prev = at.get(key);
+    if (prev === undefined) {
+      at.set(key, out.length);
+      out.push({ key, value });
+    } else {
+      out[prev] = { key, value };
+    }
   }
   return out;
 }
 
 /**
  * Upsert KEY=value into the file content, preserving comments, blank lines and unknown
- * lines verbatim. Returns the new content. Idempotent for identical (key, value).
+ * lines verbatim. The first line assigning KEY is replaced; any later repeat is dropped.
+ * Returns the new content. Idempotent for identical (key, value).
  */
 export function upsertEnvVar(content: string | null, key: string, value: string): string {
   if (!ENV_KEY_RE.test(key)) throw new Error(`invalid variable name "${key}"`);
@@ -50,14 +71,15 @@ export function upsertEnvVar(content: string | null, key: string, value: string)
   const line = `${key}=${value}`;
   const lines = (content ?? "").split("\n");
   let replaced = false;
-  const next = lines.map((l) => {
-    const t = l.trim();
-    if (!replaced && !t.startsWith("#") && t.startsWith(`${key}=`)) {
+  const next: string[] = [];
+  for (const l of lines) {
+    if (lineKey(l) !== key) {
+      next.push(l);
+    } else if (!replaced) {
       replaced = true;
-      return line;
+      next.push(line);
     }
-    return l;
-  });
+  }
   if (!replaced) {
     // Drop a single trailing blank line so appends stay tidy.
     while (next.length > 0 && next[next.length - 1] === "") next.pop();
@@ -69,14 +91,13 @@ export function upsertEnvVar(content: string | null, key: string, value: string)
   return next.join("\n") + (next[next.length - 1] === "" ? "" : "\n");
 }
 
-/** Remove KEY from the content (comments/unknown lines preserved). Null when absent. */
+/**
+ * Remove every line assigning KEY (comments/unknown lines preserved). Null when absent.
+ */
 export function removeEnvVar(content: string | null, key: string): string | null {
   if (content === null) return null;
   const lines = content.split("\n");
-  const next = lines.filter((l) => {
-    const t = l.trim();
-    return t.startsWith("#") || !t.startsWith(`${key}=`);
-  });
+  const next = lines.filter((l) => lineKey(l) !== key);
   return next.length === lines.length ? null : next.join("\n");
 }
 
