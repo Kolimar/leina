@@ -17,7 +17,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { openFreshStoreOrThrow, openWorkspaceFreshStore } from "../wiring.ts";
+import { awaitGraphBuild, openFreshStoreOrThrow, openWorkspaceFreshStore } from "../wiring.ts";
 import { detectWorkspaceMode } from "../../application/project/detect-key.ts";
 import { entryAssetsRootFrom } from "../../infrastructure/install/global.ts";
 import {
@@ -141,6 +141,9 @@ export async function runVisualizeToFile(
   }
 
   // SINGLE-REPO: comportamiento clásico (auto-rebuild si stale + postura auto).
+  // Un build de este root en curso en el mismo proceso (MCP graph_build) crea graph.db
+  // antes de commitear: esperarlo para que el chequeo de existencia vea su resultado.
+  await awaitGraphBuild(root);
   const p = join(root, ".leina", "graph.db");
   if (!existsSync(p)) throw new Error(`No graph at ${p}. Run: leina build ${root}`);
   // Throwing gate, never openFreshStore: its fail() would process.exit the MCP server.

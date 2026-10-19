@@ -550,6 +550,32 @@ test("(mcps-13) out-of-range numeric args are clamped, never a SQL datatype erro
   }
 });
 
+test("(mcps-14) graph_stats issued alongside a first graph_build waits for it (never nodes:0)", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home14-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo14-"));
+  const env = sandboxEnv(home);
+  try {
+    writeFileSync(join(dir, "a.ts"), "export function greet(): string { return callee(); }\nexport function callee(): string { return \"hi\"; }\n");
+    const responses = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "graph_build", arguments: { root: dir } } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "graph_stats", arguments: { root: dir } } },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "graph_build", arguments: { root: dir } } },
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+    const built = JSON.parse(byId.get(2)?.result?.content?.[0]?.text ?? "{}") as { nodes?: number; timings?: unknown };
+    const stats = JSON.parse(byId.get(3)?.result?.content?.[0]?.text ?? "{}") as { nodes?: number };
+    const again = JSON.parse(byId.get(4)?.result?.content?.[0]?.text ?? "{}") as { nodes?: number; timings?: unknown };
+    assert.ok((built.nodes ?? 0) > 0, `build produced nodes: ${byId.get(2)?.result?.content?.[0]?.text}`);
+    assert.equal(stats.nodes, built.nodes, "stats reads the committed graph, not the empty in-flight one");
+    assert.deepEqual(again, built, "the concurrent second graph_build joined the first (same report)");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(mcps-6) harness tools: parseable schemas and contract new → show → verify → list → end over stdio", async () => {
   const home = mkdtempSync(join(tmpdir(), "leina-mcp-home6-"));
   const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo6-"));

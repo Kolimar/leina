@@ -28,6 +28,8 @@ import type { NodeVerifier } from "../application/memory/query.ts";
 import type { EventSink } from "../domain/events/sink.ts";
 import type { EventStore } from "../domain/events/store.ts";
 import type { GraphExtractor } from "../domain/graph/extractor.ts";
+// Type-only (erased at runtime): build.ts itself stays lazy-imported in buildGraphShared.
+import type { BuildReport } from "../application/graph/build.ts";
 import { readPackageVersion } from "../version.ts";
 
 export function graphDbPath(root: string): string {
@@ -136,6 +138,10 @@ export async function openFreshStoreOrThrow(
   root: string,
   opts: { buildIfMissing?: boolean } = {},
 ): Promise<GraphRepository> {
+  // A build already running in THIS process (a concurrent MCP call) is about to replace
+  // the graph — and on a first build the db is empty until it commits. Wait for it, then
+  // gate on what it produced.
+  await awaitGraphBuild(root);
   const p = graphDbPath(root);
   const missing = !existsSync(p);
   if (missing && !opts.buildIfMissing) {
@@ -157,17 +163,58 @@ export async function openFreshStoreOrThrow(
       );
     }
     // auto: rebuild then serve. Writer and reader never coexist (build, close, reopen).
-    process.stderr.write(`leina: graph stale (${s.reason}); rebuilding ...\n`);
+    // Concurrent stale callers in this process share one rebuild (single-flight).
+    process.stderr.write(
+      isGraphBuildInFlight(root)
+        ? `leina: graph stale (${s.reason}); waiting for the in-flight rebuild ...\n`
+        : `leina: graph stale (${s.reason}); rebuilding ...\n`,
+    );
+    await buildGraphShared(root);
+    return openGraphRepo(root);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// In-process single-flight for graph builds. A long-lived process — the MCP server runs
+// tool calls concurrently — would otherwise start one full rebuild per call that finds
+// the graph stale, and a reader racing a FIRST build would read the empty,
+// not-yet-committed db (graph_stats → nodes: 0). Builds are keyed by resolved root:
+// concurrent callers share the in-flight promise, and readers can wait for it
+// (awaitGraphBuild). In-process only — cross-process coordination stays with the CLI's
+// foreground build lock (background-build.ts) and SQLite's own locking.
+// ---------------------------------------------------------------------------
+
+const inflightBuilds = new Map<string, Promise<BuildReport>>();
+
+function isGraphBuildInFlight(root: string): boolean {
+  return inflightBuilds.has(resolvePath(root));
+}
+
+/**
+ * Build the graph for `root`, or join the build already running for it in this process.
+ * The extractor stack is lazy-imported here, so the read path never loads it.
+ */
+export function buildGraphShared(root: string): Promise<BuildReport> {
+  const key = resolvePath(root);
+  const running = inflightBuilds.get(key);
+  if (running) return running;
+  const build = (async () => {
     const { buildGraph } = await import("../application/graph/build.ts");
     const registry = await buildDefaultRegistry();
     const w = openGraphRepo(root);
     try {
-      await buildGraph(root, w, registry);
+      return await buildGraph(root, w, registry);
     } finally {
       w.close();
     }
-    return openGraphRepo(root);
-  });
+  })().finally(() => inflightBuilds.delete(key));
+  inflightBuilds.set(key, build);
+  return build;
+}
+
+/** Resolve once no build of `root` is running in this process (its outcome is the builder's to report). */
+export async function awaitGraphBuild(root: string): Promise<void> {
+  await inflightBuilds.get(resolvePath(root))?.catch(() => undefined);
 }
 
 export async function openFreshStore(root: string): Promise<GraphRepository> {

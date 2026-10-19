@@ -36,7 +36,13 @@ import { runAudit } from "../../application/audit/run.ts";
 import type { ObservationInput, ObservationType, UpdateFields } from "../../domain/memory/model.ts";
 import { readConsentFlag } from "../../application/install/consent.ts";
 import { isWorkspaceTrusted } from "../../application/install/trust.ts";
-import { openFreshStoreOrThrow, openGraphRepo, memOpenOrThrow, buildDefaultRegistry } from "../wiring.ts";
+import {
+  awaitGraphBuild,
+  buildGraphShared,
+  memOpenOrThrow,
+  openFreshStoreOrThrow,
+  openGraphRepo,
+} from "../wiring.ts";
 import { runDoctor } from "../doctor.ts";
 import { readPackageVersion } from "../../version.ts";
 
@@ -294,7 +300,11 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       return { path: shortestPath(s, from.id, to.id) };
     }),
   graph_stats: async (a) => {
-    const s = openGraphRepo(rootOf(a));
+    // Ungated read, but never of a graph another call in this process is still building
+    // (a first build's db is empty until it commits).
+    const root = rootOf(a);
+    await awaitGraphBuild(root);
+    const s = openGraphRepo(root);
     try {
       return s.stats();
     } finally {
@@ -302,17 +312,10 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
     }
   },
   graph_status: (a) => graphStatus(rootOf(a)),
-  graph_build: async (a) => {
-    // Heavy path: lazy-import the extractor stack exactly like the CLI does.
-    const { buildGraph } = await import("../../application/graph/build.ts");
-    const store = openGraphRepo(rootOf(a));
-    try {
-      const registry = await buildDefaultRegistry();
-      return await buildGraph(rootOf(a), store, registry);
-    } finally {
-      store.close();
-    }
-  },
+  // Single-flight: a graph_build issued while another build of the same root runs in
+  // this server (graph_build or a stale-gate rebuild) joins it instead of racing it.
+  // buildGraphShared lazy-imports the extractor stack exactly like the CLI does.
+  graph_build: async (a) => buildGraphShared(rootOf(a)),
   impact_analyze: async (a) =>
     withFreshStore(rootOf(a), (s) => {
       // Same seed resolution as the CLI (label/file → node id); analyzeImpact alone
