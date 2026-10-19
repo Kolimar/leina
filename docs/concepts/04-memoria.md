@@ -46,6 +46,15 @@ If the `cwd` is not a git repo and there are **several** child repos, an
 `AmbiguousProjectError` is thrown: you need to fix the name with `leina init --name <name>`
 (which writes the committable `config.json`).
 
+**Subdirectories and worktrees share the repo's key.** The `config.json` lock is looked up
+from the `cwd` upwards to the enclosing git toplevel (never past it: a nested repo is its own
+project; outside git only the `cwd` itself counts), and a **linked worktree** — a sibling
+`git worktree add ../feature`, or a `.claude/worktrees/<name>` checkout — without its own
+lock uses the main worktree's. The git-root step likewise names a linked worktree after its
+main worktree, so every worktree of a repo keys the same. Before 3.0 a subdirectory missed a
+root-level lock and a remote-less worktree keyed by its own directory name; memories saved
+under such a key can be moved with `leina memory merge-projects`.
+
 ---
 
 ## The model: observations and sessions

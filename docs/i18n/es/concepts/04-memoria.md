@@ -48,6 +48,16 @@ Si el `cwd` no es un repo git y hay **varios** repos hijos, se lanza `AmbiguousP
 hay que fijar el nombre con `leina init --name <name>` (escribe el `config.json`
 committable).
 
+**Los subdirectorios y los worktrees comparten el key del repo.** El lock de `config.json` se
+busca desde el `cwd` hacia arriba hasta el toplevel de git que lo contiene (nunca más allá: un
+repo anidado es su propio proyecto; fuera de git solo cuenta el propio `cwd`), y un
+**worktree vinculado** — un `git worktree add ../feature` hermano, o un checkout en
+`.claude/worktrees/<name>` — sin lock propio usa el del worktree principal. El paso git-root
+también nombra a un worktree vinculado por su worktree principal, así que todos los worktrees
+de un repo comparten key. Antes de 3.0 un subdirectorio no veía el lock de la raíz y un
+worktree sin remote tomaba el nombre de su propio directorio; las memorias guardadas bajo ese
+key se pueden mover con `leina memory merge-projects`.
+
 ---
 
 ## El modelo: observations y sessions

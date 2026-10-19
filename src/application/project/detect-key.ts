@@ -1,9 +1,11 @@
 // project-detect.ts — derive a stable project key from the current working directory.
 //
 // Detection order (each step fails-open to the next):
-//   0. config-lock  — .leina/config.json project_name
+//   0. config-lock  — .leina/config.json project_name, the nearest one from cwd up to the git
+//                     toplevel; for a linked worktree without one, the main worktree's
 //   1. git-remote   — git remote get-url origin → parse URL → repo name
-//   2. git-root     — git rev-parse --show-toplevel → basename
+//   2. git-root     — git rev-parse --show-toplevel → basename (a linked worktree's MAIN
+//                     worktree root, so every worktree of a repo shares one key)
 //   3. child-git-auto — exactly one immediate child dir with .git → recurse; many → throw
 //   4. dir-basename — basename(cwd) always succeeds
 //
@@ -11,9 +13,11 @@
 // from id.ts for project keys — that function collapses to underscores and is reserved
 // for graph node IDs. Project keys use hyphens (FR-11).
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { safeGitOutput } from "../../infrastructure/install/safe-exec.ts";
+import { findGitToplevel, linkedWorktreeMainRoot } from "./root.ts";
 import { readWorkspaceConfig } from "./workspace-config.ts";
 
 // ---------------------------------------------------------------------------
@@ -206,6 +210,51 @@ export function writeProjectConfig(cwd: string, name: string): void {
   }
   existing.project_name = name;
   writeFileSync(cfgPath, `${JSON.stringify(existing, null, 2)}\n`);
+}
+
+// ---------------------------------------------------------------------------
+// Locating the config lock
+// ---------------------------------------------------------------------------
+
+function realOrSelf(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+// The global leina home (`$LEINA_HOME`, default `~/.leina`) is also a `.leina` dir; the
+// directory holding it is never a project (same guard as root.ts).
+function holdsLeinaHome(dir: string): boolean {
+  const home = process.env.LEINA_HOME ?? resolve(homedir(), ".leina");
+  return realOrSelf(join(dir, ".leina")) === realOrSelf(home);
+}
+
+/**
+ * The directory whose `.leina/config.json` configures the project `start` belongs to, for
+ * the first config that satisfies `accept`: the nearest ancestor (inclusive) up to the
+ * enclosing git toplevel — so `leina memory … <repo>/src/x` keys like the repo root, while a
+ * nested repo stays its own project — then, for a linked worktree, the main worktree root
+ * (`.leina/` is usually not checked out into a worktree). Outside git only `start` counts.
+ */
+function findConfigDir(start: string, accept: (dir: string) => boolean): string | undefined {
+  const top = findGitToplevel(start);
+  let dir = start;
+  for (;;) {
+    if (!holdsLeinaHome(dir) && accept(dir)) return dir;
+    if (top === undefined || dir === top) break;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  const main = top === undefined ? undefined : linkedWorktreeMainRoot(top);
+  return main !== undefined && accept(main) ? main : undefined;
+}
+
+/** Where the project-name lock for `start` lives (see findConfigDir), if any. */
+export function findProjectConfigDir(start: string): string | undefined {
+  return findConfigDir(resolve(start), (dir) => readProjectConfig(dir) !== null);
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +485,8 @@ export function deriveWorkspaceRootKey(wsRoot: string): string {
 
 // Step 0: config-lock
 function detectFromConfig(resolved: string): ProjectDetection | null {
-  const cfg = readProjectConfig(resolved);
+  const dir = findProjectConfigDir(resolved);
+  const cfg = dir === undefined ? null : readProjectConfig(dir);
   if (!cfg) return null;
   const rawName = cfg.project_name;
   return { key: normalizeProjectKey(rawName), method: "config-lock", rawName };
@@ -449,8 +499,10 @@ function detectFromGitRemote(resolved: string): ProjectDetection | null {
   const parsed = parseRemote(remoteUrl);
   if (!parsed) return null;
 
-  // B2: if project_key_format = "org/repo", use "org/repo" as the key
-  const fmt = readProjectKeyFormat(resolved);
+  // B2: if project_key_format = "org/repo", use "org/repo" as the key (read from the
+  // nearest config that sets it, found like the project-name lock).
+  const fmtDir = findConfigDir(resolved, (dir) => readProjectKeyFormat(dir) !== null);
+  const fmt = fmtDir === undefined ? null : readProjectKeyFormat(fmtDir);
   if (fmt === "org/repo" && parsed.org) {
     const rawName = `${parsed.org}/${parsed.name}`;
     return { key: normalizeProjectKey(rawName), method: "git-remote", rawName };
@@ -460,11 +512,13 @@ function detectFromGitRemote(resolved: string): ProjectDetection | null {
   return { key: normalizeProjectKey(rawName), method: "git-remote", rawName };
 }
 
-// Step 2: git-root basename
+// Step 2: git-root basename. A linked worktree (`git worktree add ../feature-x`, or
+// `.claude/worktrees/<name>`) keys by its MAIN worktree's directory, not its own: every
+// worktree of one repo is the same project and shares one memory.
 function detectFromGitRoot(resolved: string): ProjectDetection | null {
   const toplevel = gitOutput(["rev-parse", "--show-toplevel"], resolved);
   if (!toplevel) return null;
-  const rawName = basename(toplevel);
+  const rawName = basename(linkedWorktreeMainRoot(toplevel) ?? toplevel);
   return { key: normalizeProjectKey(rawName), method: "git-root", rawName };
 }
 

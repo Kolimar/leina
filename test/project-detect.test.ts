@@ -15,6 +15,7 @@ import { join } from "node:path";
 import {
   AmbiguousProjectError,
   deriveProjectKey,
+  findProjectConfigDir,
   normalizeProjectKey,
   readProjectConfig,
   repoNameFromRemote,
@@ -458,4 +459,114 @@ test("(NPK-12) normalizeProjectKey: git remote .git suffix is stripped by repoNa
   const rawName = repoNameFromRemote("git@github.com:org/my-fresh-project.git");
   assert.equal(rawName, "my-fresh-project");
   assert.equal(normalizeProjectKey(rawName), "my-fresh-project");
+});
+
+// ---------------------------------------------------------------------------
+// Subdirectories and worktrees resolve to the repo's key (3.0)
+// ---------------------------------------------------------------------------
+
+function commitAll(dir: string): void {
+  writeFileSync(join(dir, "README.md"), "x\n");
+  execFileSync("git", ["add", "README.md"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
+}
+
+test("(PK-sub-1) the config lock at the repo root applies from any subdirectory", () => {
+  const dir = tmpDir();
+  try {
+    initGitRepo(dir, "https://github.com/org/from-git.git");
+    writeProjectConfig(dir, "locked-name");
+    const sub = join(dir, "src", "deep");
+    mkdirSync(sub, { recursive: true });
+    const det = deriveProjectKey(sub);
+    assert.equal(det.method, "config-lock");
+    assert.equal(det.key, "locked-name");
+    assert.equal(findProjectConfigDir(sub), dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(PK-sub-2) a nested repo is its own project; outside git a parent's lock is not inherited", () => {
+  const dir = tmpDir();
+  try {
+    initGitRepo(dir);
+    writeProjectConfig(dir, "outer");
+    const nested = join(dir, "vendor-repo");
+    mkdirSync(nested);
+    initGitRepo(nested);
+    assert.notEqual(deriveProjectKey(nested).key, "outer", "the walk stops at the nested toplevel");
+    assert.equal(deriveProjectKey(nested).key, "vendor-repo");
+
+    const plain = tmpDir();
+    try {
+      writeProjectConfig(plain, "plain-lock");
+      const child = join(plain, "child");
+      mkdirSync(child);
+      assert.equal(deriveProjectKey(child).key, "child", "no git: only the directory itself counts");
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(PK-wt-1) a linked worktree of a remote-less repo keys by the main worktree, not its own dir", () => {
+  const base = tmpDir();
+  try {
+    const main = join(base, "mainrepo");
+    mkdirSync(main);
+    initGitRepo(main);
+    commitAll(main);
+    const wt = join(base, "feature-wt");
+    execFileSync("git", ["worktree", "add", "-q", wt], { cwd: main, stdio: "ignore" });
+    const det = deriveProjectKey(join(wt));
+    assert.equal(det.method, "git-root");
+    assert.equal(det.key, "mainrepo");
+    assert.equal(deriveProjectKey(main).key, "mainrepo");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("(PK-wt-2) a worktree (sibling or nested under .claude/worktrees) uses the main root's config lock", () => {
+  const base = tmpDir();
+  try {
+    const main = join(base, "mainrepo");
+    mkdirSync(main);
+    initGitRepo(main, "https://github.com/org/remote-name.git");
+    commitAll(main);
+    writeProjectConfig(main, "locked-main"); // .leina/ is untracked: worktrees do not get it
+    const sibling = join(base, "sibling-wt");
+    execFileSync("git", ["worktree", "add", "-q", sibling], { cwd: main, stdio: "ignore" });
+    const nested = join(main, ".claude", "worktrees", "agent-1");
+    execFileSync("git", ["worktree", "add", "-q", nested], { cwd: main, stdio: "ignore" });
+    for (const wt of [sibling, nested, join(nested, "sub")]) {
+      mkdirSync(wt, { recursive: true });
+      const det = deriveProjectKey(wt);
+      assert.equal(det.key, "locked-main", wt);
+      assert.equal(det.method, "config-lock");
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("(PK-home) the global leina home is never read as a project lock", () => {
+  const dir = tmpDir();
+  const prev = process.env.LEINA_HOME;
+  try {
+    initGitRepo(dir);
+    writeProjectConfig(dir, "not-a-project");
+    process.env.LEINA_HOME = join(dir, ".leina");
+    const sub = join(dir, "sub");
+    mkdirSync(sub);
+    assert.equal(findProjectConfigDir(sub), undefined);
+    assert.notEqual(deriveProjectKey(sub).key, "not-a-project");
+  } finally {
+    if (prev === undefined) delete process.env.LEINA_HOME;
+    else process.env.LEINA_HOME = prev;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
