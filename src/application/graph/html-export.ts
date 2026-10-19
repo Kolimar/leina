@@ -3,6 +3,9 @@
 // Produces a single self-contained HTML file with vis-network inlined (offline, no CDN).
 // All user-derived strings are HTML-escaped (XSS-safe); the JSON payload additionally has
 // every "</" replaced with "<\/" so it never accidentally closes the outer <script> block.
+// Repo-derived values that travel UNescaped (group keys = folder/repo names, raw node
+// ids) are rendered client-side with textContent or the in-page esc(), never raw
+// innerHTML — test/html-export-dom.test.ts runs the viewer script under jsdom.
 //
 // Responsibilities: colour nodes by community (palette) or top-level folder (fallback),
 // size by bidirectional non-contains degree (A5), emphasise god nodes (top-12), render
@@ -326,6 +329,10 @@ network.once('stabilizationIterationsDone', () => {
 });
 
 // --- drawer de detalle (click en un nodo) ---
+// node.d llega HTML-escapado del servidor; node.id (ruta / clave de repo) no: esc().
+function esc(s){
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
 const drawer = document.getElementById('drawer');
 const byId = {};
 for (const n of DATA.nodes) byId[n.id] = n;
@@ -335,7 +342,7 @@ function openDrawer(node){
   const commBadge = d.community != null ? '<span class="badge">comunidad ' + d.community + '</span>' : '';
   drawer.innerHTML =
     '<button class="x" title="cerrar">\u00d7</button>' +
-    '<h2>' + (d.label || node.id) + '</h2>' +
+    '<h2>' + (d.label || esc(node.id)) + '</h2>' +
     '<div class="badges"><span class="badge">' + (d.kind || '?') + '</span>' +
       '<span class="badge">capa ' + (d.layer || '?') + '</span>' + commBadge +
       '<span class="badge">grado ' + (d.degree || 0) + '</span></div>' +
@@ -353,11 +360,18 @@ network.on('click', params => {
 });
 
 // --- filtros por grupo ---
+// Grupos = carpetas top-level / claves de repo, SIN escapar: DOM + textContent, nunca innerHTML.
 const hidden = new Set();
 const filtersEl = document.getElementById('filters');
 for (const [name, ct] of Object.entries(META.layers).sort((a,b)=>b[1]-a[1])) {
   const row = document.createElement('label');
-  row.innerHTML = '<input type="checkbox" checked data-g="'+name+'"><span class="sw" style="background:'+(META.colors[name]||'#888')+'"></span>'+name+'<span class="ct">'+ct+'</span>';
+  const box = document.createElement('input');
+  box.type = 'checkbox'; box.checked = true; box.dataset.g = name;
+  const sw = document.createElement('span');
+  sw.className = 'sw'; sw.style.background = META.colors[name] || '#888';
+  const count = document.createElement('span');
+  count.className = 'ct'; count.textContent = String(ct);
+  row.append(box, sw, document.createTextNode(name), count);
   filtersEl.appendChild(row);
 }
 filtersEl.addEventListener('change', e => {
