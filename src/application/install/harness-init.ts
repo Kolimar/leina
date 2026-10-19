@@ -23,12 +23,21 @@ import { dirname, join } from "node:path";
 import { runSync } from "../harness/sync.ts";
 import { presetRuleOverrides, type RulePreset } from "../harness/recipes.ts";
 import { HARNESS_DIR } from "../harness/config-io.ts";
-import { lockfilePath, parseLockfile, type Lockfile, type LockfileArtifact } from "../harness/adapters/writer.ts";
+import {
+  containedArtifactPath,
+  LOCKFILE_REL,
+  OUTSIDE_REPO_DETAIL,
+  parseLockfile,
+  type Lockfile,
+  type LockfileArtifact,
+} from "../harness/adapters/writer.ts";
 import { blockHandEdited, removeManagedBlock, sha256 } from "../harness/adapters/managed-block.ts";
 import { stripCursorHooks, stripOpencodeInstructions } from "../harness/adapters/json-merge.ts";
 
 /** Content init seeds into .harness/config.json — builtin rules govern by default. */
 export const HARNESS_MINIMAL_CONFIG = "{}\n";
+
+const CONFIG_REL = `${HARNESS_DIR}/config.json`;
 
 /**
  * Host ids from `leina init --hosts` → harness platform adapters. The windsurf
@@ -82,7 +91,7 @@ export interface HarnessBootstrapResult {
  * but could not be honored (malformed / not an object): nothing is written.
  */
 function persistPlatforms(
-  configPath: string,
+  configPath: string | undefined,
   platforms: readonly string[],
   preset: RulePreset | undefined,
   ruleOverrides: Record<string, { enabled: false }>,
@@ -90,6 +99,10 @@ function persistPlatforms(
   failures: string[],
 ): boolean {
   const overrideCount = Object.keys(ruleOverrides).length;
+  if (configPath === undefined) {
+    failures.push(`${CONFIG_REL}: ${OUTSIDE_REPO_DETAIL}`);
+    return false;
+  }
   if (!existsSync(configPath)) {
     mkdirSync(dirname(configPath), { recursive: true });
     // Fresh seed only: platforms and/or a preset's rule overrides. `generic`
@@ -157,7 +170,7 @@ export async function bootstrapHarness(
   // `leina-native` (and the default: no preset) seeds none, so the full suite governs.
   const ruleOverrides = opts.preset ? await presetRuleOverrides(opts.preset) : {};
 
-  const configPath = join(project, HARNESS_DIR, "config.json");
+  const configPath = containedArtifactPath(project, CONFIG_REL);
   try {
     persistPlatforms(configPath, platforms, opts.preset, ruleOverrides, written, failures);
   } catch (err) {
@@ -214,9 +227,9 @@ function isPristineBootstrapConfig(raw: string): boolean {
   }
 }
 
-function readLockfileSync(project: string): Lockfile | undefined {
+function readLockfileSync(lockPath: string): Lockfile | undefined {
   try {
-    const raw = readFileSync(lockfilePath(project), "utf8");
+    const raw = readFileSync(lockPath, "utf8");
     return parseLockfile(JSON.parse(raw));
   } catch {
     return undefined; // absent or malformed — nothing to revert
@@ -243,7 +256,11 @@ function removeArtifact(
   removed: string[],
   failures: string[],
 ): void {
-  const absolute = join(project, artifact.path);
+  const absolute = containedArtifactPath(project, artifact.path);
+  if (absolute === undefined) {
+    failures.push(`${artifact.path}: ${OUTSIDE_REPO_DETAIL} — left untouched`);
+    return;
+  }
   let existing: string;
   try {
     existing = readFileSync(absolute, "utf8");
@@ -282,7 +299,7 @@ function removeArtifact(
       // After deinit there is no "next merge" to strip stale entries, so the
       // harness-managed ones (hook wiring, instruction paths that now point at
       // deleted files) are stripped here; user entries stay verbatim.
-      stripJsonMergeArtifact(project, artifact, existing, removed, failures);
+      stripJsonMergeArtifact(project, absolute, artifact, existing, removed, failures);
     }
   } catch (err) {
     failures.push(`${artifact.path}: ${errMsg(err)}`);
@@ -308,6 +325,7 @@ function isEmptyCursorHooksSkeleton(content: string): boolean {
 
 function stripJsonMergeArtifact(
   project: string,
+  absolute: string,
   artifact: LockfileArtifact,
   existing: string,
   removed: string[],
@@ -326,7 +344,6 @@ function stripJsonMergeArtifact(
     return;
   }
   if (!result.changed) return;
-  const absolute = join(project, artifact.path);
   // opencode.json stays even when reduced to its $schema — the file itself is
   // the platform marker other tools detect; only the cursor hooks skeleton
   // (harness-born wiring) is removed outright.
@@ -345,23 +362,26 @@ export function deinitHarness(project: string): HarnessDeinitResult {
   const removed: string[] = [];
   const failures: string[] = [];
 
-  const lock = readLockfileSync(project);
-  if (lock) {
+  // A .harness/ that resolves outside the repo (symlink) is never read,
+  // written or pruned through — every path below is contained first.
+  const lockPath = containedArtifactPath(project, LOCKFILE_REL);
+  const lock = lockPath !== undefined ? readLockfileSync(lockPath) : undefined;
+  if (lockPath !== undefined && lock) {
     for (const artifact of lock.artifacts) removeArtifact(project, artifact, removed, failures);
     try {
-      rmSync(lockfilePath(project));
-      removed.push(".harness/harness.lock.json");
+      rmSync(lockPath);
+      removed.push(LOCKFILE_REL);
     } catch (err) {
-      failures.push(`.harness/harness.lock.json: ${errMsg(err)}`);
+      failures.push(`${LOCKFILE_REL}: ${errMsg(err)}`);
     }
   }
 
   // The config seeded by init is ours to remove — but only the empty `{}`
   // seed; a config recording platforms (or anything else) is the user's
   // host choice and stays.
-  const configPath = join(project, HARNESS_DIR, "config.json");
+  const configPath = containedArtifactPath(project, CONFIG_REL);
   try {
-    if (existsSync(configPath) && isPristineBootstrapConfig(readFileSync(configPath, "utf8"))) {
+    if (configPath !== undefined && existsSync(configPath) && isPristineBootstrapConfig(readFileSync(configPath, "utf8"))) {
       rmSync(configPath);
       removed.push(".harness/config.json (pristine bootstrap — removed)");
     }
@@ -370,10 +390,11 @@ export function deinitHarness(project: string): HarnessDeinitResult {
   }
 
   // Drop .harness/ only when now empty — user rules/state keep it alive.
+  // (rmdir never follows a symlinked .harness/: it fails on the link.)
   try {
     rmdirSync(join(project, HARNESS_DIR));
   } catch {
-    /* non-empty or absent — keep */
+    /* non-empty, absent or a link — keep */
   }
 
   return { removed, failures };

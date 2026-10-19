@@ -11,8 +11,9 @@
 
 import path from "node:path";
 import fs from "node:fs/promises";
+import { lstatSync, realpathSync } from "node:fs";
 import crypto from "node:crypto";
-import { harnessDir } from "../config-io.ts";
+import { HARNESS_DIR, harnessDir } from "../config-io.ts";
 import { readJsonIfExists, readTextIfExists } from "../io.ts";
 import { blockHandEdited, removeManagedBlock, sha256, upsertManagedBlock } from "./managed-block.ts";
 import { mergeCursorHooks, mergeOpencodeInstructions, type JsonMergeResult } from "./json-merge.ts";
@@ -32,11 +33,72 @@ export interface Lockfile {
   artifacts: LockfileArtifact[];
 }
 
+/** Repo-relative lockfile path (forward slashes — the form sync reports). */
+export const LOCKFILE_REL = `${HARNESS_DIR}/harness.lock.json`;
+
 export function lockfilePath(repoRoot: string): string {
   return path.join(harnessDir(repoRoot), "harness.lock.json");
 }
 
 const WRITE_KINDS: readonly string[] = ["owned", "managed-block", "json-merge"];
+
+/**
+ * Lexical safety of a repo-relative artifact path. The lockfile is committed —
+ * attacker-controlled in a cloned repo — and its paths drive deletes (orphan
+ * cleanup, deinit) and rewrites, so only plain relative paths strictly inside
+ * the repo pass: no absolute (POSIX, drive, UNC) paths, no `..` segment (either
+ * separator), no NUL, and nothing in git's own metadata dir.
+ */
+export function isSafeArtifactPath(rel: string): boolean {
+  if (rel.includes("\0")) return false;
+  if (path.posix.isAbsolute(rel) || path.win32.isAbsolute(rel) || /^[a-zA-Z]:/.test(rel)) return false;
+  const segments = rel.split(/[\\/]/).filter((s) => s !== "" && s !== ".");
+  if (segments.length === 0) return false; // the repo root itself
+  return !segments.some((s) => s === ".." || s.toLowerCase() === ".git");
+}
+
+export const OUTSIDE_REPO_DETAIL = "refused: path resolves outside the repository (absolute, `..` or symlinked)";
+
+function isWithin(root: string, candidate: string): boolean {
+  const rel = path.relative(root, candidate);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+/**
+ * Realpath containment for a repo-relative artifact path — the check that
+ * must precede every rm/write the lockfile can steer. The target (symlinks
+ * followed) or, when it does not exist yet, its nearest existing ancestor must
+ * resolve inside the repo's real root; a dangling link anywhere on the way is
+ * refused (it cannot be proven safe). Returns the absolute path to operate on,
+ * or undefined to refuse. Synchronous so the sync engine and the synchronous
+ * deinit share one implementation.
+ */
+export function containedArtifactPath(repoRoot: string, rel: string): string | undefined {
+  if (!isSafeArtifactPath(rel)) return undefined;
+  let realRoot: string;
+  try {
+    realRoot = realpathSync(repoRoot);
+  } catch {
+    return undefined;
+  }
+  const absolute = path.resolve(repoRoot, rel);
+  for (let probe = absolute; ; probe = path.dirname(probe)) {
+    let exists = true;
+    try {
+      lstatSync(probe);
+    } catch {
+      exists = false;
+    }
+    if (exists) {
+      try {
+        return isWithin(realRoot, realpathSync(probe)) ? absolute : undefined;
+      } catch {
+        return undefined; // dangling symlink
+      }
+    }
+    if (path.dirname(probe) === probe) return undefined;
+  }
+}
 
 /** Structural validation of the v1 lockfile — same constraints as the origin zod schema. */
 export function parseLockfile(value: unknown): Lockfile | undefined {
@@ -51,6 +113,9 @@ export function parseLockfile(value: unknown): Lockfile | undefined {
     const a = raw as Record<string, unknown>;
     if (
       typeof a.path !== "string" ||
+      // Stricter than the origin schema on purpose: a lockfile naming a path
+      // outside the repo is hostile, never a format variant — ignore it whole.
+      !isSafeArtifactPath(a.path) ||
       typeof a.adapter !== "string" ||
       typeof a.kind !== "string" ||
       !WRITE_KINDS.includes(a.kind) ||
@@ -268,7 +333,13 @@ async function cleanupOrphans(
   const retained: LockfileArtifact[] = [];
   for (const stale of previous.artifacts) {
     if (desiredKeys.has(keyOf(stale.path, stale.adapter, stale.blockId))) continue;
-    const absolute = path.join(repoRoot, stale.path);
+    const absolute = containedArtifactPath(repoRoot, stale.path);
+    if (absolute === undefined) {
+      // Never followed — and dropped from the lockfile: an entry that cannot
+      // be touched safely cannot be managed either.
+      items.push({ path: stale.path, adapter: stale.adapter, kind: stale.kind, action: "error", detail: OUTSIDE_REPO_DETAIL });
+      continue;
+    }
     const existing = await readTextIfExists(absolute);
     if (existing === undefined) continue;
 
@@ -345,11 +416,18 @@ export async function applyFileSets(
   for (const { adapter, fileSet } of sets) {
     for (const file of fileSet.files) {
       desiredKeys.add(keyOf(file.path, adapter, file.blockId));
-      const absolute = path.join(repoRoot, file.path);
-      const existing = await readTextIfExists(absolute);
       const prevEntry = previous?.artifacts.find(
         (a) => a.path === file.path && a.adapter === adapter && a.blockId === file.blockId,
       );
+      // Adapter paths embed rule/recipe names from the project layer, and the
+      // repo may carry symlinks: every write is contained like every delete.
+      const absolute = containedArtifactPath(repoRoot, file.path);
+      if (absolute === undefined) {
+        items.push({ path: file.path, adapter, kind: file.kind, action: "error", detail: OUTSIDE_REPO_DETAIL });
+        if (prevEntry) newArtifacts.push(prevEntry);
+        continue;
+      }
+      const existing = await readTextIfExists(absolute);
 
       const { item, finalContent } =
         file.kind === "managed-block"
@@ -387,15 +465,20 @@ export async function applyFileSets(
     newArtifacts.push(...cleanup.retained);
   }
 
+  if (!options.check) {
+    const lockAbsolute = containedArtifactPath(repoRoot, LOCKFILE_REL);
+    if (lockAbsolute === undefined) {
+      items.push({ path: LOCKFILE_REL, adapter: "harness", kind: "owned", action: "error", detail: OUTSIDE_REPO_DETAIL });
+    } else {
+      const lockfile: Lockfile = { version: 1, sourceHash: options.sourceHash, artifacts: newArtifacts };
+      await fs.mkdir(harnessDir(repoRoot), { recursive: true });
+      // Atomic too: a truncated lockfile would orphan every managed artifact.
+      await writeFileAtomic(lockAbsolute, `${JSON.stringify(lockfile, null, 2)}\n`);
+    }
+  }
+
   const driftCount = items.filter((i) => i.action !== "unchanged").length;
   const conflictCount = items.filter((i) => i.action === "conflict" || i.action === "error").length;
-
-  if (!options.check) {
-    const lockfile: Lockfile = { version: 1, sourceHash: options.sourceHash, artifacts: newArtifacts };
-    await fs.mkdir(harnessDir(repoRoot), { recursive: true });
-    // Atomic too: a truncated lockfile would orphan every managed artifact.
-    await writeFileAtomic(lockfilePath(repoRoot), `${JSON.stringify(lockfile, null, 2)}\n`);
-  }
 
   return { items, driftCount, conflictCount };
 }

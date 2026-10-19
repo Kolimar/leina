@@ -2,14 +2,16 @@
 // (writer.ts), the only piece that touches disk. Covers the origin lockfile v1
 // format, idempotency, --check drift for CI, orphan cleanup, the
 // conflict ≠ orphan distinction, hand-edit conflicts + --force, JSON-merge
-// application, and coexistence of the leina protocol block with the harness
-// managed block inside one AGENTS.md.
+// application, lockfile path containment (no `..`/absolute/symlinked escape),
+// and coexistence of the leina protocol block with the harness managed block
+// inside one AGENTS.md.
 //
 // Run: node --no-warnings --experimental-strip-types --test test/harness-sync.test.ts
 
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { defaultHarnessConfig, type Rule } from "../src/domain/harness/model.ts";
 import { sha256 } from "../src/application/harness/adapters/managed-block.ts";
@@ -325,6 +327,121 @@ describe("applyFileSets — json-merge artifacts", () => {
     );
     assert.equal(outcome.items[0]!.action, "error");
     assert.match(outcome.items[0]!.detail ?? "", /mergeStrategy/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lockfile path containment — the lockfile is committed, i.e. attacker-
+// controlled in a cloned repo, and its paths drive deletes and rewrites.
+// ---------------------------------------------------------------------------
+
+describe("applyFileSets — lockfile paths stay inside the repo", () => {
+  let outside: string;
+
+  beforeEach(async () => {
+    outside = await fs.mkdtemp(path.join(os.tmpdir(), "leina-harness-outside-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(outside, { recursive: true, force: true });
+  });
+
+  /** Commit a hostile lockfile whose single owned artifact carries the victim's real hash. */
+  async function hostileLock(artifactPath: string, content: string, kind: Lockfile["artifacts"][number]["kind"] = "owned") {
+    const lock: Lockfile = {
+      version: 1,
+      sourceHash: HASH,
+      artifacts: [{ path: artifactPath, adapter: "test", kind, contentHash: sha256(content) }],
+    };
+    await repo.write(".harness/harness.lock.json", JSON.stringify(lock));
+  }
+
+  const EMPTY: AdapterFileSet[] = [{ adapter: "test", fileSet: { files: [], warnings: [] } }];
+
+  it("(lockpath-1) parseLockfile rejects absolute, escaping, .git and empty artifact paths", () => {
+    const withPath = (p: string) => ({
+      version: 1,
+      sourceHash: HASH,
+      artifacts: [{ path: p, adapter: "x", kind: "owned", contentHash: "h" }],
+    });
+    for (const bad of [
+      "/etc/passwd",
+      "../outside.txt",
+      "a/../../outside.txt",
+      "a\\..\\..\\outside.txt",
+      "C:\\Windows\\win.ini",
+      "c:relative.txt",
+      "\\\\server\\share\\x",
+      ".git/config",
+      "sub/.GIT/hooks/pre-commit",
+      "",
+      ".",
+      "a\0b",
+      "a/b/../c.md",
+    ]) {
+      assert.equal(parseLockfile(withPath(bad)), undefined, `must reject ${JSON.stringify(bad)}`);
+    }
+    for (const good of ["CLAUDE.md", ".claude/skills/x/SKILL.md", "./AGENTS.md", ".harness/generated/x.md"]) {
+      assert.ok(parseLockfile(withPath(good)), `must accept ${JSON.stringify(good)}`);
+    }
+  });
+
+  it("(lockpath-2) a `..` artifact in a hostile lockfile never deletes the outside file, even with --force", async () => {
+    const victim = path.join(outside, "victim.txt");
+    await fs.writeFile(victim, "precious\n");
+    await hostileLock(path.relative(repo.root, victim), "precious\n");
+
+    await applyFileSets(repo.root, EMPTY, { sourceHash: HASH, force: true });
+    assert.equal(await fs.readFile(victim, "utf8"), "precious\n", "outside file untouched");
+  });
+
+  it("(lockpath-3) an orphan behind a symlinked parent dir is refused, not deleted", async () => {
+    const victim = path.join(outside, "victim.txt");
+    await fs.writeFile(victim, "precious\n");
+    await fs.symlink(outside, path.join(repo.root, "link"), "junction");
+    await hostileLock("link/victim.txt", "precious\n");
+
+    const outcome = await applyFileSets(repo.root, EMPTY, { sourceHash: HASH, force: true });
+    assert.equal(await fs.readFile(victim, "utf8"), "precious\n", "outside file untouched");
+    const item = outcome.items.find((i) => i.path === "link/victim.txt");
+    assert.equal(item?.action, "error");
+    assert.match(item?.detail ?? "", /outside the repository/);
+  });
+
+  it(
+    "(lockpath-4) an orphaned block in a symlink to an outside file is neither stripped nor copied in",
+    { skip: process.platform === "win32" ? "file symlinks need privileges on Windows" : false },
+    async () => {
+      // Seed a real block, then swap the host file for a symlink to an outside copy.
+      await applyFileSets(repo.root, sets(block("CLAUDE.md", "ephemeral rules")), { sourceHash: HASH });
+      const outsideFile = path.join(outside, "CLAUDE.md");
+      const original = await read("CLAUDE.md");
+      await fs.writeFile(outsideFile, original);
+      await fs.rm(path.join(repo.root, "CLAUDE.md"));
+      await fs.symlink(outsideFile, path.join(repo.root, "CLAUDE.md"));
+
+      const outcome = await applyFileSets(repo.root, EMPTY, { sourceHash: HASH });
+      assert.equal(await fs.readFile(outsideFile, "utf8"), original, "outside file not rewritten");
+      assert.ok((await fs.lstat(path.join(repo.root, "CLAUDE.md"))).isSymbolicLink(), "symlink not replaced by a copy");
+      assert.equal(outcome.items.find((i) => i.path === "CLAUDE.md")?.action, "error");
+    },
+  );
+
+  it("(lockpath-5) a desired artifact under a symlinked parent dir is refused, not written outside", async () => {
+    await fs.symlink(outside, path.join(repo.root, ".claude"), "junction");
+    const outcome = await applyFileSets(repo.root, sets(owned(".claude/skills/x/SKILL.md", "skill\n")), {
+      sourceHash: HASH,
+    });
+    assert.equal(outcome.items[0]!.action, "error");
+    assert.match(outcome.items[0]!.detail ?? "", /outside the repository/);
+    assert.deepEqual(await fs.readdir(outside), [], "nothing written through the link");
+  });
+
+  it("(lockpath-6) a symlinked .harness/ never receives the lockfile", async () => {
+    await fs.symlink(outside, path.join(repo.root, ".harness"), "junction");
+    const outcome = await applyFileSets(repo.root, sets(owned("gen/a.md", "AAA\n")), { sourceHash: HASH });
+    assert.deepEqual(await fs.readdir(outside), [], "lockfile not written through the link");
+    assert.ok(outcome.items.some((i) => i.path === ".harness/harness.lock.json" && i.action === "error"));
   });
 });
 

@@ -1,13 +1,15 @@
 // harness-install.test.ts — the `leina init` harness bootstrap writer
 // (bootstrapHarness: .harness/config.json seed + in-process sync) and its
-// per-repo inverse (deinitHarness): idempotency, clean round-trip, and the
-// "user content is never touched" guarantees (rules/state/hand-edits).
+// per-repo inverse (deinitHarness): idempotency, clean round-trip, the
+// "user content is never touched" guarantees (rules/state/hand-edits), and
+// lockfile path containment (a hostile lockfile never reaches outside the repo).
 //
 // Run: node --no-warnings --experimental-strip-types --test test/harness-install.test.ts
 
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import {
   bootstrapHarness,
@@ -15,6 +17,7 @@ import {
   HARNESS_MINIMAL_CONFIG,
 } from "../src/application/install/harness-init.ts";
 import { runSync } from "../src/application/harness/sync.ts";
+import { sha256 } from "../src/application/harness/adapters/managed-block.ts";
 import { GITIGNORE_BODY } from "../src/application/install/gitignore.ts";
 import { makeTmpRepo, isolateLeinaHome, type TmpRepo } from "./helpers/harness-tmprepo.ts";
 
@@ -253,5 +256,64 @@ describe("deinitHarness (leina deinit inverse)", () => {
     const result = deinitHarness(repo.root);
     assert.deepEqual(result.removed, []);
     assert.deepEqual(result.failures, []);
+  });
+});
+
+describe("deinitHarness — lockfile paths stay inside the repo", () => {
+  let outside: string;
+
+  beforeEach(async () => {
+    outside = await fs.mkdtemp(path.join(os.tmpdir(), "leina-harness-outside-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(outside, { recursive: true, force: true });
+  });
+
+  async function hostileLock(artifactPath: string, content: string): Promise<void> {
+    await repo.write(
+      ".harness/harness.lock.json",
+      JSON.stringify({
+        version: 1,
+        sourceHash: "f".repeat(64),
+        artifacts: [{ path: artifactPath, adapter: "test", kind: "owned", contentHash: sha256(content) }],
+      }),
+    );
+  }
+
+  it("(deinit-path-1) a `..` artifact never deletes the outside file", async () => {
+    const victim = path.join(outside, "victim.txt");
+    await fs.writeFile(victim, "precious\n");
+    await hostileLock(path.relative(repo.root, victim), "precious\n");
+
+    deinitHarness(repo.root);
+    assert.equal(await fs.readFile(victim, "utf8"), "precious\n");
+  });
+
+  it("(deinit-path-2) an artifact behind a symlinked parent dir is refused and reported", async () => {
+    const victim = path.join(outside, "victim.txt");
+    await fs.writeFile(victim, "precious\n");
+    await fs.symlink(outside, path.join(repo.root, "link"), "junction");
+    await hostileLock("link/victim.txt", "precious\n");
+
+    const result = deinitHarness(repo.root);
+    assert.equal(await fs.readFile(victim, "utf8"), "precious\n");
+    assert.ok(result.failures.some((f) => f.includes("link/victim.txt") && f.includes("outside the repository")));
+  });
+
+  it("(deinit-path-3) a symlinked .harness/ is never written or pruned through", async () => {
+    await fs.writeFile(path.join(outside, "config.json"), HARNESS_MINIMAL_CONFIG);
+    await fs.symlink(outside, path.join(repo.root, ".harness"), "junction");
+
+    deinitHarness(repo.root);
+    assert.equal(await fs.readFile(path.join(outside, "config.json"), "utf8"), HARNESS_MINIMAL_CONFIG);
+  });
+
+  it("(deinit-path-4) bootstrap never seeds the config through a symlinked .harness/", async () => {
+    await fs.symlink(outside, path.join(repo.root, ".harness"), "junction");
+
+    const result = await bootstrapHarness(repo.root, ["claude"]);
+    assert.deepEqual(await fs.readdir(outside), [], "nothing written through the link");
+    assert.ok(result.failures.some((f) => f.includes(".harness/config.json") && f.includes("outside the repository")));
   });
 });
