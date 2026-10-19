@@ -137,8 +137,16 @@ classDiagram
 ### The `node` (the intersection)
 
 - `id` — a **stable, file-scoped** identifier. It normalizes each part (NFKC + casefold +
-  collapses non-alphanumerics) and joins them with `:`. Example:
-  `src/auth.ts` + `TokenFactory` + `create` → `src_auth_ts:tokenfactory:create`.
+  collapses non-alphanumerics) and joins them with `:`; a member is scoped by its owner's id.
+  Example: `src/auth.ts` + `TokenFactory` → `src_auth_ts:tokenfactory`, and its method
+  `create` → `src_auth_ts_tokenfactory:create`.
+  Casefolding can make two **distinct** declarations of one scope share an id
+  (`interface HostSpec` + `function hostSpec`, `class Parser` + `function parser`, a static and
+  an instance member with the same name). The first one in registration order (classes,
+  interfaces, functions, function-valued consts) keeps the plain id; each
+  later one gets `:<kind>` appended — `src_x_ts:hostspec:function` — then `_2`, `_3`, … if
+  that is taken too. The member tags are `method` and `static`.
+  Declarations of the same entity (interface merging, overloads, a get/set pair) share one node.
 - `kind` — `class` · `function` · `method` · `interface` · `module` · `concept`.
 - `signature` — only for functions/methods: return type, parameters (with type, nullability,
   optionality), access modifier, `isAsync`/`isGenerator` flags.

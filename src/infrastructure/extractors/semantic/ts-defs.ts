@@ -7,7 +7,7 @@
 // incremental path) and still produce exactly the ids a whole-project run produces.
 
 import { ts } from "ts-morph";
-import { makeId } from "../../../domain/shared/id.ts";
+import { makeId, normalizeLabel } from "../../../domain/shared/id.ts";
 import type { NodeKind } from "../../../domain/graph/model.ts";
 
 /** Declarations that carry a structured `signature`. */
@@ -27,10 +27,8 @@ export interface TsDef {
   owner: string;
   /** Structural edge from `owner`: `contains` for top-level defs, `method` for members. */
   relation: "contains" | "method";
-  /** Source of the signature, when function-like. */
+  /** Source of the signature, when function-like (interface method signatures carry none). */
   fn?: FnLike;
-  /** True for interface method signatures (they never carry a signature). */
-  signatureless?: boolean;
 }
 
 export interface FileDefs {
@@ -66,36 +64,90 @@ export function nameText(name: ts.Node | undefined): string | undefined {
   return undefined;
 }
 
+// Node ids are `makeId(<owner>, <name>)`, i.e. case-folded and punctuation-collapsed, so two
+// DISTINCT declarations of one scope can map to the same id (`interface HostSpec` + `function
+// hostSpec`, `class Parser` + `function parser`, a static and an instance member of the same
+// name). The first declaration in registration order keeps the plain id — the id it always
+// had — and every later colliding entity gets `<id>:<tag>` (then `<id>:<tag>_2`, ...), where the
+// tag names its declaration kind. Declarations of the SAME entity (same exact name and tag:
+// interface merging, overloads, a get/set pair) share one id and one node.
+class ScopeIds {
+  private readonly taken = new Set<string>();
+  private readonly byEntity = new Map<string, string>();
+  private readonly prefix: string;
+
+  constructor(prefix: string, reserved?: string) {
+    this.prefix = prefix;
+    if (reserved !== undefined) this.taken.add(reserved);
+  }
+
+  /** The id for (name, tag), and whether this call allocated it (false: merged declaration). */
+  alloc(name: string, tag: string): { id: string; fresh: boolean } {
+    const entity = `${tag}\0${name}`;
+    const known = this.byEntity.get(entity);
+    if (known !== undefined) return { id: known, fresh: false };
+    const base = makeId(this.prefix, name);
+    let id = base;
+    if (this.taken.has(id)) {
+      const suffix = normalizeLabel(tag);
+      id = `${base}:${suffix}`;
+      for (let n = 2; this.taken.has(id); n++) id = `${base}:${suffix}_${n}`;
+    }
+    this.taken.add(id);
+    this.byEntity.set(entity, id);
+    return { id, fresh: true };
+  }
+}
+
+interface DefSpec {
+  decl: ts.Node;
+  name: string;
+  tag: string;
+  kind: NodeKind;
+  label: string;
+  fn?: FnLike;
+}
+
 class DefCollector {
   readonly defs: TsDef[] = [];
   readonly idByDecl = new Map<ts.Node, string>();
   readonly fileId: string;
   readonly relPath: string;
+  private readonly topScope: ScopeIds;
+  private readonly memberScopes = new Map<string, ScopeIds>();
 
   constructor(fileId: string, relPath: string) {
     this.fileId = fileId;
     this.relPath = relPath;
+    // The module id itself is taken: a symbol whose name normalizes to "" must not alias it.
+    this.topScope = new ScopeIds(relPath, fileId);
   }
 
-  add(def: TsDef): void {
+  private register(scope: ScopeIds, owner: string, relation: TsDef["relation"], spec: DefSpec): string {
+    const { id, fresh } = scope.alloc(spec.name, spec.tag);
+    this.idByDecl.set(spec.decl, id);
+    if (!fresh) return id;
+    const def: TsDef = { id, label: spec.label, kind: spec.kind, decl: spec.decl, owner, relation };
+    if (spec.fn) def.fn = spec.fn;
     this.defs.push(def);
-    this.idByDecl.set(def.decl, def.id);
+    return id;
   }
 
   // --- members ---------------------------------------------------------------
 
-  private member(ownerId: string, decl: ts.Node, name: string, fn?: FnLike, signatureless?: boolean): void {
-    const def: TsDef = {
-      id: makeId(ownerId, name),
-      label: `${name}()`,
-      kind: "method",
-      decl,
-      owner: ownerId,
-      relation: "method",
-    };
-    if (fn) def.fn = fn;
-    if (signatureless) def.signatureless = true;
-    this.add(def);
+  private member(ownerId: string, spec: DefSpec): void {
+    let scope = this.memberScopes.get(ownerId);
+    if (scope === undefined) {
+      scope = new ScopeIds(ownerId);
+      this.memberScopes.set(ownerId, scope);
+    }
+    this.register(scope, ownerId, "method", spec);
+  }
+
+  private method(ownerId: string, decl: ts.Node, name: string, isStatic: boolean, fn?: FnLike): void {
+    const spec: DefSpec = { decl, name, tag: isStatic ? "static" : "method", kind: "method", label: `${name}()` };
+    if (fn) spec.fn = fn;
+    this.member(ownerId, spec);
   }
 
   classMembers(cls: ts.ClassLikeDeclaration, classId: string): void {
@@ -105,12 +157,12 @@ class DefCollector {
       // Overload signatures are not the method: keep implementations (+ abstract, + ambient).
       if (!ambient && m.body === undefined && !hasModifier(m, ts.SyntaxKind.AbstractKeyword)) continue;
       const name = nameText(m.name);
-      if (name !== undefined) this.member(classId, m, name, m);
+      if (name !== undefined) this.method(classId, m, name, hasModifier(m, ts.SyntaxKind.StaticKeyword), m);
     }
     for (const p of cls.members) {
       if (!ts.isPropertyDeclaration(p) || !isFunctionInitializer(p.initializer)) continue;
       const name = nameText(p.name);
-      if (name !== undefined) this.member(classId, p, name, p.initializer);
+      if (name !== undefined) this.method(classId, p, name, hasModifier(p, ts.SyntaxKind.StaticKeyword), p.initializer);
     }
   }
 
@@ -118,18 +170,14 @@ class DefCollector {
     for (const m of itf.members) {
       if (!ts.isMethodSignature(m)) continue;
       const name = nameText(m.name);
-      if (name !== undefined) this.member(itfId, m, name, undefined, true);
+      if (name !== undefined) this.method(itfId, m, name, false);
     }
   }
 
   // --- top level -----------------------------------------------------------------
 
-  topLevel(decl: ts.Node, name: string, kind: NodeKind, label: string, fn?: FnLike): string {
-    const id = makeId(this.relPath, name);
-    const def: TsDef = { id, label, kind, decl, owner: this.fileId, relation: "contains" };
-    if (fn) def.fn = fn;
-    this.add(def);
-    return id;
+  topLevel(spec: DefSpec): string {
+    return this.register(this.topScope, this.fileId, "contains", spec);
   }
 }
 
@@ -140,26 +188,33 @@ export function collectDefs(sf: ts.SourceFile, relPath: string): FileDefs {
   // import (`import * as ns`) resolves to it.
   c.idByDecl.set(sf, c.fileId);
   const stmts = sf.statements;
+  // Registration order decides which of two colliding declarations keeps the plain id:
+  // classes, interfaces, functions, function-valued consts — the order ids were always
+  // assigned in, so a symbol that used to win a collision keeps its id.
   for (const s of stmts) {
     if (!ts.isClassDeclaration(s) || !s.name) continue;
-    const id = c.topLevel(s, s.name.text, "class", s.name.text);
+    const name = s.name.text;
+    const id = c.topLevel({ decl: s, name, tag: "class", kind: "class", label: name });
     c.classMembers(s, id);
   }
   for (const s of stmts) {
     if (!ts.isInterfaceDeclaration(s)) continue;
-    const id = c.topLevel(s, s.name.text, "interface", s.name.text);
+    const name = s.name.text;
+    const id = c.topLevel({ decl: s, name, tag: "interface", kind: "interface", label: name });
     c.interfaceMembers(s, id);
   }
   for (const s of stmts) {
     if (!ts.isFunctionDeclaration(s) || !s.name) continue;
     if (s.body === undefined && !isAmbient(s)) continue; // overload signature
-    c.topLevel(s, s.name.text, "function", `${s.name.text}()`, s);
+    const name = s.name.text;
+    c.topLevel({ decl: s, name, tag: "function", kind: "function", label: `${name}()`, fn: s });
   }
   for (const s of stmts) {
     if (!ts.isVariableStatement(s)) continue;
     for (const vd of s.declarationList.declarations) {
       if (!ts.isIdentifier(vd.name) || !isFunctionInitializer(vd.initializer)) continue;
-      c.topLevel(vd, vd.name.text, "function", `${vd.name.text}()`, vd.initializer);
+      const name = vd.name.text;
+      c.topLevel({ decl: vd, name, tag: "function", kind: "function", label: `${name}()`, fn: vd.initializer });
     }
   }
   return { fileId: c.fileId, relPath, defs: c.defs, idByDecl: c.idByDecl };

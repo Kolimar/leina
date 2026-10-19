@@ -136,8 +136,16 @@ classDiagram
 ### El `node` (la esquina)
 
 - `id` — identificador **estable y file-scoped**. Normaliza cada parte (NFKC + casefold +
-  colapsa no-alfanuméricos) y une con `:`. Ejemplo: el método `create` de `TokenFactory` en el
-  archivo `src/auth.ts` → `src_auth_ts:tokenfactory:create`.
+  colapsa no-alfanuméricos) y une con `:`; un miembro se acota con el id de su dueño. Ejemplo:
+  `TokenFactory` en `src/auth.ts` → `src_auth_ts:tokenfactory`, y su método `create` →
+  `src_auth_ts_tokenfactory:create`.
+  El casefold puede hacer que dos declaraciones **distintas** de un mismo ámbito compartan id
+  (`interface HostSpec` + `function hostSpec`, `class Parser` + `function parser`, un miembro
+  estático y uno de instancia con el mismo nombre). La primera en orden de registro (clases,
+  interfaces, funciones, consts con valor función) conserva el id
+  plano; cada una de las siguientes recibe `:<tipo>` al final — `src_x_ts:hostspec:function` — y
+  luego `_2`, `_3`, … si también está ocupado. Las etiquetas de miembro son `method` y `static`. Las declaraciones de una misma entidad (fusión de interfaces,
+  sobrecargas, un par get/set) comparten un solo nodo.
 - `kind` — `class` · `function` · `method` · `interface` · `module` · `concept`.
 - `signature` — solo para funciones/métodos: tipo de retorno, parámetros (con tipo,
   nullabilidad, opcionalidad), modificador de acceso, flags `isAsync`/`isGenerator`.
