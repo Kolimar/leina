@@ -770,7 +770,7 @@ before 3.0, about 10% fewer characters on a `memory_context` or `memory_search` 
 | `harness contract new` | `harness_contract_new` | |
 | `harness contract show` | `harness_contract_show` | |
 | `harness contract end` | `harness_contract_end` | |
-| `harness verify` | `harness_verify` | full report + exit-code contract; returns `{skipped: true, reason}` in a workspace not trusted on this machine (see `init`) |
+| `harness verify` | `harness_verify` | full report + exit-code contract; returns `{skipped: true, reason}` in a workspace not trusted on this machine (see `init`). Like every harness tool it acts on the harness root of `root` (nearest `.harness/` or `.git`, as the CLI does for its cwd), and trust is that of the project it belongs to — a subdirectory or a nested worktree of a trusted repo runs |
 | `harness list` | `harness_rules_list` | |
 
 CLI-only, by design: `env exec` (the names-not-values contract injects secrets

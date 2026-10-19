@@ -772,6 +772,65 @@ test("(mcps-6b) harness_verify in an untrusted workspace is a no-op result, neve
   }
 });
 
+test("(mcps-6c) harness tools resolve the harness root and its trust from a subdirectory or a nested worktree", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home6c-"));
+  const repo = mkdtempSync(join(tmpdir(), "leina-mcp-repo6c-"));
+  const env = sandboxEnv(home);
+  const trivialRule = (dir: string): void => {
+    writeFileSync(join(dir, "a.txt"), "anchor\n");
+    mkdirSync(join(dir, ".harness", "rules"), { recursive: true });
+    writeFileSync(
+      join(dir, ".harness", "rules", "trivial.md"),
+      jsonFrontmatterDoc(
+        { id: "project/trivial", phase: "verify", severity: "blocking", gate: { type: "file", path: "a.txt", exists: true } },
+        "# Trivial gate",
+      ),
+    );
+  };
+  const verifyFrom = async (cwd: string): Promise<{ skipped?: boolean; exitCode?: number; report?: unknown }> => {
+    const responses = await driveMcp(cwd, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "harness_verify", arguments: { root: cwd, ruleId: "project/trivial" } } },
+    ]);
+    const res = new Map(responses.map((r) => [r.id, r])).get(2);
+    assert.ok(!res?.result?.isError, `must not error: ${res?.result?.content?.[0]?.text}`);
+    return JSON.parse(res?.result?.content?.[0]?.text ?? "{}");
+  };
+  try {
+    // A trusted repo (consent + the out-of-repo trust record) with its own harness rules.
+    mkdirSync(join(repo, ".git", "worktrees", "wt"), { recursive: true });
+    mkdirSync(join(repo, ".leina"), { recursive: true });
+    writeFileSync(join(repo, ".leina", "consent"), "enabled");
+    trivialRule(repo);
+    // A linked worktree nested under .claude/worktrees/, carrying its own rules.
+    const wt = join(repo, ".claude", "worktrees", "wt");
+    mkdirSync(wt, { recursive: true });
+    writeFileSync(join(wt, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "wt")}\n`);
+    writeFileSync(join(repo, ".git", "worktrees", "wt", "commondir"), "../..\n");
+    trivialRule(wt);
+    const sub = join(repo, "src", "deep");
+    mkdirSync(sub, { recursive: true });
+    const restoreHome = isolateLeinaHome(env.LEINA_HOME!);
+    try {
+      trustWorkspace(repo);
+    } finally {
+      restoreHome();
+    }
+
+    for (const cwd of [sub, wt]) {
+      const body = await verifyFrom(cwd);
+      assert.notEqual(body.skipped, true, `${cwd}: trusted through its project, must run`);
+      assert.equal(body.exitCode, 0, `${cwd}: ${JSON.stringify(body)}`);
+    }
+    // The harness root is the repo's, never the subdirectory.
+    assert.equal(existsSync(join(sub, ".harness")), false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("(mcps-7) memory_context clips bodies to previews; full:true and limit honoured", async () => {
   const home = mkdtempSync(join(tmpdir(), "leina-mcp-home7-"));
   const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo7-"));

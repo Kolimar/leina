@@ -815,7 +815,7 @@ campos que antes de 3.0, alrededor de un 10% menos de caracteres en una respuest
 | `harness contract new` | `harness_contract_new` | |
 | `harness contract show` | `harness_contract_show` | |
 | `harness contract end` | `harness_contract_end` | |
-| `harness verify` | `harness_verify` | reporte completo + contrato de exit codes; devuelve `{skipped: true, reason}` en un workspace no confiado en esta máquina (ver `init`) |
+| `harness verify` | `harness_verify` | reporte completo + contrato de exit codes; devuelve `{skipped: true, reason}` en un workspace no confiado en esta máquina (ver `init`). Como toda tool del harness actúa sobre la raíz del harness de `root` (el `.harness/` o `.git` más cercano, igual que la CLI con su cwd), y la confianza es la del proyecto al que pertenece — un subdirectorio o un worktree anidado de un repo confiado corre |
 | `harness list` | `harness_rules_list` | |
 
 Solo-CLI, por diseño: `env exec` (el contrato names-not-values inyecta secretos de proceso a

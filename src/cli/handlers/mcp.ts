@@ -43,7 +43,9 @@ import {
   type UpdateFields,
 } from "../../domain/memory/model.ts";
 import { readConsentFlag } from "../../application/install/consent.ts";
-import { isWorkspaceTrusted } from "../../application/install/trust.ts";
+import { isTrustedWorkspaceDir } from "../../application/install/trust.ts";
+import { findHarnessRoot, resolveTrustRoot } from "../../application/project/root.ts";
+import { shellArg } from "../io.ts";
 import {
   awaitGraphBuild,
   buildGraphShared,
@@ -249,6 +251,13 @@ export function confineOut(
 const rootOf = (a: ToolArgs): string =>
   confineRoot(optStr(a, "root"), process.cwd(), process.env.LEINA_MCP_ALLOW_ROOTS);
 
+/**
+ * The harness repo root for a (confined) tool root — the nearest ancestor holding `.harness/`
+ * or `.git`, exactly what `leina harness <sub>` uses for its cwd — so a server launched in a
+ * subdirectory or a nested worktree reads and writes the same contract and rules as the CLI.
+ */
+const harnessRootOf = (a: ToolArgs): string => findHarnessRoot(rootOf(a));
+
 async function withFreshStore<T>(
   root: string,
   use: (store: Awaited<ReturnType<typeof openFreshStoreOrThrow>>) => T,
@@ -447,7 +456,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
     const criteria = optStrArr(a, "criteria");
     const maxRetries = optNum(a, "maxRetries");
     return harnessContractNew(
-      rootOf(a),
+      harnessRootOf(a),
       {
         goal: str(a, "goal"),
         ...(taskType !== undefined ? { taskType } : {}),
@@ -459,17 +468,19 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       new HarnessGit(),
     );
   },
-  harness_contract_show: async (a) => harnessContractShow(rootOf(a)),
-  harness_contract_end: async (a) => endContract(rootOf(a)),
+  harness_contract_show: async (a) => harnessContractShow(harnessRootOf(a)),
+  harness_contract_end: async (a) => endContract(harnessRootOf(a)),
   harness_verify: async (a) => {
     // Model-driven verify runs command gates (builtin ones included, e.g. `npm test`) —
     // only in a workspace the user trusted with `leina init` (out-of-repo record; the
     // repo's own consent flag is not trust). Untrusted: a no-op result, never an error.
-    const root = rootOf(a);
-    if (!isWorkspaceTrusted(root)) {
+    // Trust is the CLI's: that of the project the harness root belongs to (a subdirectory
+    // or a worktree nested in a trusted repo is trusted; a nested independent clone is not).
+    const root = harnessRootOf(a);
+    if (!isTrustedWorkspaceDir(root)) {
       return {
         skipped: true,
-        reason: `workspace not trusted on this machine — harness verify does not run from MCP until a human runs 'leina init ${root}' (or runs 'leina harness verify' manually)`,
+        reason: `workspace not trusted on this machine — harness verify does not run from MCP until a human runs 'leina init ${shellArg(resolveTrustRoot(root))}' (or runs 'leina harness verify' manually)`,
       };
     }
     // Long-running by design: command gates spawn real processes. Each gate is
@@ -488,7 +499,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
     if (outcome.usageError !== undefined) throw new Error(outcome.usageError); // → isError
     return outcome;
   },
-  harness_rules_list: async (a) => harnessRulesList(rootOf(a)),
+  harness_rules_list: async (a) => harnessRulesList(harnessRootOf(a)),
   doctor_run: (a) => runDoctor(readPackageVersion(), rootOf(a)),
   graph_visualize: async (a) => {
     // Heavy path: lazy-import like graph_build (pulls the html-export + wiring stack).
