@@ -312,8 +312,10 @@ export function printRootHelp(): void {
       `                          + turn blanket OFF. Idempotent when already disabled.\n` +
       `  activate --hosts devin,claude [--no-user-hooks] [--preset minimal|sdd|full]\n` +
       `           [--skills a,b|all|none] [--agents a,b|all|none] [--mcp --mcp-hosts claude,cursor]\n` +
-      `                          populate ~/.leina/share + symlink skills/agents into\n` +
-      `                          Devin's global dirs; merge user-global Devin hooks (default ON).\n` +
+      `                          populate ~/.leina/share + symlink skills/agents into the\n` +
+      `                          hosts' global dirs; merge the user-global hooks of each selected\n` +
+      `                          host (Devin config, ~/.claude/settings.json; default ON — a\n` +
+      `                          deselected host or --no-user-hooks strips ours).\n` +
       `                          Selection flags choose WHICH bundled assets install (see\n` +
       `                          assets/catalog.json); omit them to keep the previous choice\n` +
       `  deactivate              global teardown: remove managed symlinks + revoke user-global\n` +

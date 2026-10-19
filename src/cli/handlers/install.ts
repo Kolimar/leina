@@ -233,8 +233,9 @@ function activateFromArgs(label: string, args: string[]): boolean {
 export function handleActivate(rest: string[]): void {
   // Populate the global share (~/.leina/share/{skills,agents,workflows}) from this
   // package's bundled assets, symlink it into Devin's global skills/agents dirs, and
-  // write the user-global Devin config (Exec grant + optional hooks). Idempotent.
-  // --no-user-hooks  skip merging the user-global Devin hooks (default: hooks ON)
+  // write the user-global host config (Devin Exec grant + the selected hosts' hooks: the
+  // Devin config and ~/.claude/settings.json). Idempotent.
+  // --no-user-hooks  no user-global hooks — strips ours (default: hooks ON per selected host)
   // --mcp            also register the MCP server user-globally (claude/cursor/windsurf)
   activateFromArgs("activate", rest);
   maybeRegisterMcpGlobal("activate", rest);

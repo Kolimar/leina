@@ -750,9 +750,9 @@ El comando "mágico" de una sola vez (una vez por máquina). Compone `activate` 
 symlinks + grant `Exec` user-global + hooks) **y** activa el blanket sentinel. `--hosts` es
 obligatorio. Idempotente. Tras `setup`, leina está disponible en toda sesión de los hosts
 elegidos y cada repo se gobierna por su consent flag. Agregá `--mcp` (con su `--mcp-hosts`
-acompañante) para registrar el server MCP durante la instalación. `--no-user-hooks` omite la
-fusión de los hooks user-global. Los flags de selección de assets funcionan igual que en
-`activate`.
+acompañante) para registrar el server MCP durante la instalación. `--no-user-hooks` deja
+afuera los hooks user-global (y quita los nuestros). Los flags de selección de assets funcionan
+igual que en `activate`.
 
 ```bash
 leina setup --hosts claude
@@ -818,8 +818,15 @@ sale con 0 con una nota de "nothing to revert".
 La mitad global de `setup` (una vez por máquina), sin activar el blanket sentinel. `--hosts`
 es obligatorio. Puebla `~/.leina/share/{skills,agents,workflows}` a partir de los assets
 empaquetados y symlinkea cada entrada en los directorios globales de cada host elegido (para
-Devin, `~/.config/devin/{skills,agents}`), y escribe la config user-global (el grant
-`Exec(leina)` + hooks). Agregá `--mcp` (con `--mcp-hosts`) para registrar el server MCP.
+Devin, `~/.config/devin/{skills,agents}`; para Claude Code, `~/.claude/{skills,agents}`), y
+escribe la config user-global: el grant `Exec(leina)` en `~/.config/devin/config.json`, más los
+hooks gestionados de cada host **elegido** — los de Devin en ese mismo archivo, los de Claude
+Code (`agent-hook <Event> --host claude --scope user`) en `~/.claude/settings.json`. Ambas
+fusiones son idempotentes y conservan todas las demás claves; la primera escritura que cambia
+un archivo existente deja una copia `<archivo>.bak-<ISO>`. A un host no elegido — o a todos, con
+`--no-user-hooks` — se le quitan los hooks gestionados de leina. Estos hooks disparan en todos
+los proyectos pero callan sin consent + confianza del workspace, y ceden ante el cableado propio
+de un proyecto. Agregá `--mcp` (con `--mcp-hosts`) para registrar el server MCP.
 
 **Selección de assets.** `--preset` elige un grupo de `assets/catalog.json` (`minimal` = core,
 `sdd` = core + SDD, `full` = todo); `--skills` / `--agents` reciben una lista separada por comas
@@ -834,7 +841,8 @@ leina activate --hosts devin,claude
 
 ### `deactivate`
 Inverso de `activate` (una vez por máquina). Corre el teardown global (desenlaza los hosts,
-revoca el grant `Exec` user-global y elimina los hooks user-global) pero **deja el blanket
+revoca el grant `Exec` user-global y elimina los hooks user-global de la config de Devin y de
+`~/.claude/settings.json`) pero **deja el blanket
 sentinel intacto** (eso es competencia de `disable`). Strip-inverse, idempotente.
 
 ### `version` (alias: `--version`, `-v`)

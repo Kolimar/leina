@@ -161,11 +161,14 @@ It also pre-authorizes the CLI so the agent never gets a permission prompt for `
 
 ## Agent hooks (advisory, scope-aware)
 
-`leina init` writes a project-scoped `.devin/hooks.v1.json`. The hooks are merge-safe
-and idempotent; a `.bak-<ISO>` is dropped on the first content-changing write to a
-pre-existing file. The user-global flavour (`~/.config/devin/config.json` `hooks` key) is
-**opt-in** via `--write-user-config` — by default `init` only writes project-scoped files
-because a user-global hook fires in every Devin project on the machine.
+`leina init` writes the project-scoped hooks of the selected hosts (`.devin/hooks.v1.json`,
+`.claude/settings.json`). The user-global flavour is written by `activate`/`setup` (default
+ON, `--no-user-hooks` opts out) for each selected host: the `hooks` key of
+`~/.config/devin/config.json` and of `~/.claude/settings.json` (`writeUserGlobalConfig` /
+`writeClaudeUserSettings` in `src/application/activate.ts`). Those writes are merge-safe and
+idempotent; a `.bak-<ISO>` copy is dropped on a content-changing write to a pre-existing file. A
+deselected host (or `--no-user-hooks`) gets our entries stripped; `deactivate`/`disable` strip
+both files. `init` never writes user-global hooks.
 
 - Subcommand: `leina agent-hook <Event>` (compat alias: `devin-hook`), payload on stdin. Managed events:
   `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`.

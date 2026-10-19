@@ -13,8 +13,10 @@ Without hooks, all of leina would be opt-in: the AI would have to remember to ru
 
 Your AI host (Devin or Claude Code) emits events during a session, wired to
 `leina agent-hook <Event>` (compatibility alias: `devin-hook`). Hooks are registered either at the **user-global** level (installed by
-`setup`/`activate`, they fire in every repo and resolve the root at runtime) or, in standalone
-mode, in a `.devin/hooks.v1.json` written by a full `init`. The JSON is produced by pure
+`setup`/`activate` for each selected host — Devin's `~/.config/devin/config.json`, Claude Code's
+`~/.claude/settings.json` — they fire in every repo and resolve the root at runtime) or, in
+standalone mode, in the project files a full `init` writes (`.devin/hooks.v1.json`,
+`.claude/settings.json`). The JSON is produced by pure
 writers, and a single gate holds the decision logic.
 
 | Event | Matcher | What the concierge does |

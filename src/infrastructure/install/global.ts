@@ -113,6 +113,8 @@ export interface InstallGlobalReport {
   agentCount: number;
   workflowCount: number;
   hostLinks: HostLink[];
+  /** The effective host selection after this run (drives the per-host user-global hooks). */
+  hosts: HostId[];
 }
 
 /** Resolve the bundled `assets/` directory next to this CLI (works in dev .ts + built .js). */
@@ -426,6 +428,7 @@ export function installGlobal(
     agentCount: listSubdirs(shareAgentsDir()).length,
     workflowCount: countWorkflowFiles(shareWorkflowsDir()),
     hostLinks,
+    hosts,
   };
 }
 

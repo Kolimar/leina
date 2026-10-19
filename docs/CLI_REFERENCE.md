@@ -714,13 +714,13 @@ that machine. `leina doctor` reports it as **workspace trust**.
 The one-shot "magic" command (once per machine). Composes `activate` (share + symlinks +
 user-global `Exec` grant + hooks) **and** turns the blanket sentinel ON. Idempotent. After `setup`,
 leina is available in every session and each repo is governed by its consent flag.
-`--no-user-hooks` skips merging the user-global hooks. Add `--mcp --mcp-hosts <...>` to register
-the MCP server during install. The asset-selection flags work as in `activate`.
+`--no-user-hooks` leaves the user-global hooks out (and strips ours). Add `--mcp --mcp-hosts <...>`
+to register the MCP server during install. The asset-selection flags work as in `activate`.
 
 ### `disable`
 Inverse of `setup` (once per machine). Turns the blanket sentinel OFF and runs the global
-teardown (unlinks hosts, revokes the CLI `Exec` grant, removes the user-global hooks).
-Strip-inverse only — removes leina's managed entries while preserving any third-party
+teardown (unlinks hosts, revokes the CLI `Exec` grant, removes the user-global hooks from the
+Devin config and `~/.claude/settings.json`). Strip-inverse only — removes leina's managed entries while preserving any third-party
 symlinks/grants/hooks. Idempotent (a second `disable` exits 0).
 
 ### `init <dir> [--hosts devin,claude] [--profile devin|windsurf] [--freshness auto|refuse] [--build] [--name <project-name>] [--mcp] [--claude-hooks] [--harness-preset generic|leina-native]`
@@ -772,8 +772,15 @@ revert" note.
 ### `activate --hosts devin,claude [--no-user-hooks] [--preset minimal|sdd|full] [--skills a,b|all|none] [--agents a,b|all|none] [--mcp --mcp-hosts <...>]`
 The global half of `setup` (once per machine), without flipping the blanket sentinel. Populate
 `~/.leina/share/{skills,agents,workflows}` from bundled assets and symlink each entry into the
-hosts' global dirs (`~/.config/devin/{skills,agents}`), and write the user-global config (the
-`Exec(leina)` grant + hooks). Add `--mcp --mcp-hosts <...>` to register the MCP server too.
+hosts' global dirs (`~/.config/devin/{skills,agents}`, `~/.claude/{skills,agents}`), and write
+the user-global config: the `Exec(leina)` grant in `~/.config/devin/config.json`, plus the
+managed hooks of each **selected** host — Devin's in that same file, Claude Code's
+(`agent-hook <Event> --host claude --scope user`) in `~/.claude/settings.json`. Both merges are
+idempotent and keep every other key; the first content-changing write to an existing file
+leaves a `<file>.bak-<ISO>` copy. A host that is not selected — or every host, with
+`--no-user-hooks` — gets leina's managed hooks stripped instead. These hooks fire in every
+project but stay silent without consent + workspace trust, and defer to a project's own
+wiring. Add `--mcp --mcp-hosts <...>` to register the MCP server too.
 
 **Asset selection.** `--preset` picks a group bundle from `assets/catalog.json` (`minimal` =
 core, `sdd` = core + SDD, `full` = everything); `--skills` / `--agents` take a comma-separated
@@ -783,7 +790,8 @@ persisted selection; `--hosts` alone changes *where* assets are linked without c
 
 ### `deactivate`
 Inverse of `activate` (once per machine). Runs the global teardown (unlinks hosts, revokes the
-CLI `Exec` grant, removes the user-global hooks) but **leaves the blanket sentinel untouched**
+CLI `Exec` grant, removes the user-global hooks from the Devin config and
+`~/.claude/settings.json`) but **leaves the blanket sentinel untouched**
 (that is `disable`'s concern). Strip-inverse, idempotent.
 
 ### `version` (aliases: `--version`, `-v`)

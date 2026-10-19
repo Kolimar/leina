@@ -12,9 +12,10 @@ Sin hooks, todo leina sería opt-in: la IA tendría que acordarse de correr
 ## Qué es un hook y cuándo dispara
 
 El host emite eventos durante una sesión, conectados a `leina agent-hook <Event>` por hooks
-que se registran a nivel **user-global** (los instala `setup`/`activate`, disparan en todos los
-repos y resuelven el root en runtime) o, en modo standalone, en un `.devin/hooks.v1.json` que
-escribe `init` (FULL).
+que se registran a nivel **user-global** (los instala `setup`/`activate` para cada host elegido —
+`~/.config/devin/config.json` de Devin, `~/.claude/settings.json` de Claude Code —, disparan en
+todos los repos y resuelven el root en runtime) o, en modo standalone, en los archivos de
+proyecto que escribe `init` (FULL): `.devin/hooks.v1.json`, `.claude/settings.json`.
 
 | Evento | Matcher | Qué hace el conserje |
 |--------|---------|----------------------|

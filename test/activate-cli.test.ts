@@ -180,3 +180,98 @@ test("(act-err-1) malformed user-global config: share/symlinks still installed, 
     cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Claude Code user-global hooks (~/.claude/settings.json) follow the host selection
+// ---------------------------------------------------------------------------
+
+function claudeSettings(home: string): { path: string; read: () => Record<string, unknown> } {
+  const path = join(home, ".claude", "settings.json");
+  return { path, read: () => JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown> };
+}
+
+function managedCommands(cfg: Record<string, unknown>): string[] {
+  const hooks = (cfg.hooks ?? {}) as Record<string, { hooks?: { command?: string }[] }[]>;
+  return Object.values(hooks)
+    .flat()
+    .flatMap((e) => e.hooks ?? [])
+    .map((h) => h.command ?? "")
+    .filter((c) => c.includes(" agent-hook "));
+}
+
+test("(act-claude-1) --hosts claude merges user-scoped hooks into ~/.claude/settings.json, keeping other keys, with one backup", () => {
+  const { env, home, cleanup } = makeSandbox();
+  try {
+    const settings = claudeSettings(home);
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(settings.path, JSON.stringify({ theme: "dark", permissions: { allow: ["Bash(ls:*)"] } }, null, 2));
+
+    assert.equal(runActivate(env, "--hosts", "claude").status, 0);
+    const cfg = settings.read();
+    assert.equal(cfg.theme, "dark", "foreign keys preserved");
+    assert.deepEqual(cfg.permissions, { allow: ["Bash(ls:*)"] });
+    const cmds = managedCommands(cfg);
+    assert.equal(cmds.length, 5, "SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop");
+    for (const c of cmds) assert.match(c, / agent-hook \w+ --host claude --scope user$/);
+    const backups = () => readdirSync(join(home, ".claude")).filter((f) => f.startsWith("settings.json.bak-"));
+    assert.equal(backups().length, 1, "first content-changing write leaves a backup");
+
+    const before = readFileSync(settings.path, "utf8");
+    assert.equal(runActivate(env, "--hosts", "claude").status, 0);
+    assert.equal(readFileSync(settings.path, "utf8"), before, "idempotent re-run");
+    assert.equal(backups().length, 1, "no backup churn on an idempotent re-run");
+  } finally {
+    cleanup();
+  }
+});
+
+test("(act-claude-2) --no-user-hooks and deselecting a host strip the managed hooks; the Exec grant stays", () => {
+  const { env, home, cleanup } = makeSandbox();
+  try {
+    assert.equal(runActivate(env, "--hosts", "devin,claude").status, 0);
+    const devinCfg = () => JSON.parse(readFileSync(join(home, ".config", "devin", "config.json"), "utf8"));
+    assert.ok(devinCfg().hooks, "Devin user hooks written");
+    assert.equal(managedCommands(claudeSettings(home).read()).length, 5, "Claude user hooks written");
+
+    assert.equal(runActivate(env, "--hosts", "claude").status, 0);
+    assert.ok(!devinCfg().hooks, "Devin deselected → its user hooks stripped");
+    assert.ok(devinCfg().permissions.allow.includes("Exec(leina)"), "grant kept");
+    assert.equal(managedCommands(claudeSettings(home).read()).length, 5, "Claude still selected");
+
+    assert.equal(runActivate(env, "--hosts", "claude", "--no-user-hooks").status, 0);
+    assert.equal(managedCommands(claudeSettings(home).read()).length, 0, "--no-user-hooks strips ours");
+  } finally {
+    cleanup();
+  }
+});
+
+test("(act-claude-3) deactivate strips the Claude Code user hooks and keeps the rest of the file", () => {
+  const { env, home, cleanup } = makeSandbox();
+  try {
+    const settings = claudeSettings(home);
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(settings.path, JSON.stringify({ theme: "dark" }));
+    assert.equal(runActivate(env, "--hosts", "claude").status, 0);
+    const r = spawnSync(process.execPath, ["--no-warnings", "--experimental-strip-types", CLI, "deactivate"], { encoding: "utf8", env });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Claude Code hooks removed/);
+    assert.deepEqual(settings.read(), { theme: "dark" });
+  } finally {
+    cleanup();
+  }
+});
+
+test("(act-claude-4) a malformed ~/.claude/settings.json is never clobbered: ✖ + exit 1", () => {
+  const { env, home, cleanup } = makeSandbox();
+  try {
+    const settings = claudeSettings(home);
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(settings.path, "{ nope");
+    const { status, stderr } = runActivate(env, "--hosts", "claude");
+    assert.equal(status, 1);
+    assert.match(stderr, /✖ activate: Claude Code user settings .*hooks NOT installed/);
+    assert.equal(readFileSync(settings.path, "utf8"), "{ nope");
+  } finally {
+    cleanup();
+  }
+});
