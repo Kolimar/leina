@@ -181,7 +181,13 @@ async function executeRun(
     };
   }
 
-  if (run.gate.onlyIfChanged && !anyFileMatches(ctx.changedFiles, run.gate.onlyIfChanged)) {
+  // An UNKNOWN changed-file set (no git) must not read as "nothing changed":
+  // the gate runs, fail-closed, instead of skipping.
+  if (
+    run.gate.onlyIfChanged &&
+    ctx.changedFilesUnknown !== true &&
+    !anyFileMatches(ctx.changedFiles, run.gate.onlyIfChanged)
+  ) {
     return {
       ...base,
       status: "skip",

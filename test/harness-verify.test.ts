@@ -221,6 +221,57 @@ describe("runVerify", () => {
   });
 });
 
+describe("outside a git repository (changed files unknown)", () => {
+  it("(verify-nogit-1) fails closed: onlyIfChanged gates run and diff gates error instead of skipping", async () => {
+    const bare = await makeTmpRepo(false);
+    const restore = isolateLeinaHome(path.join(bare.root, "no-user-config"));
+    try {
+      await bare.write(
+        ".harness/config.json",
+        JSON.stringify({
+          rules: {
+            "harness/tests-pass": { enabled: false },
+            "harness/typecheck": { enabled: false },
+            "harness/lint-clean": { enabled: false },
+            "harness/no-skipped-tests": { enabled: false },
+            "harness/leina-graph-fresh": { enabled: false },
+            "harness/leina-session-summary": { enabled: false },
+          },
+        }),
+      );
+      // Same shape as the builtin tests-pass rule: a command scoped by onlyIfChanged.
+      await bare.write(
+        ".harness/rules/tests.md",
+        jsonFrontmatterDoc(
+          {
+            id: "project/tests",
+            phase: "verify",
+            severity: "blocking",
+            gate: { type: "command", run: "exit 1", onlyIfChanged: ["src/**"] },
+          },
+          "# Tests",
+        ),
+      );
+      await bare.write("src/app.ts", "export const app = 1;\n");
+      trustWorkspace(bare.root);
+
+      const outcome = await runVerify(bare.root, { ports });
+      const byId = new Map(outcome.report.results.map((r) => [r.ruleId, r]));
+      assert.equal(byId.get("project/tests")?.status, "fail", "the command ran instead of being skipped");
+      assert.equal(byId.get("harness/no-secrets")?.status, "error");
+      assert.match(byId.get("harness/no-secrets")?.detail ?? "", /not a git repository/);
+      assert.equal(outcome.exitCode, 1);
+      assert.ok(
+        outcome.warnings.some((w) => w.includes("changed files are unknown")),
+        `warnings: ${outcome.warnings.join(" | ")}`,
+      );
+    } finally {
+      restore();
+      await bare.cleanup();
+    }
+  });
+});
+
 describe("filtered runs (--rule / --phase)", () => {
   const reportPath = () => path.join(repo.root, ".harness", "state", "current", "verify-report.json");
   const persistedFailures = async (): Promise<number> =>

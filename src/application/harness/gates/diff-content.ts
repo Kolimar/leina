@@ -78,7 +78,14 @@ export async function runDiffContentGate(gate: DiffContentGate, ctx: GateContext
     ...(paths !== undefined ? { paths } : {}),
   });
   if (stdout === null) {
-    return { status: "skip", detail: "not a git repository — diff-content gates need git" };
+    // Fail CLOSED: nothing was scanned, and "could not look" must never read
+    // as "no forbidden line added" (a secret outside git would pass silently).
+    return {
+      status: "error",
+      detail:
+        "not a git repository — the diff cannot be computed, so added lines were not scanned " +
+        "(run verify inside a git repository, or disable this rule in .harness/config.json)",
+    };
   }
 
   const added = collectAddedLines(stdout);

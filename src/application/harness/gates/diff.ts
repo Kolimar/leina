@@ -7,8 +7,25 @@ import { matchesAny } from "../../../domain/harness/glob.ts";
 import { type GateContext, type GateOutcome } from "./types.ts";
 
 export async function runDiffGate(gate: DiffGate, ctx: GateContext): Promise<GateOutcome> {
+  const allowed =
+    gate.allowedPaths ?? (ctx.contract && ctx.contract.scope.length > 0 ? ctx.contract.scope : undefined);
+  const forbidden = gate.forbiddenPaths ?? ctx.contract?.outOfScope;
+  const nothingDeclared =
+    allowed === undefined &&
+    (forbidden === undefined || forbidden.length === 0) &&
+    gate.maxChangedFiles === undefined &&
+    gate.requireChangesIn === undefined;
+
   if (!(await ctx.ports.git.isRepo(ctx.repoRoot))) {
-    return { status: "skip", detail: "not a git repository — diff gates need git" };
+    if (nothingDeclared) return { status: "pass", detail: "no scope declared — nothing to violate" };
+    // Fail CLOSED: without a diff the declared scope cannot be checked, and
+    // "could not look" must never read as "stayed in scope".
+    return {
+      status: "error",
+      detail:
+        "not a git repository — the diff cannot be computed, so the declared scope cannot be checked " +
+        "(run verify inside a git repository, or disable this rule in .harness/config.json)",
+    };
   }
 
   let changed = ctx.changedFiles;
@@ -20,10 +37,6 @@ export async function runDiffGate(gate: DiffGate, ctx: GateContext): Promise<Gat
     changed = recomputed;
   }
 
-  const allowed =
-    gate.allowedPaths ?? (ctx.contract && ctx.contract.scope.length > 0 ? ctx.contract.scope : undefined);
-  const forbidden = gate.forbiddenPaths ?? ctx.contract?.outOfScope;
-
   const problems = [
     ...scopeProblems(changed, allowed, forbidden, ctx),
     ...limitProblems(gate, changed),
@@ -32,11 +45,6 @@ export async function runDiffGate(gate: DiffGate, ctx: GateContext): Promise<Gat
   if (problems.length > 0) {
     return { status: "fail", detail: problems.join("; ") };
   }
-  const nothingDeclared =
-    allowed === undefined &&
-    forbidden === undefined &&
-    gate.maxChangedFiles === undefined &&
-    gate.requireChangesIn === undefined;
   if (nothingDeclared) {
     return { status: "pass", detail: "no scope declared — nothing to violate" };
   }

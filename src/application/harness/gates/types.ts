@@ -29,6 +29,13 @@ export interface GateContext {
   /** Repo-relative changed files vs the resolved base (empty outside git). */
   changedFiles: string[];
   /**
+   * Set when no diff could be computed (not a git repository, or git is
+   * unavailable): `changedFiles` is then NOT "nothing changed" but "unknown".
+   * Fail-closed consequences: onlyIfChanged gates run instead of skipping,
+   * and diff/diff-content gates error rather than skip.
+   */
+  changedFilesUnknown?: boolean;
+  /**
    * Files harness itself generates (from the sync lockfile). Exempt from the
    * diff-scope allowed check — they are sync's responsibility, not the task's.
    */

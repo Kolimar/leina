@@ -14,7 +14,7 @@ import {
   DEFAULT_VERIFY_PHASES,
   isPhase,
 } from "../../domain/harness/model.ts";
-import { type HarnessPorts } from "../../domain/harness/ports.ts";
+import { type GitPort, type HarnessPorts } from "../../domain/harness/ports.ts";
 import { isWorkspaceTrusted } from "../install/trust.ts";
 import { loadResolvedRules, filterRules } from "./resolver.ts";
 import { ensureStateDir, loadContract } from "./contract-io.ts";
@@ -101,19 +101,30 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
     };
   }
 
-  let baseRef: string | undefined;
-  let changed: string[] = [];
-  if (await git.isRepo(repoRoot)) {
-    baseRef = contract?.baseRef ?? (await git.mergeBase(repoRoot, resolution.config.defaultBranch));
-    changed = (await git.changedFiles(repoRoot, baseRef)) ?? [];
-  }
+  const { baseRef, changed: changedOrUnknown } = await resolveChangedFiles(
+    repoRoot,
+    git,
+    contract?.baseRef,
+    resolution.config.defaultBranch,
+  );
+  // No diff (not a repository, git unavailable): the changed files are
+  // UNKNOWN, not empty — fail closed instead of skipping everything diff-scoped.
+  const changedUnknown = changedOrUnknown === null;
+  const changed = changedOrUnknown ?? [];
 
   let rules = filterRules(resolution.rules, {
     phases,
-    changedFiles: changed,
+    // Unknown → no path/language filtering: every rule applies.
+    ...(changedUnknown ? {} : { changedFiles: changed }),
     ...(contract?.taskType !== undefined ? { taskType: contract.taskType } : {}),
   });
   const warnings = [...resolution.warnings];
+  if (changedUnknown) {
+    warnings.push(
+      "not a git repository (or git is unavailable): the changed files are unknown — " +
+        "onlyIfChanged gates run unconditionally and diff gates fail closed",
+    );
+  }
   if (options.ruleId !== undefined) {
     rules = rules.filter((r) => r.id === options.ruleId);
     if (rules.length === 0) {
@@ -127,6 +138,7 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
   const ctx: GateContext = {
     repoRoot,
     changedFiles: changed,
+    ...(changedUnknown ? { changedFilesUnknown: true } : {}),
     generatedPaths: await readGeneratedPaths(repoRoot),
     ...(baseRef !== undefined ? { baseRef } : {}),
     ...(contract !== undefined ? { contract } : {}),
@@ -156,6 +168,22 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
     exitCode: report.summary.blockingFailures > 0 ? 1 : 0,
     persisted,
   };
+}
+
+/**
+ * The base ref (contract baseRef, else merge-base with the default branch) and
+ * the files changed against it; `changed: null` when no diff can be computed.
+ */
+async function resolveChangedFiles(
+  repoRoot: string,
+  git: GitPort,
+  contractBaseRef: string | undefined,
+  defaultBranch: string,
+): Promise<{ baseRef?: string; changed: string[] | null }> {
+  if (!(await git.isRepo(repoRoot))) return { changed: null };
+  const baseRef = contractBaseRef ?? (await git.mergeBase(repoRoot, defaultBranch));
+  const changed = await git.changedFiles(repoRoot, baseRef);
+  return { ...(baseRef !== undefined ? { baseRef } : {}), changed };
 }
 
 /**

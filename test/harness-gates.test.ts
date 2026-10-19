@@ -255,11 +255,27 @@ describe("diff gate", () => {
     assert.equal(r.status, "pass");
   });
 
-  it("skips outside a git repository", async () => {
+  it("(nogit-diff-1) fails closed outside a git repository when it has a scope to enforce", async () => {
     const bare = await makeTmpRepo(false);
     try {
       const r = await runDiffGate({ type: "diff", allowedPaths: ["src/**"] }, ctx({ repoRoot: bare.root }));
-      assert.equal(r.status, "skip");
+      assert.equal(r.status, "error");
+      assert.match(r.detail, /not a git repository/);
+      const viaContract = await runDiffGate(
+        { type: "diff" },
+        ctx({ repoRoot: bare.root, contract: contract({ scope: ["src/**"] }) }),
+      );
+      assert.equal(viaContract.status, "error");
+    } finally {
+      await bare.cleanup();
+    }
+  });
+
+  it("(nogit-diff-2) passes outside a git repository when nothing is declared", async () => {
+    const bare = await makeTmpRepo(false);
+    try {
+      const r = await runDiffGate({ type: "diff" }, ctx({ repoRoot: bare.root }));
+      assert.equal(r.status, "pass");
     } finally {
       await bare.cleanup();
     }
@@ -333,6 +349,21 @@ describe("diff-content gate", () => {
   it("reports an invalid regex as an error", async () => {
     const r = await runDiffContentGate({ type: "diff-content", forbidAdded: "(", ignoreCase: false }, ctx());
     assert.equal(r.status, "error");
+  });
+
+  it("(nogit-content-1) fails closed outside a git repository (nothing could be scanned)", async () => {
+    const bare = await makeTmpRepo(false);
+    try {
+      await bare.write("src/app.ts", 'const apiKey = "sk_live_outside_git_x";\n');
+      const r = await runDiffContentGate(
+        { type: "diff-content", forbidAdded: "api[_-]?key", ignoreCase: true },
+        ctx({ repoRoot: bare.root }),
+      );
+      assert.equal(r.status, "error");
+      assert.match(r.detail, /not a git repository/);
+    } finally {
+      await bare.cleanup();
+    }
   });
 });
 
@@ -448,6 +479,14 @@ describe("engine", () => {
     });
     const results = await runGates([rule], ctx({ changedFiles: ["docs/readme.md"] }));
     assert.equal(results[0]?.status, "skip");
+  });
+
+  it("(nogit-engine-1) runs onlyIfChanged gates when the changed-file set is unknown", async () => {
+    const rule = mkRule("project/scoped", {
+      gate: { type: "command", run: "exit 1", expectExitCode: 0, onlyIfChanged: ["src/**"] },
+    });
+    const results = await runGates([rule], ctx({ changedFiles: [], changedFilesUnknown: true }));
+    assert.equal(results[0]?.status, "fail", "an unknown diff must not read as 'nothing changed'");
   });
 
   it("attaches failureMessage and remediation on failure", async () => {
