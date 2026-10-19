@@ -69,8 +69,8 @@ test("(MC-2) save --topic twice: evolves the same topic in place", () => {
 test("(MC-3) save: missing --content fails", () => {
   withEnv(({ env, dir }) => {
     const r = runCli(["memory", "save", dir, "--title", "only-title"], { env });
-    assert.notEqual(r.code, 0, "should fail without --content");
-    assert.match(r.stderr, /requires --content|--content requires/);
+    assert.equal(r.code, 2, "a missing required flag is a usage error");
+    assert.match(r.stderr, /leina memory save: missing --content/);
   });
 });
 
@@ -185,8 +185,8 @@ test("(MC-13) session: saves a session summary", () => {
 test("(MC-14) session: missing --content fails", () => {
   withEnv(({ env, dir }) => {
     const r = runCli(["memory", "session", dir], { env });
-    assert.notEqual(r.code, 0, "should fail without --content");
-    assert.match(r.stderr, /requires --content/);
+    assert.equal(r.code, 2, "a missing required flag is a usage error");
+    assert.match(r.stderr, /leina memory session: missing --content/);
   });
 });
 

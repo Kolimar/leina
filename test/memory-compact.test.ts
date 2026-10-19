@@ -402,7 +402,7 @@ test("(compact-10) CLI: memory compact reports removals and sizes; bad --keep fa
     assert.match(again.stdout, /removed 0 superseded snapshot\(s\)/, "idempotent via CLI too");
 
     const bad = runCli(["memory", "compact", repoDir, "--keep", "nope"], env);
-    assert.equal(bad.code, 1, "invalid --keep exits non-zero");
+    assert.equal(bad.code, 2, "an invalid --keep is a usage error");
     assert.match(bad.stderr, /--keep must be a non-negative integer/);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -661,7 +661,7 @@ test("(compact-18) the newest sessions always survive the sessions purge (keepSe
     const run = (...args: string[]) =>
       spawnSync(process.execPath, ["--no-warnings", "--experimental-strip-types", CLI, ...args], { encoding: "utf8", env });
     const bad = run("memory", "compact", proj, "--sessions-older-than", "30", "--keep-sessions", "-1");
-    assert.equal(bad.status, 1);
+    assert.equal(bad.status, 2, "an invalid --keep-sessions is a usage error");
     assert.match(bad.stderr, /--keep-sessions must be a non-negative integer/);
     assert.equal(run("memory", "session", proj, "--content", "only one").status, 0);
     const ok = run("memory", "compact", proj, "--sessions-older-than", "1", "--keep-sessions", "0", "--dry-run");

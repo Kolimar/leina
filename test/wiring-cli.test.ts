@@ -112,7 +112,7 @@ test("(WC-4) save --anchors with no graph still succeeds (anchors unresolved)", 
   }
 });
 
-test("(WC-5) build/refresh refuse a missing directory: exit 1, nothing created or registered", () => {
+test("(WC-5) build/refresh refuse a missing directory: usage error, nothing created or registered", () => {
   const home = mkdtempSync(join(tmpdir(), "leina-wiringcli-home5-"));
   const parent = mkdtempSync(join(tmpdir(), "leina-wiringcli-nodir-"));
   try {
@@ -121,15 +121,15 @@ test("(WC-5) build/refresh refuse a missing directory: exit 1, nothing created o
       // A free-text question passed where the dir belongs (the reported reproduction).
       const missing = join(parent, "how is trust checked");
       const r = runCli([cmd, missing], { env });
-      assert.equal(r.code, 1, `${cmd} must fail. stdout: ${r.stdout}`);
-      assert.match(r.stderr, /cannot build the graph: no such directory: .*how is trust checked/);
+      assert.equal(r.code, 2, `${cmd} must fail. stdout: ${r.stdout}`);
+      assert.match(r.stderr, new RegExp(`leina ${cmd}: no such directory: .*how is trust checked`));
       assert.equal(existsSync(missing), false, `${cmd} must not create the directory`);
     }
     // A regular file is refused too, and gets no .leina/ next to it.
     const file = join(parent, "a.ts");
     writeFileSync(file, "export const a = 1;\n");
     const r = runCli(["build", file], { env });
-    assert.equal(r.code, 1);
+    assert.equal(r.code, 2);
     assert.match(r.stderr, /not a directory/);
     assert.equal(existsSync(join(home, "projects.json")), false, "nothing registered");
   } finally {

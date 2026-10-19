@@ -1,4 +1,4 @@
-// cli/handlers/impact.ts — handler para `leina impact analyze <symbol> [--json]`.
+// cli/handlers/impact.ts — handler para `leina impact analyze [<dir>] <symbol> [--json] [--depth <n>]`.
 //
 // Reutiliza openFreshStore + analyzeSymbolImpact (la misma resolución de selectores que
 // affected/path; el mismo use-case que el tool MCP `impact_analyze`).
@@ -11,13 +11,8 @@ import { analyzeSymbolImpact, type ImpactResult } from "../../application/graph/
 import { ambiguityNote, noMatchMessage, resolutionInfo } from "../../application/graph/seed.ts";
 import type { GraphNode } from "../../domain/graph/model.ts";
 import { usageError } from "../io.ts";
-
-// Convención: si hay dos args no-flag → args[0]=dir, args[1]=symbol
-//             si hay un arg → dir=".", symbol=args[0]
-function parseImpactArgs(args: string[]): { dir: string; symbolArg: string | undefined } {
-  if (args.length >= 2) return { dir: args[0]!, symbolArg: args[1] };
-  return { dir: ".", symbolArg: args[0] };
-}
+import { positiveIntFlag } from "../args.ts";
+import { dirThen } from "../project-args.ts";
 
 // Formato humano legible
 function printHumanImpact(result: ImpactResult, seed: GraphNode): void {
@@ -30,16 +25,13 @@ function printHumanImpact(result: ImpactResult, seed: GraphNode): void {
 }
 
 async function runImpactAnalyze(source: string[]): Promise<void> {
-  const args = source.filter((a) => !a.startsWith("--"));
   const wantJson = source.includes("--json");
+  // One positional = <symbol>; two = <dir> <symbol> (project-args.ts).
+  const { root, values } = dirThen("impact analyze", source, ["<symbol>"]);
+  const depth = source.includes("--depth") ? positiveIntFlag(source, "--depth", 1) : undefined;
 
-  const { dir, symbolArg } = parseImpactArgs(args);
-  if (!symbolArg) {
-    usageError("missing <symbol>");
-  }
-
-  const store = await openFreshStore(dir);
-  const { seed, resolution, ...result } = analyzeSymbolImpact(store, symbolArg);
+  const store = await openFreshStore(root);
+  const { seed, resolution, ...result } = analyzeSymbolImpact(store, values[0]!, depth);
   store.close();
 
   if (!seed) {

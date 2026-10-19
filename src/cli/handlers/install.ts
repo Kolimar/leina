@@ -42,8 +42,27 @@ import {
 import { blanketFile, HOSTS, hostSpec, MCP_HOSTS, shareSelectionFile, userHome, type HostId, type McpHostId } from "../../infrastructure/install/share-paths.ts";
 import { mergeShellWrapper, shellInteropAdvisory } from "../../infrastructure/install/shell.ts";
 import { readPackageVersion } from "../../version.ts";
-import { fail, readIfExists } from "../io.ts";
+import { fail, readIfExists, usageError } from "../io.ts";
 import { hasFlag, optFlag } from "../args.ts";
+import { existingDir, optionalDir, projectRootOf } from "../project-args.ts";
+
+/**
+ * The repo of `init`/`deinit`/`repair`: the positional <dir> or `--project <dir>` (same
+ * thing; giving both with different values is a usage error), undefined when neither.
+ */
+function projectArg(path: string, rest: string[]): string | undefined {
+  const positional = optionalDir(path, rest);
+  const flag = optFlag(rest, "--project", undefined);
+  if (positional !== undefined && flag !== undefined && resolvePath(positional) !== resolvePath(flag)) {
+    usageError(`<dir> '${positional}' and --project '${flag}' disagree — give one of them`, path);
+  }
+  return flag ?? positional;
+}
+
+/** `deinit`: the repo exactly as given (default: the cwd); it must exist. */
+function literalProject(path: string, rest: string[]): string {
+  return existingDir(projectArg(path, rest) ?? ".");
+}
 import { runDoctor } from "../doctor.ts";
 import { deserializeSelection, parseCatalog, resolveSelection, type Selection } from "../../application/install/catalog.ts";
 import { addMcpRegistration, removeMcpRegistration } from "../../application/install/mcp-config.ts";
@@ -591,8 +610,9 @@ export async function handleInit(rest: string[]): Promise<void> {
   //
   // Neither branch touches ~/.config/devin/config.json (I3).
   // No auto-build in either branch; use --build for an on-demand foreground build (I2).
-  const positional = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
-  const project = resolvePath(optFlag(rest, "--project", undefined) ?? positional ?? ".");
+  // <dir> is taken as given (never resolved upwards): init creates the project — and the
+  // directory itself when it does not exist yet.
+  const project = resolvePath(projectArg("init", rest) ?? ".");
 
   const profileFlag = optFlag(rest, "--profile", undefined);
   const freshness   = optFlag(rest, "--freshness", "auto");
@@ -857,8 +877,8 @@ export function handleRepair(rest: string[]): void {
   //           AND consent != disabled — a deinit opt-out is always respected.
   // Never touches graph.db / memory.db (advisory only). Ends by re-running doctor;
   // remaining failures (e.g. Node version) are listed and drive a non-zero exit.
-  const positional = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
-  const project = resolvePath(optFlag(rest, "--project", undefined) ?? positional ?? ".");
+  // Like doctor, <dir> resolves to the project root it belongs to.
+  const project = projectRootOf(projectArg("repair", rest));
 
   console.log(`leina repair — ${project}\n`);
 
@@ -1016,8 +1036,7 @@ function deinitHooks(project: string, removed: string[]): void {
 export function handleDeinit(rest: string[]): void {
   // leina deinit [<dir> | --project <dir>] — same resolution as init: a positional <dir>
   // must never be silently ignored in favour of the cwd (it would deinit the wrong repo).
-  const positional = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
-  const project = resolvePath(optFlag(rest, "--project", undefined) ?? positional ?? process.cwd());
+  const project = literalProject("deinit", rest);
 
   const written: string[] = [];
   const removed: string[] = [];

@@ -79,10 +79,11 @@ const SELECTORS =
 const MEMORY_DIR_RULE =
   "<dir> is optional for every sub-command (default: the current directory) and is resolved\n" +
   "to the project root like the graph commands. Positional rules:\n" +
-  "  search / verified        the first word is <dir> only when it is an existing directory\n" +
-  "                           AND more words follow; otherwise every word is the query\n" +
+  "  search / verified        the first word is <dir> only when more words follow and it is\n" +
+  "                           an existing directory or path-shaped (./x, /x, ~/x — an error\n" +
+  "                           when missing); otherwise every word is the query\n" +
   "  get / update / resolve / reopen\n" +
-  "                           one positional = <id>; two = <dir> <id>\n" +
+  "                           one positional = <id>; two = <dir> <id> (--batch: <dir> only)\n" +
   "  every other sub-command  at most one positional: <dir>";
 
 const TYPE_VALUES = "decision | bugfix | discovery | pattern | architecture | config | preference | manual";
@@ -129,8 +130,9 @@ export const COMMANDS: readonly CommandSpec[] = [
       "nodes are left out unless --include-tests (or the question is about tests). Routes\n" +
       "through the freshness gate: a stale graph is rebuilt first (posture auto).\n\n" +
       "Positionals: one word or one quoted string is the question. With two or more, the first\n" +
-      "is <dir> only when it is an existing directory; otherwise every word is part of the\n" +
-      "question. To ask about a word that is also a directory name, give the dir first:\n" +
+      "is <dir> only when it is an existing directory or path-shaped (./x, /x, ~/x — an error\n" +
+      "when missing); otherwise every word is part of the question. To ask about a word that\n" +
+      "is also a directory name, give the dir first:\n" +
       "  leina query . src layout",
       DIR_RULE,
     ),
@@ -148,7 +150,8 @@ export const COMMANDS: readonly CommandSpec[] = [
       "One line per dependent: its label, the relation, and the file:line where the dependency\n" +
       "happens (the call site). Interfaces are followed both ways (implementations ↔ callers\n" +
       "of the port).\n\n" +
-      "Positionals: one = <symbol>; two = <dir> <symbol> (the first must be a directory).\n\n" +
+      "Positionals: one = <symbol>; two = <dir> <symbol> (the first must be a directory).\n" +
+      "The depth is the --depth flag (2.x took it as a third positional).\n\n" +
       `${SELECTORS}\n\n${DIR_RULE}`,
     flags: [{ name: "--depth", value: "<n>", desc: "levels of dependents to follow (default 3)" }],
   },
@@ -169,7 +172,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     section: "everyday",
     args: ["[<dir>]"],
     summary: "is the graph fresh? posture, last build (no rebuild)",
-    details: DIR_RULE,
+    details: paragraphs("Prints the resolved project root first, then freshness, posture and the last build.", DIR_RULE),
   },
   {
     path: "doctor",
@@ -218,7 +221,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     section: "graph",
     args: ["[<dir>]"],
     summary: "node/edge counts + edge confidence breakdown",
-    details: DIR_RULE,
+    details: paragraphs("Read-only: exits 1 with the build command when the project has no graph yet.", DIR_RULE),
   },
   {
     path: "impact",
@@ -489,8 +492,9 @@ export const COMMANDS: readonly CommandSpec[] = [
     args: ["[<dir>] [flags]"],
     summary: "per-repo opt-in: consent, trust (+ AGENTS.md, host wiring)",
     details:
-      "Acts on <dir> exactly as given (default: the current directory) — it creates the\n" +
-      "project, so it is never resolved upwards. Under blanket mode (`setup`) init is LIGHT\n" +
+      "Acts on <dir> exactly as given (default: the current directory; created when missing)\n" +
+      "— it creates the project, so it is never resolved upwards. <dir> and --project are the\n" +
+      "same argument (both, disagreeing, is a usage error). Under blanket mode (`setup`) init is LIGHT\n" +
       "(consent + .gitignore + trust). Otherwise it is FULL and needs --hosts and --profile.\n" +
       "It does not run `activate` (it only points at it when activation is missing), never\n" +
       "builds unless --build, and seeds the task harness only with --harness.",
@@ -512,7 +516,9 @@ export const COMMANDS: readonly CommandSpec[] = [
     section: "setup",
     args: ["[<dir>]"],
     summary: "per-repo teardown (inverse of init)",
-    details: "Acts on <dir> exactly as given (default: the current directory). Idempotent.",
+    details:
+      "Acts on <dir> exactly as given (default: the current directory; it must exist) — never\n" +
+      "resolved upwards. <dir> and --project are the same argument. Idempotent.",
     flags: [F.project()],
   },
   {
@@ -581,7 +587,8 @@ export const COMMANDS: readonly CommandSpec[] = [
     summary: "multi-repo: merged graph, member freshness, shared memory",
     details:
       "A workspace root is a directory with ≥2 child git repos, or a workspace.json. <dir> is\n" +
-      "the workspace root (default: the current directory), used as given.",
+      "the workspace root (default: the current directory), used as given — never resolved\n" +
+      "upwards — and must be an existing directory. --single / --workspace override detection.",
   },
   {
     path: "workspace build",
@@ -615,7 +622,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     path: "workspace memory search",
     args: ["[<dir>] <query...>"],
     summary: "full-text search across the members",
-    details: "The first word is <dir> only when it is an existing directory AND more words follow.",
+    details: "The first word is <dir> only when more words follow and it is an existing directory\nor path-shaped (./x, /x, ~/x — an error when missing).",
   },
   {
     path: "workspace visualize",

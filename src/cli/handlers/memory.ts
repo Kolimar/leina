@@ -3,8 +3,10 @@
 //               session | session-start | suggest-topic | current-project | merge-projects |
 //               reanchor | compact | export | import | sync
 //
-// handleMemory is a thin dispatcher: it resolves <dir> and routes to a per-subcommand
-// function (each kept under the Cognitive-Complexity gate) via MEM_HANDLERS.
+// handleMemory is a thin dispatcher: it splits the positionals into <dir> (resolved to the
+// project root, see memoryPositionals) and the sub-command's own words (<id>, <query>), then
+// routes to a per-subcommand function (each kept under the Cognitive-Complexity gate) via
+// MEM_HANDLERS. Missing or invalid arguments and flag values are usage errors (exit 2).
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
@@ -45,12 +47,14 @@ import { globalMemoryPath } from "../../infrastructure/install/share-paths.ts";
 import { memOpenGuarded, openEventSink } from "../wiring.ts";
 import { makeLeinaEvent } from "../../domain/events/model.ts";
 import { emitEvent } from "../../application/events/emit.ts";
-import { fail, readStdin, usageError } from "../io.ts";
+import { fail, readStdin, shellArg, usageError } from "../io.ts";
 import { renderHelp } from "../commands.ts";
-import { hasFlag, optFlag, parseBatchInput, positionals, positiveIntFlag } from "../args.ts";
+import { hasFlag, optFlag, parseBatchInput, positiveIntFlag } from "../args.ts";
+import { dirOnly, dirThen, dirThenText } from "../project-args.ts";
 
 // MemSubHandler allows async sub-handlers (needed for memSave which calls emitEvent — D3).
-type MemSubHandler = (rest: string[], dir: string) => void | Promise<void>;
+// `words` are the sub-command's positionals after <dir>: [<id>] or [<query>], else [].
+type MemSubHandler = (rest: string[], dir: string, words: string[]) => void | Promise<void>;
 
 // Batch items may carry anchors as string[] (canonical) or as the same
 // comma-separated string the --anchors flag accepts. Anything else is a hard
@@ -71,7 +75,7 @@ function validFlag<T>(parse: () => T): T {
   try {
     return parse();
   } catch (e) {
-    if (e instanceof InvalidMemoryValueError) fail(e.message);
+    if (e instanceof InvalidMemoryValueError) usageError(e.message);
     throw e;
   }
 }
@@ -136,10 +140,8 @@ async function memSave(rest: string[], dir: string): Promise<void> {
       );
       return;
     }
-    const titleIdx = rest.indexOf("--title");
-    const contentIdx = rest.indexOf("--content");
-    const title = titleIdx >= 0 ? (rest[titleIdx + 1] ?? fail("--title requires a value")) : fail("memory save requires --title");
-    const content = contentIdx >= 0 ? (rest[contentIdx + 1] ?? fail("--content requires a value")) : fail("memory save requires --content");
+    const title = optFlag(rest, "--title", undefined) ?? usageError("missing --title");
+    const content = optFlag(rest, "--content", undefined) ?? usageError("missing --content");
     const type = typeFlag(rest, "manual") ?? "manual";
     const topicKey = optFlag(rest, "--topic", undefined);
     const scope = scopeFlag(rest);
@@ -164,7 +166,7 @@ async function memSave(rest: string[], dir: string): Promise<void> {
   }
 }
 
-function memUpdate(rest: string[], dir: string): void {
+function memUpdate(rest: string[], dir: string, words: string[]): void {
   const { store, close } = memOpenGuarded(dir);
   try {
     if (hasFlag(rest, "--batch")) {
@@ -186,7 +188,7 @@ function memUpdate(rest: string[], dir: string): void {
       console.log(formatBatchResults(results, (o) => `#${o.id} (rev ${o.revision})${statusLabel(o)}`));
       return;
     }
-    const id = rest[2] && !rest[2].startsWith("--") ? rest[2] : fail("usage: memory update <dir> <id> [--title ..] [--content ..] [--type ..] [--status ..] [--resolution ..]");
+    const id = words[0]!;
     const fields: UpdateFields = {};
     const title = optFlag(rest, "--title", undefined);
     const content = optFlag(rest, "--content", undefined);
@@ -230,11 +232,11 @@ function parseResolveBatch(stdin: string, defaults: UpdateFields): { id: string;
   });
 }
 
-// memory resolve <dir> <id> [--note "..."] [--obsolete] — close an observation without
+// memory resolve [<dir>] <id> [--note "..."] [--obsolete] — close an observation without
 // deleting it: it leaves the SessionStart injection and `memory context`, and search /
 // verified / get keep returning it, labelled and ranked below active notes. Never touches
 // updated_at, so resolving cannot push a note to the top of any recency ordering.
-function memResolve(rest: string[], dir: string): void {
+function memResolve(rest: string[], dir: string, words: string[]): void {
   const note = optFlag(rest, "--note", undefined);
   const defaults: UpdateFields = { status: hasFlag(rest, "--obsolete") ? "obsolete" : "resolved" };
   if (note !== undefined) defaults.resolution = note;
@@ -246,7 +248,7 @@ function memResolve(rest: string[], dir: string): void {
       console.log(formatBatchResults(results, (o) => `#${o.id}${statusLabel(o)}`));
       return;
     }
-    const id = rest[2] && !rest[2].startsWith("--") ? rest[2] : fail("usage: memory resolve <dir> <id> [--note \"...\"] [--obsolete]");
+    const id = words[0]!;
     const obs = storeWrite(() => store.update(id, defaults));
     console.log(`Resolved #${obs.id}${statusLabel(obs)}.`);
   } finally {
@@ -254,9 +256,9 @@ function memResolve(rest: string[], dir: string): void {
   }
 }
 
-// memory reopen <dir> <id> — back to active (clears the resolution note).
-function memReopen(rest: string[], dir: string): void {
-  const id = rest[2] && !rest[2].startsWith("--") ? rest[2] : fail("usage: memory reopen <dir> <id>");
+// memory reopen [<dir>] <id> — back to active (clears the resolution note).
+function memReopen(_rest: string[], dir: string, words: string[]): void {
+  const id = words[0]!;
   const { store, close } = memOpenGuarded(dir);
   try {
     const obs = storeWrite(() => store.update(id, { status: "active" }));
@@ -287,23 +289,15 @@ function warnIfOrphanKeys(dir: string): void {
     process.stderr.write(
       `hint: project key '${det.key}' (via ${det.method}) has no memories, but ${counts.get(orphan.key)} live under '${orphan.key}' (via ${orphan.method}).\n` +
         `      If this repo was renamed or its git remote changed, migrate them with:\n` +
-        `      leina memory merge-projects ${dir} --from ${orphan.key} --to ${det.key}\n`,
+        `      leina memory merge-projects ${shellArg(resolvePath(dir))} --from ${orphan.key} --to ${det.key}\n`,
     );
   } catch {
     // fail-open
   }
 }
 
-// Flags of `memory search` / `memory verified` that take a value — their values are not
-// part of the query.
-const SEARCH_VALUE_FLAGS = ["--type", "--scope", "--limit"] as const;
-
-function searchQuery(rest: string[], verb: string): string {
-  return positionals(rest.slice(2), SEARCH_VALUE_FLAGS).join(" ") || fail(`memory ${verb} requires a query`);
-}
-
-function memSearch(rest: string[], dir: string): void {
-  const query = searchQuery(rest, "search");
+function memSearch(rest: string[], dir: string, words: string[]): void {
+  const query = words[0]!;
   const type = typeFlag(rest, undefined);
   const scope = scopeFlag(rest);
   const limit = positiveIntFlag(rest, "--limit", 10);
@@ -323,9 +317,9 @@ function memSearch(rest: string[], dir: string): void {
   }
 }
 
-function memVerified(rest: string[], dir: string): void {
+function memVerified(rest: string[], dir: string, words: string[]): void {
   // Search + classify each hit against the live graph (drift detection).
-  const query = searchQuery(rest, "verified");
+  const query = words[0]!;
   const type = typeFlag(rest, undefined);
   const scope = scopeFlag(rest);
   const limit = positiveIntFlag(rest, "--limit", 10);
@@ -348,7 +342,7 @@ function memVerified(rest: string[], dir: string): void {
   section("DO NOT USE", ctx.doNotUse);
 }
 
-function memGet(rest: string[], dir: string): void {
+function memGet(rest: string[], dir: string, words: string[]): void {
   const { store, close } = memOpenGuarded(dir);
   try {
     if (hasFlag(rest, "--batch")) {
@@ -361,7 +355,7 @@ function memGet(rest: string[], dir: string): void {
       console.log(formatBatchResults(results, (o) => `#${o.id} [${o.type}] ${o.title}`));
       return;
     }
-    const id = rest[2] ?? fail("memory get requires an id");
+    const id = words[0]!;
     const obs = storeWrite(() => store.get(id));
     if (obs) {
       const tk = obs.topicKey ? `\ntopic_key: ${obs.topicKey}` : "";
@@ -401,8 +395,8 @@ function memContext(rest: string[], dir: string): void {
 }
 
 function memSession(rest: string[], dir: string): void {
-  // leina memory session <dir> --content "summary text" [--title "..."]
-  const content = optFlag(rest, "--content", undefined) ?? fail("memory session requires --content");
+  // leina memory session [<dir>] --content "summary text" [--title "..."]
+  const content = optFlag(rest, "--content", undefined) ?? usageError("missing --content");
   const title = optFlag(rest, "--title", undefined);
   const { store, close } = memOpenGuarded(dir);
   const session = store.saveSession(content, { title });
@@ -420,7 +414,7 @@ function memSessionStart(rest: string[], dir: string): void {
 }
 
 function memSuggestTopic(rest: string[], dir: string): void {
-  const title = optFlag(rest, "--title", undefined) ?? fail("memory suggest-topic requires --title");
+  const title = optFlag(rest, "--title", undefined) ?? usageError("missing --title");
   const type = optFlag(rest, "--type", "manual") ?? "manual";
   const { store, close } = memOpenGuarded(dir);
   const s = store.suggestTopicKeyWithMatches(title, type);
@@ -430,9 +424,8 @@ function memSuggestTopic(rest: string[], dir: string): void {
 }
 
 function memCurrentProject(_rest: string[], dir: string): void {
-  // memory current-project <dir> — print derived project key + method (no DB needed)
+  // memory current-project [<dir>] — print derived project key + method (no DB needed)
   const cpDir = resolvePath(dir);
-  if (!existsSync(cpDir)) fail(`directory not found: ${cpDir}`);
   let det: ReturnType<typeof deriveProjectKey>;
   try {
     det = deriveProjectKey(cpDir);
@@ -448,18 +441,16 @@ function memCurrentProject(_rest: string[], dir: string): void {
   }
   console.log(`project_key: ${det.key}`);
   console.log(`method: ${det.method}`);
+  console.log(`root: ${cpDir}`);
   if (det.rawName) console.log(`raw_name: ${det.rawName}`);
   warnIfOrphanKeys(cpDir);
 }
 
 function memMergeProjects(rest: string[], dir: string): void {
-  // memory merge-projects <dir> --from <src-key> --to <dst-key> [--dry-run]
-  const fromKey = optFlag(rest, "--from", undefined);
-  const toKey = optFlag(rest, "--to", undefined);
-  if (!fromKey || !toKey) {
-    fail("usage: memory merge-projects <dir> --from <src-key> --to <dst-key> [--dry-run]");
-  }
-  if (fromKey === toKey) fail("--from and --to must differ");
+  // memory merge-projects [<dir>] --from <src-key> --to <dst-key> [--dry-run]
+  const fromKey = optFlag(rest, "--from", undefined) ?? usageError("missing --from <key>");
+  const toKey = optFlag(rest, "--to", undefined) ?? usageError("missing --to <key>");
+  if (fromKey === toKey) usageError("--from and --to must differ");
   const dryRun = hasFlag(rest, "--dry-run");
   const { store, close } = memOpenGuarded(dir);
   try {
@@ -532,14 +523,14 @@ function compactSizeOutcome(r: CompactReport): string {
 // pages go back to the OS. Idempotent — a second run removes nothing.
 function memCompact(rest: string[], dir: string): void {
   const keep = Number(optFlag(rest, "--keep", "0") ?? "0");
-  if (!Number.isInteger(keep) || keep < 0) fail("--keep must be a non-negative integer");
+  if (!Number.isInteger(keep) || keep < 0) usageError("--keep must be a non-negative integer");
   const daysRaw = optFlag(rest, "--sessions-older-than", undefined);
   const days = daysRaw !== undefined ? Number(daysRaw) : undefined;
   if (days !== undefined && (!Number.isFinite(days) || days <= 0)) {
-    fail("--sessions-older-than must be a positive number of days");
+    usageError("--sessions-older-than must be a positive number of days");
   }
   const keepSessions = Number(optFlag(rest, "--keep-sessions", String(DEFAULT_KEEP_SESSIONS)));
-  if (!Number.isInteger(keepSessions) || keepSessions < 0) fail("--keep-sessions must be a non-negative integer");
+  if (!Number.isInteger(keepSessions) || keepSessions < 0) usageError("--keep-sessions must be a non-negative integer");
   const dryRun = hasFlag(rest, "--dry-run");
   const { store, close } = memOpenGuarded(dir);
   let r: CompactReport;
@@ -648,7 +639,7 @@ function memImport(rest: string[], dir: string): void {
   }
 }
 
-// memory sync <dir> — two-way merge with the committable snapshot at .leina/memory-export.jsonl:
+// memory sync [<dir>] — two-way merge with the committable snapshot at .leina/memory-export.jsonl:
 // absorb the file first (teammates' entries), then rewrite it from the merged DB. Commit the
 // file and project memory travels with the repo — no server involved.
 function memSync(_rest: string[], dir: string): void {
@@ -691,6 +682,29 @@ const MEM_HANDLERS: Record<string, MemSubHandler> = {
   compact: memCompact,
 };
 
+// Sub-commands whose positional after <dir> is an observation id (unless --batch).
+const ID_SUBS = new Set(["get", "update", "resolve", "reopen"]);
+
+/**
+ * <dir> (resolved to the project root) and the sub-command's own words. Rules:
+ *   search / verified       the first word is <dir> only when it is an existing directory
+ *                           (or path-shaped) AND more words follow; the rest is the query
+ *   get/update/resolve/reopen  one positional = <id>; two = <dir> <id> (with --batch: <dir>)
+ *   every other sub-command at most one positional: <dir>
+ */
+function memoryPositionals(sub: string, args: string[]): { dir: string; words: string[] } {
+  const path = `memory ${sub}`;
+  if (sub === "search" || sub === "verified") {
+    const { root, text } = dirThenText(path, args, "<query>");
+    return { dir: root, words: [text] };
+  }
+  if (ID_SUBS.has(sub) && !hasFlag(args, "--batch")) {
+    const { root, values } = dirThen(path, args, ["<id>"]);
+    return { dir: root, words: values };
+  }
+  return { dir: dirOnly(path, args), words: [] };
+}
+
 export async function handleMemory(rest: string[]): Promise<void> {
   const sub = rest[0];
   if (sub === undefined) {
@@ -699,6 +713,6 @@ export async function handleMemory(rest: string[]): Promise<void> {
   }
   // The dispatcher validates the sub-command; this guards the in-process callers.
   const handler = MEM_HANDLERS[sub] ?? usageError(`unknown sub-command '${sub}'`, "memory");
-  const dir = rest[1] && !rest[1].startsWith("--") ? rest[1] : ".";
-  await handler(rest, dir);
+  const { dir, words } = memoryPositionals(sub, rest.slice(1));
+  await handler(rest, dir, words);
 }

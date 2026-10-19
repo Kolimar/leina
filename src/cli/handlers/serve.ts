@@ -5,7 +5,7 @@
 // all upsert), then listens until Ctrl+C.
 
 import { createServer } from "node:http";
-import { join, resolve as resolvePath } from "node:path";
+import { join } from "node:path";
 import { openFreshStore, memOpenGuarded } from "../wiring.ts";
 import { loadServeConfig } from "../../infrastructure/config/serve.ts";
 import { deriveProjectKey } from "../../application/project/detect-key.ts";
@@ -14,6 +14,7 @@ import { entryAssetsRootFrom } from "../../infrastructure/install/global.ts";
 import { createRouter } from "../serve/router.ts";
 import { optFlag } from "../args.ts";
 import { fail } from "../io.ts";
+import { dirOnly } from "../project-args.ts";
 
 // NFR-02: bind strictly to loopback — a configured/flagged non-loopback host must be
 // refused outright rather than silently accepted (a public bind would expose the whole
@@ -31,8 +32,7 @@ function recordProjectServe(root: string): void {
 }
 
 export async function handleServe(rest: string[]): Promise<void> {
-  const dirArg = rest.find((a) => !a.startsWith("--")) ?? ".";
-  const root = resolvePath(dirArg);
+  const root = dirOnly("graph serve", rest);
 
   // Freshness gate — identical contract to affected/path/query/visualize: fresh → open
   // as-is, stale+auto → rebuild then open, stale+refuse → instruct and exit, missing →

@@ -3,11 +3,12 @@
 This is the canonical reference for the `leina` command-line interface: every
 command, its flags, and what it prints.
 
-**leina exposes a command-line interface.** Every command operates on an explicit
-`<dir>` (defaulting to `.`) and runs in a short-lived process.
+**leina exposes a command-line interface.** Every per-project command takes an optional
+`<dir>` (default: the current directory, resolved to the project root — see
+[The project directory](#the-project-directory-dir)) and runs in a short-lived process.
 
 - **Invocation:** `leina <command> [args]`.
-- **Graph DB:** `<dir>/.leina/graph.db` (per project, git-ignored).
+- **Graph DB:** `<root>/.leina/graph.db` (per project, git-ignored).
 - **Memory DB:** `~/.leina/memory.db` (global, keyed by derived project key).
 
 ### Help, usage errors and exit codes
@@ -37,6 +38,34 @@ Command-specific contracts keep their documented codes: `harness verify` (`0` co
 blocking failure, `2` engine or config error), `verify` (`1` when a check fails), `env exec`
 (the child's code) and the hook entry points, which follow their host's hook contract.
 
+### The project directory (`<dir>`)
+
+Every per-project command takes an optional `<dir>`: any directory inside the project,
+defaulting to the current directory. It is resolved to the **project root** — the nearest
+enclosing directory that is already a leina project (it holds `.leina/graph.db`,
+`.leina/consent` or a `.leina/config.json` name lock), else the git toplevel; outside git, the
+directory itself unless an ancestor is a project (a multi-repo workspace root). The walk never
+crosses a git toplevel, so a nested worktree or repo stays its own project, and a monorepo
+package that was `init`ed (or name-locked) on its own stays separate. A command run from
+`src/` therefore reads and builds the repo's graph and memory instead of creating a second
+project there. `leina status` prints the resolved `root:` first.
+
+An explicit `<dir>` that is not an existing directory is a usage error (exit `2`) — never
+created. Flag values are never read as `<dir>` (`visualize --out x.html` writes `x.html`).
+Positional rules:
+
+| Command | Positionals |
+|---------|-------------|
+| `build`, `refresh`, `status`, `stats`, `visualize`, `graph serve`, `doctor`, `verify`, `repair`, `audit …`, `memory` (other sub-commands) | at most one: `<dir>` |
+| `query`, `memory search`, `memory verified` | `[<dir>] <text...>`: the first word is `<dir>` only when more words follow **and** it is an existing directory or path-shaped (`.`, `./x`, `/x`, `~/x`; a missing one is an error); otherwise every word is text |
+| `affected`, `impact analyze` | one = `<symbol>`; two = `<dir> <symbol>` |
+| `path` | two = `<from> <to>`; three = `<dir> <from> <to>` |
+| `memory get` / `update` / `resolve` / `reopen` | one = `<id>`; two = `<dir> <id>` (with `--batch`: at most `<dir>`) |
+| `init`, `deinit`, `workspace …` | at most one `<dir>`, taken **as given** (never resolved upwards); `init` creates it when missing, the others require it |
+
+`init`, `deinit` and `repair` also accept `--project <dir>` (the same argument; giving both with
+different values is a usage error).
+
 ---
 
 ## Graph commands
@@ -56,7 +85,7 @@ not N). The wait is bounded by `LEINA_BUILD_LOCK_WAIT_MS` (default `120000`); pa
 command exits `1` naming the holder's pid and the lock file to delete if it is stuck.
 `build`/`refresh` wait the same way, then always rebuild.
 
-### `build <dir> [--json]`
+### `build [<dir>] [--json]`
 Build the graph for `<dir>` into `.leina/graph.db`. With `--json`, also export a
 node-link dump to `.leina/graph.json`. Prints node/edge/file counts.
 
@@ -82,13 +111,13 @@ the read path prints only its `rebuilding ...` line — no notes, no extractor d
 with `cannot build the graph: no such directory: <abs>` and create, build and register nothing
 (previously a mistyped argument created the directory and registered an empty project).
 
-### `refresh <dir>`
+### `refresh [<dir>]`
 Force a full rebuild now, ignoring freshness. Unlike `build`, it never reuses a per-file
 extraction cached by a previous build (`.leina/extract-cache.db`) — every file is extracted
 again — so it is the escape hatch from any incremental-cache problem. Prints node/edge/file
 counts.
 
-### `status <dir>`
+### `status [<dir>]`
 Report freshness (`fresh`/`STALE` + reason), posture, last build time, and tracked file
 count, then one `degraded: <note>` line per reduced-precision path of the last build (the same
 notes `build` prints). No rebuild.
@@ -100,10 +129,12 @@ by another leina — `leina upgraded (2.1.0 → 3.0.0)`, `leina downgraded (…)
 `paths` map or `exports` field re-routes imports without touching a source). As for sources, an
 mtime-only change of a config (checkout, save-without-edit) does not count.
 
-### `stats <dir>`
-Print node count, edge count, and an edge confidence breakdown.
+### `stats [<dir>]`
+Print node count, edge count, and an edge confidence breakdown. Read-only: a project without a
+graph exits `1` with the `leina build` command to run (it no longer creates an empty
+`graph.db`).
 
-### `query <dir> <question> [--json] [--include-tests]`
+### `query [<dir>] <question...> [--json] [--include-tests]`
 Relevance-ranked subgraph for a free-text question in English or Spanish (stopwords
 dropped, camelCase split, stemmed, IDF-weighted — see
 [Search and queries](concepts/03-busqueda-y-consultas.md)). Prints the seeds, every node of
@@ -112,7 +143,10 @@ the subgraph (at most 25) with its kind and `file:line`, and its semantic edges
 `contains`/`method` edges are omitted). Test/mock/fixture nodes are penalised as seeds and left
 out of the neighbourhood unless `--include-tests` is passed or the question is about tests.
 With `--json` prints the result as one line of JSON — the same shape the MCP `graph_query`
-tool returns. Flags may sit anywhere after `<dir>`; they are never part of the question.
+tool returns. Flags may sit anywhere; they are never part of the question. With two or more
+words the first is `<dir>` only when it is an existing directory or path-shaped (see
+[The project directory](#the-project-directory-dir)) — `leina query . src layout` asks about
+"src layout".
 
 ### Selecting a symbol (`affected`, `path`, `impact analyze`)
 A symbol argument is matched **exactly** — never by substring. Accepted forms, tried in
@@ -133,8 +167,8 @@ interface/type before anything else before modules, then file path and line — 
 exact match the command prints `no exact match for "X"; did you mean:` with up to 5
 candidates (and their selectors) and exits 1.
 
-### `affected <dir> <symbol> [depth]`
-Blast radius — what (transitively, up to `depth`, default 3) depends on `<symbol>` (see
+### `affected [<dir>] <symbol> [--depth <n>]`
+Blast radius — what (transitively, up to `--depth`, default 3) depends on `<symbol>` (see
 [Selecting a symbol](#selecting-a-symbol-affected-path-impact-analyze)). **Run this before
 renaming or migrating a symbol.** Prints one line per dependent — its label (methods qualified
 as `Class.method()`), the relation, and the `file:line` where the dependency happens (the call
@@ -144,13 +178,13 @@ member are dependents too — code typed against the port runs the implementatio
 labelled `[calls via Port.method()]`; for an interface member, its implementations are
 listed (`[implements]`) along with their own callers.
 
-### `path <dir> <from> <to>`
+### `path [<dir>] <from> <to>`
 Shortest dependency path between two symbols (both resolved like `affected`'s). Prints the
 start node with its definition site, then one line per hop with the edge's `file:line`. The
 search ignores edge direction, the output does not: `--calls(EXTRACTED)--> b` means the
 previous node calls `b`; `<--calls(EXTRACTED)-- b` means `b` calls the previous node.
 
-### `impact analyze [<dir>] <symbol> [--json]`
+### `impact analyze [<dir>] <symbol> [--json] [--depth <n>]`
 First-level **impact analysis**: a bidirectional traversal from the node matching `<symbol>`
 over the impact relation set (code relations plus infra relations `deploys|reads|configures|exposes`),
 categorising every reached node into `{files, tests, services, configs}`. It crosses
@@ -161,7 +195,7 @@ resolved like `affected`'s; with no exact match it exits 1 after the did-you-mea
 (with `--json`, stdout still carries the empty shape plus `seed: null`, `note` and
 `suggestions`). Routes through the freshness gate like the other graph reads.
 
-### `visualize <dir> [--out <path>] [--drilldown] [--single|--workspace]`
+### `visualize [<dir>] [--out <path>] [--drilldown] [--single|--workspace]`
 Export an interactive, self-contained HTML graph viewer (vis-network inlined, offline) to `<path>`
 (default: `<dir>/.leina/graph.html`). Nodes are coloured and grouped by top-level folder/layer
 (readable legend: `domain`, `application`, `infrastructure`, `cli`, …) and sized by bidirectional
@@ -229,28 +263,30 @@ would be removed without rewriting the registry; `--json` prints
 
 ## Workspace commands (multi-repo)
 
-`leina workspace <build|status|detect|memory|visualize> [dir]` operates on a **multi-repo
+`leina workspace <build|status|detect|memory|visualize> [<dir>]` operates on a **multi-repo
 workspace**: a directory that is either marked by a `workspace.json` at its root or contains
 ≥2 immediate child dirs with `.git` (source reported as `flag` / `workspace.json` /
-`child-git-auto` / `git-root`). `--single` / `--workspace` flags override detection. A
-workspace is stale when **any** member repo is stale.
+`child-git-auto` / `git-root`). `<dir>` is the workspace root as given (default: the current
+directory; never resolved upwards; it must exist). `--single` / `--workspace` override
+detection for `build`, `status`, `detect` and `visualize`. A workspace is stale when **any**
+member repo is stale.
 
-### `workspace build [dir] [--json]`
+### `workspace build [<dir>] [--json] [--single|--workspace]`
 Build every member repo's graph and the merged workspace store. With `--json` also exports
 `<dir>/.leina/workspace-graph.json` (node-link dump of the merged graph). Prints merged
 node/edge counts.
 
-### `workspace status [dir]`
+### `workspace status [<dir>] [--single|--workspace]`
 Report the detected mode; in workspace mode lists each member as `[fresh|STALE] <repoKey> (<dir>)`.
 
-### `workspace detect [dir] [--single|--workspace]`
+### `workspace detect [<dir>] [--single|--workspace]`
 Print the detection result as JSON: `{mode, source, members[]}`.
 
-### `workspace memory context [dir]` / `workspace memory search [dir] <query>`
+### `workspace memory context [<dir>]` / `workspace memory search [<dir>] <query...>`
 **Federated memory** across all member repos: `context` shows recent sessions + observations
 from every member; `search` runs full-text search over all members' observations (limit 20).
 
-### `workspace visualize [dir] [--out <path>] [--drilldown]`
+### `workspace visualize [<dir>] [--out <path>] [--drilldown]`
 Equivalent to `visualize <dir> --workspace` (see above).
 
 ---
@@ -278,7 +314,7 @@ stored `--type` unvalidated; opening the db with 3.0 migrates those rows once, i
 becomes `manual`, and an unknown scope becomes `project`. `memory import` / `sync` accept the
 same legacy aliases, so an export taken before the upgrade still loads.
 
-### `memory save <dir> --title "..." --content "..." [--type t] [--topic key] [--scope s] [--anchors a,b]`
+### `memory save [<dir>] --title "..." --content "..." [--type t] [--topic key] [--scope s] [--anchors a,b]`
 Add (or upsert) an observation. Passing `--topic <key>` evolves the existing entry with that
 topic in place (prints `evolved rev N`); otherwise creates a new one. `--anchors` is a
 comma-separated list of graph symbols the observation is about (resolved against the live
@@ -287,7 +323,7 @@ graph on save).
 **Batch:** `memory save <dir> --batch [--atomic]` reads a JSON array of
 `{title, content, type?, topicKey?, scope?, anchors?}` from stdin.
 
-### `memory update <dir> <id> [--title ..] [--content ..] [--type ..] [--anchors a,b] [--status s] [--resolution "..."]`
+### `memory update [<dir>] <id> [--title ..] [--content ..] [--type ..] [--anchors a,b] [--status s] [--resolution "..."]`
 Update an observation in place by id (the revision is kept — evolve through `save --topic`
 for a new revision). `--status active|resolved|obsolete` changes its lifecycle (see
 `memory resolve`); `--resolution` is a short note that needs a non-active status. A
@@ -295,7 +331,7 @@ status-only change keeps `updated_at`, so it never reorders anything by recency.
 `--batch [--atomic]` reads a JSON array of
 `{id, title?, content?, type?, anchors?, status?, resolution?}`.
 
-### `memory resolve <dir> <id> [--note "..."] [--obsolete]`
+### `memory resolve [<dir>] <id> [--note "..."] [--obsolete]`
 Close an observation without deleting it: status `resolved` (or `obsolete` with
 `--obsolete`), stamped with today's date and the optional `--note`. A non-active note leaves
 the SessionStart injection and `memory context`; `search`, `verified` and `get` still return
@@ -305,10 +341,10 @@ the note back as active. **Batch:** `memory resolve <dir> --batch [--atomic]` re
 array of id strings or `{id, note?, obsolete?}` objects (`--note` / `--obsolete` set the
 default for every item).
 
-### `memory reopen <dir> <id>`
+### `memory reopen [<dir>] <id>`
 Set the status back to `active` and clear the resolution note.
 
-### `memory search <dir> <query> [--type t] [--scope s] [--limit N]`
+### `memory search [<dir>] <query...> [--type t] [--scope s] [--limit N]`
 Full-text search (default limit 10). Prints `#id [type] [topic] title` plus a snippet per hit.
 The query is the positional words only (flag values such as `--limit 6` are never part of
 it). Ranking — identical with FTS5 and the `LIKE` fallback, accent- and case-insensitive:
@@ -317,7 +353,7 @@ before resolved/obsolete ones, then relevance plus boosts for an exact / family 
 match and the phrase in the title or content, with a small recency prior (details in
 [concepts/04](./concepts/04-memoria.md#how-its-searched-bm25)).
 
-### `memory verified <dir> <query> [--type t] [--scope s] [--limit N]`
+### `memory verified [<dir>] <query...> [--type t] [--scope s] [--limit N]`
 Search **plus drift classification** against the live graph. Buckets results into
 `USABLE` / `WARNING` / `DO NOT USE` with a reason per hit. Prefer this over `search` when
 you're about to act on remembered context. If the graph is unavailable, verdicts degrade to
@@ -332,7 +368,7 @@ whole-file anchor into a file whose symbols the same note pins does not count as
 `resolved` notes are at best `WARNING`, `obsolete` ones `DO NOT USE`. Details in
 [concepts/05](./concepts/05-comunicacion-grafo-memoria.md).
 
-### `memory get <dir> <id>`
+### `memory get [<dir>] <id>`
 Print the full observation (title, type, topic_key, status, timestamps, revision, content). Ids are
 scoped to the current project: another project's id reads as not found (same for
 `memory update`). Every id-keyed verb (`get`, `update`, `resolve`, `reopen`, and MCP
@@ -341,7 +377,7 @@ first 8 hex chars of the id's uuid tail, or any unique prefix of at least 4; a p
 several observations is an error asking for more characters.
 **Batch:** `memory get <dir> --batch` reads a JSON array of id strings from stdin.
 
-### `memory context <dir> [--limit N]`
+### `memory context [<dir>] [--limit N]`
 Recent sessions + the most relevant **active** observations for the project (resolved/obsolete
 notes are left out). **Run this at the start of every session** to restore prior decisions.
 It shows the same ranked view the SessionStart injection and MCP `memory_context` use:
@@ -356,28 +392,28 @@ It shows the same ranked view the SessionStart injection and MCP `memory_context
   lines (~280 chars). `--limit` (default 10) sets how many notes are shown. The
   `RECENT SESSIONS` block keeps full session ids.
 
-### `memory session <dir> --content "summary" [--title "..."]`
+### `memory session [<dir>] --content "summary" [--title "..."]`
 Save a session summary. Run at the **end** of a session.
 
-### `memory session-start <dir> [--title "..."]`
+### `memory session-start [<dir>] [--title "..."]`
 Open a fresh session and print its id, to group later observations.
 
-### `memory suggest-topic <dir> --title "..." [--type t]`
+### `memory suggest-topic [<dir>] --title "..." [--type t]`
 Suggest a normalized `topic_key` for a title, plus near-matches to existing topics.
 Use before `add --topic` to avoid duplicate topics.
 
-### `memory current-project <dir>`
+### `memory current-project [<dir>]`
 Print the derived `project_key`, the detection `method`, and the raw name — no DB access.
 Useful to debug ambiguous-project failures.
 
-### `memory merge-projects <dir> --from <key> --to <key> [--dry-run]`
+### `memory merge-projects [<dir>] --from <key> --to <key> [--dry-run]`
 Move/merge all observations from one project key to another (after a remote rename, say),
 including the superseded snapshots of their topics (the revision history moves with them),
 and its sessions. On a topic collision the `--to` row wins and the `--from` row becomes one of
 its snapshots. `--dry-run` reports what would move. Older versions moved only live rows; the
 3.0 schema migration re-homes snapshots they stranded under the old key.
 
-### `memory reanchor <dir> [--dry-run]`
+### `memory reanchor [<dir>] [--dry-run]`
 Retro-anchor **existing** observations that reference a real file/symbol in prose but were
 saved without an explicit `--anchors`. Extracts only EXPLICIT references (a backticked path
 matching a node's `sourceFile`, or a symbol resolved with a functional-exact match against the
@@ -397,7 +433,7 @@ anchors, stay file-level.
 `--dry-run` reports what would be minted/rejected/upgraded without writing. Prints a summary
 (`{processed, minted, rejected, upgraded}`) plus a per-observation breakdown.
 
-### `memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--keep-sessions N] [--dry-run]`
+### `memory compact [<dir>] [--keep N] [--sessions-older-than DAYS] [--keep-sessions N] [--dry-run]`
 Garbage-collect this project's **superseded snapshots** — the prior revisions every
 `--topic` upsert keeps — then `VACUUM` so the freed pages go back to the OS. The live row of
 every topic (and every non-topic observation) is always kept; anchors of deleted snapshots
@@ -412,10 +448,10 @@ reclaimed once it closes. If the memory db is locked the command exits 1 with a 
 message (safe to re-run); if `VACUUM` cannot run, the removals are already committed, so it
 prints the counts plus a warning and exits 1.
 
-### `memory export <dir> [--out file.jsonl]`
+### `memory export [<dir>] [--out file.jsonl]`
 Dump this project's observations + anchors as JSONL (to `--out` or stdout).
 
-### `memory import <dir> [--in file.jsonl]`
+### `memory import [<dir>] [--in file.jsonl]`
 Merge an export from stdin (or `--in file.jsonl`); newer revision wins. The file is untrusted
 input (it can ship with a cloned repo), so every line is validated first — known scope and
 type values, positive integer revision, `supersededBy` shape, anchor shape, title ≤ 1000 and
@@ -425,7 +461,7 @@ project** is never touched: it is skipped and reported (`N skipped (id belongs t
 project)`). Superseded snapshots the store has already moved past (or compacted away) are
 not re-imported.
 
-### `memory sync <dir>`
+### `memory sync [<dir>]`
 Two-way merge with a committable `.leina/memory-export.jsonl` snapshot, with the same
 validation and skip rules as `import`.
 
@@ -438,7 +474,7 @@ validation and skip rules as `import`.
 confirmed vulnerabilities (a disclaimer banner is always printed). The audit pack carries
 `schemaVersion` and a `findings[]` array.
 
-### `audit [dir] [--format md|json|html] [--json] [--from <id,...>] [--max-pack-kb <N>]`
+### `audit [<dir>] [--format md|json|html] [--json] [--from <id,...>] [--max-pack-kb <N>]`
 Run the audit and render it. The format selects the renderer:
 - no `--format` → human-readable text;
 - `--format md` → Markdown report to stdout;
@@ -451,7 +487,7 @@ Run the audit and render it. The format selects the renderer:
 `--from <id,...>` overrides the entry points; `--max-pack-kb <N>` caps the JSON pack size.
 Emits an `audit.completed` event (see Events) after writing the pack.
 
-### `audit catalog|reachability|pack|visualize [dir] [flags]`
+### `audit catalog|reachability|pack|visualize [<dir>] [flags]`
 Multi-repo / workspace audit subcommands: `catalog` (repos/nodes/edges grouped by repo),
 `reachability --from <id,...> [--backward]` (reachable set from entry points), `pack` (full
 report = catalog + reachability), `visualize` (offline HTML audit subgraph). Run
@@ -464,7 +500,7 @@ report = catalog + reachability), `visualize` (offline HTML audit subgraph). Run
 An append-only local **event outbox** records domain events (`schemaVersion: 1`). It is
 **off by default** — stdout/UX are unchanged unless you opt in.
 
-### `events tail [dir] [--json]`
+### `events tail [<dir>] [--json]`
 Print the most recent events from the outbox. With `--json` prints the raw JSONL event
 objects. When persistence is off it prints a hint to enable it.
 
@@ -826,7 +862,7 @@ teardown (unlinks hosts, revokes the CLI `Exec` grant, removes the user-global h
 Devin config and `~/.claude/settings.json`). Strip-inverse only — removes leina's managed entries while preserving any third-party
 symlinks/grants/hooks. Idempotent (a second `disable` exits 0).
 
-### `init <dir> [--hosts devin,claude] [--profile devin|windsurf] [--freshness auto|refuse] [--build] [--name <project-name>] [--mcp] [--claude-hooks] [--harness] [--harness-preset generic|leina-native]`
+### `init [<dir>] [--hosts devin,claude] [--profile devin|windsurf] [--freshness auto|refuse] [--build] [--name <project-name>] [--mcp] [--claude-hooks] [--harness] [--harness-preset generic|leina-native]`
 Per-repo opt-in — **adaptive** on whether blanket is active. Always writes the consent flag
 `enabled`, ensures the `.gitignore` block, and records **workspace trust** for this machine
 (a `workspace trust (<record path>)` line in the report). Then:
@@ -908,7 +944,7 @@ Print the root help, or one command's help (`leina help memory search` is the sa
 `leina memory search --help`). An unknown command is a usage error (exit `2`), not the root
 help.
 
-### `doctor [dir] [--json]`
+### `doctor [<dir>] [--json]`
 Diagnose install + project health. Each check reports at one of four severities — **ok** /
 **info** / **warn** / **fail** — colourised, with optional or not-applicable items grouped in a
 trailing **info** section, and a final summary line. With `--json` emits the full `DoctorReport`,
@@ -929,12 +965,12 @@ for at least one host (plus memory.db, a resolvable key and graph.db). A committ
 `.leina/config.json` / `.leina/memory-export.jsonl` that exists but is git-ignored warns,
 naming the rule.
 
-### `verify [dir] [--json]`
+### `verify [<dir>] [--json]`
 Re-run the same checks as `doctor` but with an **actionable exit code** — exit `1` if any check
 is `fail`, `0` otherwise (warn-only still exits 0). With `--json` returns the `DoctorReport`
 (carrying the same `repoIdentity`) plus an `exitCode` field, for CI gating.
 
-### `repair [dir] [--no-user-hooks]`
+### `repair [<dir>] [--no-user-hooks]`
 The **write-side counterpart of `doctor`**: re-runs the idempotent install writers for
 whatever doctor finds broken, scoped strictly by **evidence of a previous install** — it
 never installs something the user never asked for:
@@ -952,7 +988,7 @@ never installs something the user never asked for:
 Never touches `graph.db` / `memory.db`, and deliberately never grants workspace trust (only
 an explicit `init` does). Ends by re-running doctor; remaining failures drive a non-zero exit.
 
-### `tui [dir]`
+### `tui [<dir>]`
 Interactive console. Menus for: status (doctor summary), install/update with **asset-group
 selection** (catalog presets / individual skills & agents), init/deinit of the current repo,
 repair, env-variable management (password-style prompt, masked listing), and uninstall. A thin

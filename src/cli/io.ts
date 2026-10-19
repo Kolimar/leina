@@ -32,6 +32,11 @@ export function usageError(msg: string, path: string = commandPath): never {
   process.exit(EXIT_USAGE);
 }
 
+/** A path as it should appear inside a suggested command: single-quoted when the shell needs it. */
+export function shellArg(p: string): string {
+  return /^[\w@%+=:,./-]+$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`;
+}
+
 /** Read a file if it exists, else return null. */
 export function readIfExists(p: string): string | null {
   return existsSync(p) ? readFileSync(p, "utf8") : null;

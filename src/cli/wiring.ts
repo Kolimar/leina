@@ -28,7 +28,7 @@ import { loadFreshnessConfig } from "../infrastructure/config/freshness.ts";
 import { WorkspaceMemoryFederator } from "../application/workspace/federation.ts";
 import { LocalEventStore } from "../infrastructure/events/local-event-store.ts";
 import { DebugEventSink } from "../infrastructure/events/debug-event-sink.ts";
-import { fail } from "./io.ts";
+import { fail, shellArg } from "./io.ts";
 import type { GraphRepository } from "../domain/graph/ports.ts";
 import type { MemoryRepository } from "../domain/memory/ports.ts";
 import type { NodeVerifier } from "../application/memory/query.ts";
@@ -172,7 +172,7 @@ export async function openFreshStoreOrThrow(
   const p = graphDbPath(root);
   const missing = !existsSync(p);
   if (missing && !opts.buildIfMissing) {
-    throw new Error(`No graph at ${p}. Run: leina build ${root}`);
+    throw new Error(`No graph at ${p}. Run: leina build ${shellArg(resolvePath(root))}`);
   }
   const rootProblem = missing ? buildRootProblem(root) : null;
   if (rootProblem) throw new Error(`cannot build the graph: ${rootProblem}`);
@@ -188,7 +188,7 @@ export async function openFreshStoreOrThrow(
     if (!missing && posture === "refuse") {
       throw new Error(
         `Graph is stale (${s.reason}) but freshness posture is "refuse". ` +
-          `Run: leina refresh ${root}`,
+          `Run: leina refresh ${shellArg(resolvePath(root))}`,
       );
     }
     // auto: rebuild then serve. Writer and reader never coexist (build, close, reopen).

@@ -12,10 +12,12 @@ import { displayLabel, nodeAt } from "../../application/graph/present.ts";
 import { compactQuery, type CompactQuery } from "../../application/graph/payloads.ts";
 import type { GraphNode } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
-import { openGraphRepo as openStore, openFreshStore, openEventSink, buildDefaultRegistry, buildRootProblem } from "../wiring.ts";
+import { openGraphRepo as openStore, openFreshStore, openEventSink, buildDefaultRegistry, buildRootProblem, graphDbPath } from "../wiring.ts";
 import { makeLeinaEvent } from "../../domain/events/model.ts";
 import { emitEvent } from "../../application/events/emit.ts";
-import { fail } from "../io.ts";
+import { fail, shellArg, usageError } from "../io.ts";
+import { positiveIntFlag } from "../args.ts";
+import { commandWords, dirOnly, dirThen, dirThenText } from "../project-args.ts";
 import { deriveProjectKey } from "../../application/project/detect-key.ts";
 import { pruneRegistry } from "../../application/project/registry.ts";
 import {
@@ -74,7 +76,7 @@ function acquireLockOrFail(root: string): void {
 }
 
 export async function handleBuild(rest: string[]): Promise<void> {
-  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : ".";
+  const root = dirOnly("build", rest);
   acquireLockOrFail(root);
   try {
     const { buildGraph } = await import("../../application/graph/build.ts");
@@ -107,7 +109,7 @@ export async function handleBuild(rest: string[]): Promise<void> {
 }
 
 export async function handleRefresh(rest: string[]): Promise<void> {
-  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : ".";
+  const root = dirOnly("refresh", rest);
   acquireLockOrFail(root);
   try {
     const { buildGraph } = await import("../../application/graph/build.ts");
@@ -135,11 +137,12 @@ export async function handleRefresh(rest: string[]): Promise<void> {
 }
 
 export function handleStatus(rest: string[]): void {
-  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : ".";
+  const root = dirOnly("status", rest);
   const s = isStale(root);
   const manifest = readManifest(root);
   const posture = loadFreshnessConfig(root);
   const built = manifest ? new Date(manifest.builtAt).toISOString() : "never";
+  console.log(`root: ${root}`);
   console.log(`status: ${s.stale ? "STALE" : "fresh"} (${s.reason})`);
   console.log(`posture: ${posture}`);
   console.log(`built: ${built}`);
@@ -149,7 +152,9 @@ export function handleStatus(rest: string[]): void {
 }
 
 export function handleStats(rest: string[]): void {
-  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : ".";
+  const root = dirOnly("stats", rest);
+  // Read-only: never create an empty graph.db for a project that was never built.
+  if (!existsSync(graphDbPath(root))) fail(`No graph at ${graphDbPath(root)}. Run: leina build ${shellArg(root)}`);
   const store = openStore(root);
   const s = store.stats();
   store.close();
@@ -175,9 +180,12 @@ function resolveOrFail(store: GraphRepository, selector: string): GraphNode {
 }
 
 export async function handleAffected(rest: string[]): Promise<void> {
-  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: affected <dir> <symbol|file> [depth]");
-  const label = rest[1] ?? fail("usage: affected <dir> <symbol|file> [depth]");
-  const depth = rest[2] ? Number(rest[2]) : 3;
+  // 2.x took the depth as a third positional; say where it went instead of "unexpected".
+  const words = commandWords("affected", rest);
+  if (words.length === 3 && /^\d+$/.test(words[2]!)) usageError(`the depth is a flag: --depth ${words[2]}`);
+  const { root, values } = dirThen("affected", rest, ["<symbol>"]);
+  const label = values[0]!;
+  const depth = positiveIntFlag(rest, "--depth", 3);
   const store = await openFreshStore(root);
   const seed = resolveOrFail(store, label);
   const hits = affected(store, seed.id, depth);
@@ -196,9 +204,8 @@ export async function handleAffected(rest: string[]): Promise<void> {
 }
 
 export async function handlePath(rest: string[]): Promise<void> {
-  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: path <dir> <from> <to>");
-  const from = rest[1] ?? fail("usage: path <dir> <from> <to>");
-  const to = rest[2] ?? fail("usage: path <dir> <from> <to>");
+  const { root, values } = dirThen("path", rest, ["<from>", "<to>"]);
+  const [from, to] = values as [string, string];
   const store = await openFreshStore(root);
   const a = resolveOrFail(store, from);
   const b = resolveOrFail(store, to);
@@ -250,14 +257,11 @@ export function handleGraphGc(rest: string[]): void {
   if (dryRun) console.log("(dry run — registry left unchanged)");
 }
 
-const QUERY_FLAGS = new Set(["--json", "--include-tests"]);
-
 export async function handleQuery(rest: string[]): Promise<void> {
-  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: query <dir> <question> [--json] [--include-tests]");
-  // Flags are flags wherever they sit after <dir>, never part of the question.
+  // Flags are flags wherever they sit, never part of the question.
   const asJson = rest.includes("--json");
   const includeTests = rest.includes("--include-tests");
-  const question = rest.slice(1).filter((a) => !QUERY_FLAGS.has(a)).join(" ");
+  const { root, text: question } = dirThenText("query", rest, "<question>");
   const store = await openFreshStore(root);
   // The compact shape (payloads.ts) is both the --json contract (graphQueryOutputSchema,
   // identical to the MCP graph_query answer) and what the text output prints.

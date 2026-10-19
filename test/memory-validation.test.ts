@@ -142,11 +142,11 @@ test("(val-5) CLI: invalid --type/--scope fail with the valid values; legacy exp
   try {
     const envA = { ...process.env, LEINA_HOME: homeA };
     const bad = runCli(["memory", "save", proj, "--title", "t", "--content", "c", "--type", "note"], envA);
-    assert.equal(bad.code, 1);
+    assert.equal(bad.code, 2, "an invalid flag value is a usage error");
     assert.match(bad.stderr, /invalid type "note": must be one of decision\|bugfix\|architecture\|discovery\|pattern\|config\|preference\|manual/);
     assert.doesNotMatch(bad.stderr, /at .*\.ts:\d+/, "no stack trace");
     const badScope = runCli(["memory", "search", proj, "x", "--scope", "galaxy"], envA);
-    assert.equal(badScope.code, 1);
+    assert.equal(badScope.code, 2);
     assert.match(badScope.stderr, /invalid scope "galaxy"/);
 
     // An export written by a 2.x store (legacy `note` type) loads into a fresh home.

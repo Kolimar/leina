@@ -3,7 +3,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -247,6 +247,7 @@ test("(R5) openEventSink con PERSIST=0 → DebugEventSink", () => {
 test("(R6-S6.1) handleMemory save con PERSIST=1 → outbox contiene memory.created", async () => {
   process.env.LEINA_EVENTS_PERSIST = "1";
   const memDir = join(tmpDir, "mem-r6");
+  mkdirSync(memDir, { recursive: true }); // an explicit <dir> must exist
   try {
     await handleMemory([
       "save",
@@ -281,6 +282,7 @@ test("(R6-S6.1) handleMemory save con PERSIST=1 → outbox contiene memory.creat
 test("(R6-S6.2) handleMemory save con sink off → stdout solo tiene la línea 'Saved'", async () => {
   delete process.env.LEINA_EVENTS_PERSIST;
   const memDir = join(tmpDir, "mem-s62");
+  mkdirSync(memDir, { recursive: true }); // an explicit <dir> must exist
 
   const spy = spyStdout();
   try {

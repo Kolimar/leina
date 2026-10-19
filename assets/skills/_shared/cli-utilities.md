@@ -8,7 +8,8 @@ agents reference this file instead of duplicating command lists.
 > them, as an `mcp__leina__*` tool — **prefer the MCP tool when present** (same parameters;
 > the tool's `root` = the `<dir>` argument, default: workspace root). CLI-only, by design:
 > `env exec` (names-not-values), `memory session-start`, `merge-projects`, `migrate`.
-> `<dir>` is the project root (default `.`). Full command/flag reference:
+> `<dir>` is optional: any directory inside the project (default: the current directory),
+> resolved to the project root. `leina <command> --help` prints each command's rules. Full reference:
 > `docs/CLI_REFERENCE.md`. Memory naming/upsert rules: `leina-memory-convention.md`.
 
 ## Always, at session start
@@ -24,7 +25,7 @@ leina memory context <dir>          # restore recent sessions + observations
 | Need | Command | MCP tool |
 |---|---|---|
 | "What relates to / depends on X?" | `leina query <dir> "<question>"` | `graph_query` |
-| Blast radius before rename/migrate | `leina affected <dir> <symbol> [depth]` | `graph_affected` |
+| Blast radius before rename/migrate | `leina affected <dir> <symbol> [--depth <n>]` | `graph_affected` |
 | How are A and B connected? | `leina path <dir> <a> <b>` | `graph_path` |
 | Is the graph stale? | `leina status <dir>` | `graph_status` |
 | Force a rebuild | `leina refresh <dir>` | `graph_build` |

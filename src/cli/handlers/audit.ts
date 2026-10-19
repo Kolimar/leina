@@ -30,7 +30,9 @@ import { MarkdownRenderer } from "../../application/render/markdown-renderer.ts"
 import { JsonRenderer } from "../../application/render/json-renderer.ts";
 import { HtmlRenderer } from "../../application/render/html-renderer.ts";
 import { entryAssetsRootFrom } from "../../infrastructure/install/global.ts";
-import { fail } from "../io.ts";
+import { fail, shellArg, usageError } from "../io.ts";
+import { optFlag } from "../args.ts";
+import { dirOnly } from "../project-args.ts";
 
 // ---------------------------------------------------------------------------
 // --format parser
@@ -41,12 +43,9 @@ type AuditFormat = "md" | "json" | "html";
 function parseFormat(rest: string[]): AuditFormat | undefined {
   // --json is an alias for --format json (backward compat)
   if (rest.includes("--json")) return "json";
-  const idx = rest.indexOf("--format");
-  if (idx >= 0 && idx + 1 < rest.length) {
-    const val = rest[idx + 1];
-    if (val === "md" || val === "json" || val === "html") return val;
-  }
-  return undefined;
+  const val = optFlag(rest, "--format", undefined);
+  if (val === undefined || val === "md" || val === "json" || val === "html") return val;
+  return usageError(`--format must be md, json or html, got '${val}'`);
 }
 
 function optFlagValue(rest: string[], flag: string): string | undefined {
@@ -65,18 +64,18 @@ function parseEntryIds(rest: string[]): string[] {
 }
 
 function parseMaxPackKb(rest: string[]): number {
-  const idx = rest.indexOf("--max-pack-kb");
-  if (idx >= 0 && idx + 1 < rest.length) {
-    const val = Number(rest[idx + 1]);
-    if (Number.isFinite(val) && val > 0) return val * 1024;
-  }
-  return 128 * 1024; // default 128 KB
+  const raw = optFlag(rest, "--max-pack-kb", undefined);
+  if (raw === undefined) return 128 * 1024; // default 128 KB
+  const val = Number(raw);
+  if (!Number.isFinite(val) || val <= 0) usageError(`--max-pack-kb must be a positive number, got '${raw}'`);
+  return val * 1024;
 }
 
 function requireGraph(root: string): void {
   const p = graphDbPath(root);
   if (!existsSync(p)) {
-    fail(`No graph at ${p}. Run: leina workspace build ${root} (or leina build ${root})`);
+    const r = shellArg(root);
+    fail(`No graph at ${p}. Run: leina build ${r} (a multi-repo workspace root: leina workspace build ${r})`);
   }
 }
 
@@ -97,7 +96,7 @@ function printDisclaimer(): void {
  *   (no --format → original UX text output)
  */
 export async function handleAudit(rest: string[]): Promise<void> {
-  const dir = rest.find((a) => !a.startsWith("--")) ?? ".";
+  const dir = dirOnly("audit", rest);
   const format = parseFormat(rest);
   const resolved = resolvePath(dir);
   const maxBytes = parseMaxPackKb(rest);
@@ -177,7 +176,7 @@ export async function handleAudit(rest: string[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export function handleAuditCatalog(rest: string[]): void {
-  const dir = rest.find((a) => !a.startsWith("--")) ?? ".";
+  const dir = dirOnly("audit catalog", rest);
   const wantJson = rest.includes("--json");
   const resolved = resolvePath(dir);
   requireGraph(resolved);
@@ -214,7 +213,7 @@ export function handleAuditCatalog(rest: string[]): void {
 // ---------------------------------------------------------------------------
 
 export function handleAuditReachability(rest: string[]): void {
-  const dir = rest.find((a) => !a.startsWith("--")) ?? ".";
+  const dir = dirOnly("audit reachability", rest);
   const wantJson = rest.includes("--json");
   const backward = rest.includes("--backward");
   const resolved = resolvePath(dir);
@@ -251,7 +250,7 @@ export function handleAuditReachability(rest: string[]): void {
 // ---------------------------------------------------------------------------
 
 export async function handleAuditPack(rest: string[]): Promise<void> {
-  const dir = rest.find((a) => !a.startsWith("--")) ?? ".";
+  const dir = dirOnly("audit pack", rest);
   const wantJson = rest.includes("--json");
   const resolved = resolvePath(dir);
   const maxBytes = parseMaxPackKb(rest);
@@ -304,7 +303,7 @@ export async function handleAuditPack(rest: string[]): Promise<void> {
  * a fresh workspace-level graph. Prints the disclaimer on every run (NFR-08).
  */
 export async function handleAuditVisualize(rest: string[]): Promise<void> {
-  const dir = rest.find((a) => !a.startsWith("--")) ?? ".";
+  const dir = dirOnly("audit visualize", rest);
   const resolved = resolvePath(dir);
   const maxBytes = parseMaxPackKb(rest);
   const explicitFromIds = parseEntryIds(rest);

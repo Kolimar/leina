@@ -193,10 +193,10 @@ test("(GC-14) affected: an ambiguous name uses the best match and lists the othe
   }
 });
 
-test("(GC-8) affected: missing args prints usage and fails", () => {
+test("(GC-8) affected: missing args is a usage error (exit 2)", () => {
   const r = runCli(["affected"]);
-  assert.notEqual(r.code, 0, "should fail without <dir>");
-  assert.match(r.stderr, /usage: affected/);
+  assert.equal(r.code, 2, "should fail without <symbol>");
+  assert.match(r.stderr, /leina affected: missing <symbol>\nrun 'leina affected --help' for usage/);
 });
 
 test("(GC-9) path: prints a path or a 'no path' notice", () => {

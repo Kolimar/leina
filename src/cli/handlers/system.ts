@@ -4,6 +4,7 @@ import { runDoctor, formatDoctor } from "../doctor.ts";
 import { parseAgentHookArgs, runAgentGate, runHarnessAgentGate, resolveHookRoots, shouldDeferInvocation } from "../agent-gate.ts";
 import { readPackageVersion } from "../../version.ts";
 import { readStdin, usageError } from "../io.ts";
+import { dirOnly } from "../project-args.ts";
 import { capabilities } from "../../application/capabilities/registry.ts";
 import type { Capability } from "../../domain/capabilities/model.ts";
 import { WIRED_SCIP_LANGS } from "../../infrastructure/extractors/semantic/scip-indexer.ts";
@@ -12,7 +13,7 @@ export function handleDoctor(rest: string[]): never {
   // Read-only health diagnostics across env, global share, host symlinks and the project.
   // Exits 1 if any check failed, else 0.
   // Supports --json to emit the raw DoctorReport as JSON to stdout.
-  const root = rest.find((a) => !a.startsWith("--")) ?? ".";
+  const root = dirOnly("doctor", rest);
   const wantJson = rest.includes("--json");
   const report = runDoctor(readPackageVersion(), root);
   if (wantJson) {
@@ -286,7 +287,7 @@ export function handleCapabilities(rest: string[]): void {
 export function handleVerify(rest: string[]): never {
   // Reuses runDoctor()/formatDoctor() without modifying doctor.ts (REQ-VC-2).
   // exit 1 ONLY when at least one check has status "fail"; "warn" alone → exit 0.
-  const root = rest.find((a) => !a.startsWith("--")) ?? ".";
+  const root = dirOnly("verify", rest);
   const wantJson = rest.includes("--json");
   const report = runDoctor(readPackageVersion(), root);
 

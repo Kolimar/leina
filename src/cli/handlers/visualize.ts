@@ -25,8 +25,9 @@ import {
   renderConstellationHtml,
   renderGraphHtml,
 } from "../../application/graph/html-export.ts";
-import { fail } from "../io.ts";
+import { fail, shellArg } from "../io.ts";
 import { optFlag } from "../args.ts";
+import { dirOnly, existingDir, optionalDir } from "../project-args.ts";
 
 interface VisualizeFlags {
   single: boolean;
@@ -44,7 +45,11 @@ export interface VisualizeResult {
 
 /** Despacha el comando `visualize [<dir>] [--out <path>] [--drilldown] [--single|--workspace]`. */
 export async function handleVisualize(rest: string[]): Promise<void> {
-  await runVisualize(rest, {});
+  // A workspace root is taken as given; any other <dir> resolves to its project root.
+  const root = rest.includes("--workspace")
+    ? existingDir(optionalDir("visualize", rest) ?? ".")
+    : dirOnly("visualize", rest);
+  await runVisualize(root, rest, {});
 }
 
 /**
@@ -52,7 +57,7 @@ export async function handleVisualize(rest: string[]): Promise<void> {
  * Forza modo workspace (equivale a `visualize <dir> --workspace`).
  */
 export async function handleWorkspaceVisualize(rest: string[]): Promise<void> {
-  await runVisualize(rest, { workspace: true });
+  await runVisualize(existingDir(optionalDir("workspace visualize", rest) ?? "."), rest, { workspace: true });
 }
 
 /**
@@ -60,14 +65,13 @@ export async function handleWorkspaceVisualize(rest: string[]): Promise<void> {
  * `workspace visualize`.
  */
 async function runVisualize(
+  root: string,
   rest: string[],
   force: { workspace?: boolean } = {},
 ): Promise<void> {
-  // Parsear dir (primer arg que no empieza con "--") y flags
-  const dirArg = rest.find((a) => !a.startsWith("--")) ?? ".";
   let result: VisualizeResult;
   try {
-    result = await runVisualizeToFile(resolve(dirArg), {
+    result = await runVisualizeToFile(root, {
       out: optFlag(rest, "--out", undefined),
       drilldown: rest.includes("--drilldown"),
       single: rest.includes("--single"),
@@ -145,7 +149,7 @@ export async function runVisualizeToFile(
   // antes de commitear: esperarlo para que el chequeo de existencia vea su resultado.
   await awaitGraphBuild(root);
   const p = join(root, ".leina", "graph.db");
-  if (!existsSync(p)) throw new Error(`No graph at ${p}. Run: leina build ${root}`);
+  if (!existsSync(p)) throw new Error(`No graph at ${p}. Run: leina build ${shellArg(resolve(root))}`);
   // Throwing gate, never openFreshStore: its fail() would process.exit the MCP server.
   const store = await openFreshStoreOrThrow(root);
   try {

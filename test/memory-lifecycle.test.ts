@@ -242,7 +242,7 @@ test("(life-10) CLI: resolve / reopen / update --status / resolve --batch; conte
     assert.match(runCli(["memory", "context", proj], env).stdout, /alpha/);
 
     const bad = runCli(["memory", "update", proj, a, "--status", "done"], env);
-    assert.equal(bad.code, 1);
+    assert.equal(bad.code, 2, "an invalid flag value is a usage error");
     assert.match(bad.stderr, /invalid status "done": must be one of active\|resolved\|obsolete/);
     const unknown = runCli(["memory", "resolve", proj, "nope:1"], env);
     assert.equal(unknown.code, 1);
