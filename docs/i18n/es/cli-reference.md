@@ -26,6 +26,11 @@ La posture se configura por proyecto (`.leina/config.json`, clave `freshness`).
 Construye el grafo de `<dir>` en `.leina/graph.db`. Con `--json`, además exporta un
 dump node-link a `.leina/graph.json`. Imprime el recuento de nodes/edges/archivos.
 
+Los archivos fuente de más de **4 MiB** se omiten (diagnóstico `[build] skipped <archivo>` por
+stderr; quedan listados en `oversizeSkipped` del reporte del build) y el chequeo de freshness
+los ignora igual, así que un archivo generado o vendorizado enorme no puede agotar la memoria
+ni dejar el grafo permanentemente stale.
+
 ### `refresh <dir>`
 Fuerza una reconstrucción ahora mismo, ignorando la freshness.
 
@@ -36,9 +41,11 @@ recuento de archivos rastreados. No reconstruye.
 ### `stats <dir>`
 Imprime el recuento de nodes, el recuento de edges y un desglose de confianza de edges.
 
-### `query <dir> <question>`
+### `query <dir> <question> [--json]`
 Subgrafo puntuado por términos para una pregunta en texto libre. Imprime los seeds resueltos
-y las edges `source --relation--> target` del subgrafo.
+y las edges `source --relation--> target` del subgrafo. Con `--json` (en cualquier posición
+después de `<dir>`; nunca forma parte de la pregunta) imprime el resultado como una línea de
+JSON — `{seeds, nodes, edges}`, la misma forma que devuelve la tool MCP `graph_query`.
 
 ### `affected <dir> <label> [depth]`
 Blast radius — qué depende (transitivamente, hasta `depth`, por defecto 3) del símbolo que
@@ -206,7 +213,9 @@ cuando estés por actuar sobre contexto recordado. Si el grafo no está disponib
 veredictos degradan a no verificados (igual se imprimen).
 
 ### `memory get <dir> <id>`
-Imprime la observación completa (title, type, topic_key, timestamps, revision, content).
+Imprime la observación completa (title, type, topic_key, timestamps, revision, content). Los
+ids están acotados al proyecto actual: el id de otro proyecto se lee como inexistente (igual en
+`memory update`).
 **Batch:** `memory get <dir> --batch` lee desde stdin un array JSON de strings de id.
 
 ### `memory context <dir> [--limit N]`
@@ -249,16 +258,28 @@ anchors de los snapshots borrados se eliminan en la misma transacción. `--keep 
 N snapshots más nuevos por topic (default 0). Las sesiones no se tocan salvo que
 `--sessions-older-than DAYS` purgue las inactivas hace más de esa cantidad de días.
 `--dry-run` informa los conteos sin escribir. Solo compacta el proyecto actual y re-correrlo es
-idempotente. Imprime los conteos y el tamaño de la db antes/después.
+idempotente. Imprime los conteos y el tamaño de la db antes/después — o, si otro proceso de
+leina tiene la db abierta, que el espacio se recupera cuando se cierre. Si la db de memoria
+está bloqueada, sale con 1 y un mensaje de una línea (es seguro re-correrlo); si `VACUUM` no
+puede correr, las eliminaciones ya quedaron commiteadas, así que imprime los conteos más un
+aviso y sale con 1.
 
 ### `memory export <dir> [--out file.jsonl]`
 Vuelca las observaciones + anchors de este proyecto como JSONL (a `--out` o a stdout).
 
 ### `memory import <dir> [--in file.jsonl]`
-Fusiona un export desde stdin (o `--in file.jsonl`); gana la revisión más nueva.
+Fusiona un export desde stdin (o `--in file.jsonl`); gana la revisión más nueva. El archivo es
+input no confiable (puede venir con un repo clonado), así que primero se valida cada línea —
+valores de scope y type conocidos, revision entera positiva, forma de `supersededBy` y de los
+anchors, title ≤ 1000 y content ≤ 256 KiB caracteres — y cualquier línea inválida hace fallar
+todo el import indicando la línea. Los timestamps importados se recortan a la hora del import.
+Un id que pertenece a **otro proyecto** nunca se toca: se omite y se informa
+(`N skipped (id belongs to another project)`). Los snapshots superseded que el store ya superó
+(o compactó) no se vuelven a importar.
 
 ### `memory sync <dir>`
-Merge bidireccional con un snapshot commiteable `.leina/memory-export.jsonl`.
+Merge bidireccional con un snapshot commiteable `.leina/memory-export.jsonl`, con las mismas
+reglas de validación y omisión que `import`.
 
 ---
 
@@ -313,8 +334,12 @@ opt-in podría drenar — hoy no existe ninguna dependencia de nube.
 `leina env <sub>` gestiona credenciales de servicio para skills que llaman a servicios
 autenticados, bajo el **contrato names-not-values**: un agente de IA solo maneja *nombres*
 de variables — los valores nunca viajan por argv, el contexto del modelo ni el stdout
-capturado. El almacenamiento es un `~/.leina/.env` global (0600, texto plano). `env list`
-advierte si los permisos del archivo son legibles por grupo/otros.
+capturado. El almacenamiento es un `~/.leina/.env` global (0600, texto plano). Cada escritura
+reemplaza el archivo de forma atómica (un temporal 0600 renombrado encima), así que un crash o
+un disco lleno nunca truncan el store y un valor nuevo nunca se escribe en un archivo con
+permisos aflojados. `env list` advierte si los permisos del archivo son legibles por
+grupo/otros. Las claves matchean por nombre aun en líneas editadas a mano (`KEY =valor`); una
+clave repetida resuelve a su último valor y `set` colapsa los duplicados.
 
 ### `env set <KEY>`
 Guarda un valor. Interactivo: prompt oculto en la TTY (el input no se hace echo).
@@ -326,12 +351,14 @@ nombres de key deben matchear `[A-Za-z_][A-Za-z0-9_]*`.
 Imprime los nombres de variables guardadas con valores **enmascarados**.
 
 ### `env get <KEY> [--reveal]`
-Enmascarado por defecto. `--reveal` imprime el valor plano **solo cuando stdout es una TTY
-real** — un agente que esté conduciendo no puede capturarlo canalizándolo; el comando falla
-con una indicación hacia `env exec`.
+Enmascarado por defecto. `--reveal` imprime el valor plano **solo cuando stdout es una TTY** —
+canalizarlo o redirigirlo falla con una indicación hacia `env exec`. Límite honesto: una TTY no
+prueba que haya un humano — un runner de agentes que asigna una pseudo-terminal pasa el chequeo,
+así que los agentes nunca deben correr `--reveal` (ver la sección de riesgos residuales de la
+skill `authenticated-api`).
 
 ### `env unset <KEY>`
-Elimina la variable.
+Elimina la variable (todas las líneas que la definen).
 
 ### `env exec [--only K1,K2] -- <cmd...>`
 Corre `<cmd>` con las variables guardadas inyectadas en su entorno (todas, o solo el subset
@@ -342,7 +369,10 @@ de `--only`). El secreto viaja **de proceso a proceso**: con comillas simples, l
 leina env exec --only MY_TOKEN -- sh -c 'curl -H "Authorization: Bearer $MY_TOKEN" https://api...'
 ```
 
-Sale con el código de salida del hijo.
+Sale con el código de salida del hijo. El contrato termina en la **salida** del hijo: el hijo
+hereda la terminal, así que cualquier cosa que imprima (`curl -v` mostrando el header
+`Authorization`, un crash que vuelca su entorno, un `env` pelado) llega a la transcripción —
+mantené mínima la salida del hijo (`curl -sf`).
 
 ---
 
@@ -473,6 +503,19 @@ deberían preferir las MCP tools cuando el host las expone (JSON estructurado, s
 de shell); cada tool toma un `root` opcional — el argumento `<dir>` de la forma CLI (por
 defecto: el cwd en el que el host lanzó el server, es decir, la raíz del workspace).
 
+**Confinamiento del root.** `root` viene del modelo, así que bajo prompt injection lo controla
+un atacante. El `root` de cada tool tiene que resolver **dentro del cwd del server** — después de
+resolver symlinks (`realpath`), así que un link dentro del workspace que apunta afuera no se
+escapa; un root que no se puede resolver de forma segura (link colgante, loop, sin acceso) se
+rechaza. Para permitir otros roots a propósito, lanzá el server con
+`LEINA_MCP_ALLOW_ROOTS=/ruta/abs[:/ruta/abs...]` (`:`/`;` según la plataforma, o `,`); las rutas
+listadas y sus subdirectorios se aceptan, resueltas de la misma forma. Las tools devuelven la
+ruta real resuelta.
+
+**Los argumentos numéricos** son enteros, truncados y acotados a límites fijos (`depth` 1–20,
+`maxNodes` 1–200, `limit` 1–100, `sessionLimit` 1–50); un valor no numérico usa el default de
+la tool.
+
 | CLI | MCP tool | Notas |
 |---|---|---|
 | `query` | `graph_query` | construye el grafo en el primer uso |
@@ -480,24 +523,24 @@ defecto: el cwd en el que el host lanzó el server, es decir, la raíz del works
 | `path` | `graph_path` | |
 | `stats` | `graph_stats` | |
 | `status` | `graph_status` | |
-| `build` / `refresh` | `graph_build` | |
-| `impact analyze` | `impact_analyze` | |
-| `visualize` | `graph_visualize` | devuelve el PATH del HTML generado |
+| `build` / `refresh` | `graph_build` | las llamadas concurrentes para el mismo root comparten un solo build; las lecturas lo esperan |
+| `impact analyze` | `impact_analyze` | resuelve `symbol` igual que la CLI; respeta `depth`; devuelve `{seed, impacted, note?}` (`seed: null` si nada matchea) |
+| `visualize` | `graph_visualize` | devuelve el PATH del HTML generado; `out` se resuelve contra `root`, se confina igual que `root` y tiene que terminar en `.html` |
 | `audit` | `audit_run` | |
 | `doctor` | `doctor_run` | exento de consentimiento (el diagnóstico siempre está permitido) |
 | `memory save` | `memory_add` | batch: `items[]` + `atomic` |
 | `memory search` | `memory_search` | |
-| `memory verified` | `memory_verified` | |
-| `memory context` | `memory_context` | previews por defecto (respeta el presupuesto de tokens); `limit`, `sessionLimit`, `full:true` |
-| `memory get` | `memory_get` | batch: `ids[]` |
-| `memory update` | `memory_update` | |
+| `memory verified` | `memory_verified` | respeta `type` |
+| `memory context` | `memory_context` | previews por defecto (respeta el presupuesto de tokens; `contentChars` cuenta code points); `limit`, `sessionLimit`, `full:true` |
+| `memory get` | `memory_get` | batch: `ids[]`; los ids de otros proyectos se leen como inexistentes |
+| `memory update` | `memory_update` | solo ids del proyecto actual |
 | `memory suggest-topic` | `memory_suggest_topic` | |
 | `memory session` | `memory_session` | |
 | `agent-hook SessionStart` | `context_build` | |
 | `harness contract new` | `harness_contract_new` | |
 | `harness contract show` | `harness_contract_show` | |
 | `harness contract end` | `harness_contract_end` | |
-| `harness verify` | `harness_verify` | reporte completo + contrato de exit codes |
+| `harness verify` | `harness_verify` | reporte completo + contrato de exit codes; devuelve `{skipped: true, reason}` en un workspace no confiado en esta máquina (ver `init`) |
 | `harness list` | `harness_rules_list` | |
 
 Solo-CLI, por diseño: `env exec` (el contrato names-not-values inyecta secretos de proceso a

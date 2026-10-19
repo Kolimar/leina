@@ -24,6 +24,11 @@ All read commands (`query`, `affected`, `path`) route through the **freshness ga
 Build the graph for `<dir>` into `.leina/graph.db`. With `--json`, also export a
 node-link dump to `.leina/graph.json`. Prints node/edge/file counts.
 
+Source files larger than **4 MiB** are skipped (a `[build] skipped <file>` diagnostic on
+stderr; listed in the build report's `oversizeSkipped`) and the freshness check ignores them
+the same way, so a huge generated or vendored file can neither exhaust memory nor keep the
+graph permanently stale.
+
 ### `refresh <dir>`
 Force a rebuild now, ignoring freshness. Prints node/edge/file counts.
 
@@ -34,9 +39,11 @@ count. No rebuild.
 ### `stats <dir>`
 Print node count, edge count, and an edge confidence breakdown.
 
-### `query <dir> <question>`
+### `query <dir> <question> [--json]`
 Term-scored subgraph for a free-text question. Prints the resolved seeds and the
-`source --relation--> target` edges of the subgraph.
+`source --relation--> target` edges of the subgraph. With `--json` (anywhere after `<dir>`;
+it is never part of the question) prints the result as one line of JSON —
+`{seeds, nodes, edges}`, the same shape the MCP `graph_query` tool returns.
 
 ### `affected <dir> <label> [depth]`
 Blast radius — what (transitively, up to `depth`, default 3) depends on the symbol matching
@@ -189,7 +196,9 @@ you're about to act on remembered context. If the graph is unavailable, verdicts
 unverified (still printed).
 
 ### `memory get <dir> <id>`
-Print the full observation (title, type, topic_key, timestamps, revision, content).
+Print the full observation (title, type, topic_key, timestamps, revision, content). Ids are
+scoped to the current project: another project's id reads as not found (same for
+`memory update`).
 **Batch:** `memory get <dir> --batch` reads a JSON array of id strings from stdin.
 
 ### `memory context <dir> [--limit N]`
@@ -232,16 +241,27 @@ are removed in the same transaction. `--keep N` retains the N newest snapshots p
 (default 0). Sessions are untouched unless `--sessions-older-than DAYS` purges the ones idle
 for longer than that. `--dry-run` reports the counts without writing. Only the current
 project is compacted; re-running is idempotent. Prints the removal counts and the db size
-before/after.
+before/after — or, when another leina process holds the db open, that the space is
+reclaimed once it closes. If the memory db is locked the command exits 1 with a one-line
+message (safe to re-run); if `VACUUM` cannot run, the removals are already committed, so it
+prints the counts plus a warning and exits 1.
 
 ### `memory export <dir> [--out file.jsonl]`
 Dump this project's observations + anchors as JSONL (to `--out` or stdout).
 
 ### `memory import <dir> [--in file.jsonl]`
-Merge an export from stdin (or `--in file.jsonl`); newer revision wins.
+Merge an export from stdin (or `--in file.jsonl`); newer revision wins. The file is untrusted
+input (it can ship with a cloned repo), so every line is validated first — known scope and
+type values, positive integer revision, `supersededBy` shape, anchor shape, title ≤ 1000 and
+content ≤ 256 KiB characters — and any invalid line fails the whole import, naming the line.
+Imported timestamps are clamped to the import time. An id that belongs to **another
+project** is never touched: it is skipped and reported (`N skipped (id belongs to another
+project)`). Superseded snapshots the store has already moved past (or compacted away) are
+not re-imported.
 
 ### `memory sync <dir>`
-Two-way merge with a committable `.leina/memory-export.jsonl` snapshot.
+Two-way merge with a committable `.leina/memory-export.jsonl` snapshot, with the same
+validation and skip rules as `import`.
 
 ---
 
@@ -294,8 +314,11 @@ content, and everything stays local — there is no cloud dependency.
 `leina env <sub>` manages service credentials for skills that call authenticated services,
 under the **names-not-values contract**: an AI agent only ever handles variable *names* —
 values never travel through argv, model context, or captured stdout. Storage is a global
-`~/.leina/.env` (0600, plain text). `env list` warns if the file's permissions are
-group/other-readable.
+`~/.leina/.env` (0600, plain text). Every write replaces the file atomically (a 0600 temp
+file renamed over it), so a crash or a full disk never truncates the store and a new value
+is never written into a file that had loosened permissions. `env list` warns if the file's
+permissions are group/other-readable. Keys match by name even on hand-edited lines
+(`KEY =value`); a repeated key resolves to its last value, and `set` collapses duplicates.
 
 ### `env set <KEY>`
 Store a value. Interactive: hidden TTY prompt (input not echoed). Non-interactive: first line
@@ -306,11 +329,13 @@ history and agent transcripts. Key names must match `[A-Za-z_][A-Za-z0-9_]*`.
 Print stored variable names with **masked** values.
 
 ### `env get <KEY> [--reveal]`
-Masked by default. `--reveal` prints the plain value **only when stdout is a real TTY** — a
-driving agent cannot capture it by piping; the command fails with a pointer to `env exec`.
+Masked by default. `--reveal` prints the plain value **only when stdout is a TTY** — piping
+or redirecting fails with a pointer to `env exec`. Honest limit: a TTY is not proof of a
+human — an agent runner that allocates a pseudo-terminal passes the check, so agents must
+never run `--reveal` (see the `authenticated-api` skill's residual-risks section).
 
 ### `env unset <KEY>`
-Remove the variable.
+Remove the variable (every line that defines it).
 
 ### `env exec [--only K1,K2] -- <cmd...>`
 Run `<cmd>` with the stored variables injected into its environment (all of them, or only the
@@ -321,7 +346,10 @@ shell expands the var and the parent (and the model) never sees the value:
 leina env exec --only MY_TOKEN -- sh -c 'curl -H "Authorization: Bearer $MY_TOKEN" https://api...'
 ```
 
-Exits with the child's exit code.
+Exits with the child's exit code. The contract ends at the child's **output**: the child
+inherits the terminal, so anything it prints (`curl -v` tracing the `Authorization` header,
+a crash dumping its environment, a plain `env`) reaches the transcript — keep child output
+minimal (`curl -sf`).
 
 ---
 
@@ -455,6 +483,19 @@ host exposes them (structured JSON, no shell round-trip); every tool takes an op
 `root` — the `<dir>` argument of the CLI form (default: the cwd the host launched the
 server in, i.e. the workspace root).
 
+**Root confinement.** `root` comes from the model, so under prompt injection it is
+attacker-controlled. Every tool's `root` must resolve **inside the server cwd** — after
+resolving symlinks (`realpath`), so a link inside the workspace that points elsewhere does
+not escape; a root that cannot be resolved safely (dangling link, loop, no access) is
+rejected. To allow other roots on purpose, launch the server with
+`LEINA_MCP_ALLOW_ROOTS=/abs/path[:/abs/path...]` (`:`/`;` per platform, or `,` separated);
+listed paths and their subdirectories are accepted, resolved the same way. The tools return
+the resolved real path.
+
+**Numeric arguments** are integers, truncated and clamped to fixed bounds (`depth` 1–20,
+`maxNodes` 1–200, `limit` 1–100, `sessionLimit` 1–50); a non-numeric value falls back to
+the tool's default.
+
 | CLI | MCP tool | Notes |
 |---|---|---|
 | `query` | `graph_query` | builds the graph on first use |
@@ -462,24 +503,24 @@ server in, i.e. the workspace root).
 | `path` | `graph_path` | |
 | `stats` | `graph_stats` | |
 | `status` | `graph_status` | |
-| `build` / `refresh` | `graph_build` | |
-| `impact analyze` | `impact_analyze` | |
-| `visualize` | `graph_visualize` | returns the PATH of the generated HTML |
+| `build` / `refresh` | `graph_build` | concurrent calls for the same root share one build; reads wait for it |
+| `impact analyze` | `impact_analyze` | resolves `symbol` like the CLI; honours `depth`; returns `{seed, impacted, note?}` (`seed: null` when nothing matches) |
+| `visualize` | `graph_visualize` | returns the PATH of the generated HTML; `out` is resolved against `root`, confined like `root`, and must end in `.html` |
 | `audit` | `audit_run` | |
 | `doctor` | `doctor_run` | consent-exempt (diagnosis always allowed) |
 | `memory save` | `memory_add` | batch: `items[]` + `atomic` |
 | `memory search` | `memory_search` | |
-| `memory verified` | `memory_verified` | |
-| `memory context` | `memory_context` | previews by default (budget-safe); `limit`, `sessionLimit`, `full:true` |
-| `memory get` | `memory_get` | batch: `ids[]` |
-| `memory update` | `memory_update` | |
+| `memory verified` | `memory_verified` | honours `type` |
+| `memory context` | `memory_context` | previews by default (budget-safe; `contentChars` counts code points); `limit`, `sessionLimit`, `full:true` |
+| `memory get` | `memory_get` | batch: `ids[]`; ids of other projects read as not found |
+| `memory update` | `memory_update` | current project's ids only |
 | `memory suggest-topic` | `memory_suggest_topic` | |
 | `memory session` | `memory_session` | |
 | `agent-hook SessionStart` | `context_build` | |
 | `harness contract new` | `harness_contract_new` | |
 | `harness contract show` | `harness_contract_show` | |
 | `harness contract end` | `harness_contract_end` | |
-| `harness verify` | `harness_verify` | full report + exit-code contract |
+| `harness verify` | `harness_verify` | full report + exit-code contract; returns `{skipped: true, reason}` in a workspace not trusted on this machine (see `init`) |
 | `harness list` | `harness_rules_list` | |
 
 CLI-only, by design: `env exec` (the names-not-values contract injects secrets
