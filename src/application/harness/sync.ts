@@ -5,7 +5,7 @@
 // both surfaces produce byte-identical artifacts.
 
 import { buildBundle } from "./adapters/bundle.ts";
-import { adaptersByIds, selectAdapters } from "./adapters/registry.ts";
+import { adaptersByIds, allAdapters, selectAdapters, unknownAdapterIds } from "./adapters/registry.ts";
 import { applyFileSets, type AdapterFileSet, type ApplyOutcome } from "./adapters/writer.ts";
 import { type PlatformAdapter } from "./adapters/types.ts";
 
@@ -14,7 +14,12 @@ export interface SyncOptions {
   check?: boolean;
   /** Overwrite artifacts that were hand-edited. */
   force?: boolean;
-  /** Explicit adapter ids — overrides config.platforms / auto-detection. */
+  /**
+   * Explicit adapter ids — overrides config.platforms / auto-detection for
+   * THIS run only: just these platforms are regenerated, and orphan cleanup is
+   * limited to them (other platforms' artifacts stay as they are). An unknown
+   * id is a usage error (exit 2) — a typo must never read as "no platforms".
+   */
   platforms?: string[];
 }
 
@@ -23,11 +28,24 @@ export interface SyncResult {
   outcome?: ApplyOutcome;
   errors: string[];
   warnings: string[];
-  /** 0 = clean · 1 = drift (--check) or conflicts · 2 = load error. */
+  /** 0 = clean · 1 = drift (--check) or conflicts · 2 = usage or load error. */
   exitCode: 0 | 1 | 2;
 }
 
 export async function runSync(repoRoot: string, options: SyncOptions = {}): Promise<SyncResult> {
+  const explicit = options.platforms !== undefined && options.platforms.length > 0 ? options.platforms : undefined;
+  if (explicit !== undefined) {
+    const unknown = unknownAdapterIds(explicit);
+    if (unknown.length > 0) {
+      const known = allAdapters().map((a) => a.id).join(", ");
+      return {
+        errors: unknown.map((id) => `unknown platform "${id}" — known platforms: ${known}`),
+        warnings: [],
+        exitCode: 2,
+      };
+    }
+  }
+
   const { bundle, errors, warnings } = await buildBundle(repoRoot);
   const allWarnings = [...warnings];
   if (errors.length > 0) {
@@ -35,10 +53,8 @@ export async function runSync(repoRoot: string, options: SyncOptions = {}): Prom
   }
 
   let adapters: PlatformAdapter[];
-  if (options.platforms !== undefined && options.platforms.length > 0) {
-    const explicit = adaptersByIds(options.platforms);
-    adapters = explicit.adapters;
-    allWarnings.push(...explicit.warnings);
+  if (explicit !== undefined) {
+    adapters = adaptersByIds(explicit).adapters;
   } else {
     const selected = await selectAdapters(bundle.config, { repoRoot });
     adapters = selected.adapters;
@@ -54,6 +70,7 @@ export async function runSync(repoRoot: string, options: SyncOptions = {}): Prom
 
   const outcome = await applyFileSets(repoRoot, sets, {
     sourceHash: bundle.digest,
+    ...(explicit !== undefined ? { orphanScope: new Set(adapters.map((a) => a.id)) } : {}),
     ...(options.check !== undefined ? { check: options.check } : {}),
     ...(options.force !== undefined ? { force: options.force } : {}),
   });

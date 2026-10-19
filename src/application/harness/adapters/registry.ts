@@ -40,7 +40,12 @@ export async function detectAdapters(ctx: AdapterRepoContext): Promise<PlatformA
   return detected;
 }
 
-/** Resolve explicit platform ids; unknown ids become warnings, never errors. */
+/** Ids in `ids` that name no registered adapter. */
+export function unknownAdapterIds(ids: readonly string[]): string[] {
+  return ids.filter((id) => adapterById(id) === undefined);
+}
+
+/** Resolve platform ids (config.platforms); unknown ids become warnings, never errors. */
 export function adaptersByIds(ids: readonly string[]): { adapters: PlatformAdapter[]; warnings: string[] } {
   const adapters: PlatformAdapter[] = [];
   const warnings: string[] = [];

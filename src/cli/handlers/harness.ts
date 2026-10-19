@@ -476,7 +476,8 @@ function printHarnessHelp(): void {
       `                          2 = engine/config error\n` +
       `  sync [--check] [--force] [--platforms a,b]   (alias: compile)\n` +
       `                          regenerate platform artifacts from the canonical rules\n` +
-      `                          (idempotent); --check exits 1 on drift (CI mode)\n` +
+      `                          (idempotent); --check exits 1 on drift (CI mode);\n` +
+      `                          --platforms touches only the named platforms\n` +
       `  list [--phase <p>] [--tag <t>] [--json]\n` +
       `                          resolved rules with source layer and enforcement\n` +
       `  hook <event>            platform hook entry point (session-start, pre-edit,\n` +

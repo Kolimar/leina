@@ -228,12 +228,45 @@ describe("leina harness sync (e2e)", () => {
     assert.equal(await read("AGENTS.md"), "", "--check never writes");
   });
 
-  it("--platforms restricts the adapter set and warns on unknown ids", async () => {
-    const res = await run(["sync", "--platforms", "agentsmd,doesnotexist"]);
+  it("--platforms restricts the adapter set", async () => {
+    const res = await run(["sync", "--platforms", "agentsmd"]);
     assert.equal(res.code, 0, res.stderr);
-    assert.match(res.stderr, /no adapter implemented for platform "doesnotexist"/);
     assert.ok(await exists("AGENTS.md"));
     assert.equal(await exists("CLAUDE.md"), false, "claude-code adapter not selected");
+  });
+
+  it("(sync-plat-1) an unknown --platforms id is a usage error: exit 2, nothing written or removed", async () => {
+    await repo.write("AGENTS.md", "");
+    await repo.write(".claude/settings.json", "{}\n");
+    assert.equal((await run(["sync"])).code, 0);
+    const claude = await read("CLAUDE.md");
+    const lock = await read(".harness/harness.lock.json");
+
+    const res = await run(["sync", "--platforms", "agentsmd,cusor"]);
+    assert.equal(res.code, 2);
+    assert.match(res.stderr, /unknown platform "cusor"/);
+    assert.match(res.stderr, /claude-code/, "names the known platform ids");
+    assert.equal(await read("CLAUDE.md"), claude, "other platforms untouched");
+    assert.equal(await read(".harness/harness.lock.json"), lock, "lockfile untouched");
+  });
+
+  it("(sync-plat-2) --platforms X regenerates X only and leaves every other platform's artifacts tracked", async () => {
+    await repo.write("AGENTS.md", "");
+    await repo.write(".claude/settings.json", "{}\n");
+    assert.equal((await run(["sync"])).code, 0);
+    assert.ok(await exists("CLAUDE.md"));
+    assert.ok(await exists(".claude/skills/harness-workflow/SKILL.md"));
+
+    const res = await run(["sync", "--platforms", "agentsmd"]);
+    assert.equal(res.code, 0, res.stderr);
+    assert.ok(!res.stderr.includes("orphaned"), res.stderr);
+    assert.match(await read("CLAUDE.md"), /harness:begin/, "claude-code block survives");
+    assert.ok(await exists(".claude/skills/harness-workflow/SKILL.md"), "claude-code skills survive");
+
+    const lock = JSON.parse(await read(".harness/harness.lock.json")) as { artifacts: { adapter: string }[] };
+    assert.ok(lock.artifacts.some((a) => a.adapter === "claude-code"), "claude-code artifacts stay in the lockfile");
+    const check = await run(["sync", "--check"]);
+    assert.equal(check.code, 0, check.stderr);
   });
 });
 

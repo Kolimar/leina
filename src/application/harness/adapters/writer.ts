@@ -210,6 +210,12 @@ export interface ApplyOptions {
   /** Overwrite conflicting user edits. */
   force?: boolean;
   sourceHash: string;
+  /**
+   * Adapters whose orphans this run may clean up (default: all). A partial run
+   * (`sync --platforms x`) only knows what x wants — every other adapter's
+   * previous artifacts are carried over to the new lockfile untouched.
+   */
+  orphanScope?: ReadonlySet<string>;
 }
 
 export interface AdapterFileSet {
@@ -333,6 +339,10 @@ async function cleanupOrphans(
   const retained: LockfileArtifact[] = [];
   for (const stale of previous.artifacts) {
     if (desiredKeys.has(keyOf(stale.path, stale.adapter, stale.blockId))) continue;
+    if (options.orphanScope && !options.orphanScope.has(stale.adapter)) {
+      retained.push(stale);
+      continue;
+    }
     const absolute = containedArtifactPath(repoRoot, stale.path);
     if (absolute === undefined) {
       // Never followed — and dropped from the lockfile: an entry that cannot

@@ -262,6 +262,27 @@ describe("applyFileSets — orphan cleanup", () => {
     assert.ok(!(await read("AGENTS.md")).includes("MY NOTES"));
   });
 
+  it("(orphan-scope-1) orphanScope limits cleanup to the named adapters and carries the rest over", async () => {
+    await applyFileSets(
+      repo.root,
+      [
+        { adapter: "a", fileSet: { files: [owned("gen/a.md", "AAA\n")], warnings: [] } },
+        { adapter: "b", fileSet: { files: [owned("gen/b.md", "BBB\n")], warnings: [] } },
+      ],
+      { sourceHash: HASH },
+    );
+    // Only adapter "a" is regenerated (as `sync --platforms a` does).
+    const outcome = await applyFileSets(
+      repo.root,
+      [{ adapter: "a", fileSet: { files: [owned("gen/a.md", "AAA\n")], warnings: [] } }],
+      { sourceHash: HASH, orphanScope: new Set(["a"]) },
+    );
+    assert.deepEqual(outcome.items.map((i) => i.path), ["gen/a.md"], "b is not an orphan of an a-only run");
+    assert.equal(await read("gen/b.md"), "BBB\n");
+    const lock = await readLockfile(repo.root);
+    assert.ok(lock!.artifacts.some((a) => a.adapter === "b" && a.path === "gen/b.md"), "b stays tracked");
+  });
+
   it("a conflicted-but-still-desired artifact is NOT treated as an orphan", async () => {
     await applyFileSets(repo.root, sets(owned("gen/a.md", "v1\n")), { sourceHash: HASH });
     await repo.write("gen/a.md", "HAND EDIT\n");
