@@ -30,6 +30,7 @@ import { SQLiteMemoryRepository as MemoryStore } from "../src/infrastructure/sql
 import { deriveProjectKey } from "../src/application/project/detect-key.ts";
 import { GraphStore } from "../src/infrastructure/sqlite/graph-store.ts";
 import { writeManifest } from "../src/application/graph/manifest.ts";
+import { trustWorkspace } from "../src/application/install/trust.ts";
 
 const MARKER_REL = ".leina/session.memory-loaded";
 
@@ -40,15 +41,29 @@ const MARKER_REL = ".leina/session.memory-loaded";
 // Tests that need to assert the trigger decision use the pure `graphNeedsBuild` predicate.
 process.env.LEINA_DISABLE_AUTOBUILD = "1";
 
-// A fresh cwd that IS a leina project (consent flag = "enabled").
-// The scope guard in runAgentGate reads the consent flag; any dir without consent=enabled is
-// silently ignored. Tests that exercise the scope guard / unknown state use bareCwd() or
-// create their own directory with only .devin/hooks.v1.json (legacy scenario).
+// The gate speaks only in a workspace trusted on this machine (an out-of-repo record under
+// $LEINA_HOME/trust/ that `leina init` writes). Pin LEINA_HOME to a throwaway dir for this
+// file so those records — and any memory DB the gate opens — never touch the real ~/.leina.
+process.env.LEINA_HOME = mkdtempSync(join(tmpdir(), "leina-agent-gate-file-home-"));
+
+/** Dirs trusted by this file; withTempHome re-trusts them in each temporary home. */
+const trustedDirs: string[] = [];
+
+function trustDir(dir: string): void {
+  trustedDirs.push(dir);
+  trustWorkspace(dir);
+}
+
+// A fresh cwd that IS a leina project: consent flag = "enabled" plus the trust record, which
+// is what `leina init` leaves behind. The scope guard in runAgentGate requires both; tests
+// that exercise the scope guard / unknown state use bareCwd() or create their own directory
+// with only .devin/hooks.v1.json (legacy scenario).
 function freshCwd(): string {
   const dir = mkdtempSync(join(tmpdir(), "leina-devin-gate-"));
   // Write consent=enabled — this is the scope sentinel for PR5+ (replaces .devin/hooks.v1.json).
   mkdirSync(join(dir, ".leina"), { recursive: true });
   writeFileSync(join(dir, ".leina", "consent"), "enabled");
+  trustDir(dir);
   return dir;
 }
 
@@ -236,6 +251,32 @@ test("(devin-runGate-scope) runAgentGate silent no-op in projects WITHOUT consen
   assert.equal(ss.stdout, "");
 });
 
+test("(advisory-trust-1) a committed consent=enabled without the trust record is as silent as consent unknown", () => {
+  // A hostile (or just foreign) clone can commit `.leina/consent = enabled`; only `leina init`
+  // on this machine writes the out-of-repo trust record. No injection, no self-heal, no nudge.
+  const cwd = bareCwd();
+  mkdirSync(join(cwd, ".leina"), { recursive: true });
+  writeFileSync(join(cwd, ".leina", "consent"), "enabled");
+  try {
+    for (const event of ["SessionStart", "PostCompaction", "UserPromptSubmit"]) {
+      const run = withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: event }), cwd));
+      assert.equal(run.stdout, "", `${event}: no memory/graph context injected`);
+      assert.equal(run.stderr, "", `${event}: no advisory`);
+    }
+    const edit = withCapturedIO(() =>
+      runAgentGate(JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "edit" }), cwd),
+    );
+    assert.equal(edit.stderr, "");
+    assert.equal(existsSync(join(cwd, MARKER_REL)), false, "no session marker written");
+
+    trustDir(cwd); // what `leina init` adds
+    const trusted = withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: "SessionStart" }), cwd));
+    assert.match(trusted.stdout, /additionalContext/, "trusted: the injection is back");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("(SC-14c) fixture with only .leina/memory.db (no consent flag) → gate returns silently (no advisory)", () => {
   // Layout: memory.db exists but no consent flag. isLeinaProject reads the consent flag
   // (not hooks.v1.json) → "unknown" → returns false → silent no-op.
@@ -356,6 +397,7 @@ test("(devin-runGate-7d) UserPromptSubmit inject: marker absent + delivered=fals
   // consent=enabled so the scope guard passes; ambiguity comes from two child .git dirs.
   mkdirSync(join(cwd, ".leina"), { recursive: true });
   writeFileSync(join(cwd, ".leina", "consent"), "enabled");
+  trustDir(cwd);
   for (const child of ["repo-x", "repo-y"]) {
     mkdirSync(join(cwd, child, ".git"), { recursive: true });
   }
@@ -410,6 +452,10 @@ function withTempHome<T>(fn: (home: string) => T): T {
   const home = mkdtempSync(join(tmpdir(), "leina-gate-home-"));
   const orig = process.env.LEINA_HOME;
   process.env.LEINA_HOME = home;
+  // The trust store lives under LEINA_HOME too: carry this file's trusted dirs over.
+  for (const dir of trustedDirs) {
+    try { trustWorkspace(dir); } catch { /* dir already cleaned up */ }
+  }
   try {
     return fn(home);
   } finally {
@@ -632,6 +678,7 @@ test("(bac-FR3c) runAgentGate SessionStart: marker NOT written when buildActiveC
   const cwd2 = mkdtempSync(join(tmpdir(), "leina-gate-ambig2-"));
   mkdirSync(join(cwd2, ".leina"), { recursive: true });
   writeFileSync(join(cwd2, ".leina", "consent"), "enabled");
+  trustDir(cwd2);
   for (const child of ["repo-x", "repo-y"]) {
     mkdirSync(join(cwd2, child, ".git"), { recursive: true });
   }
@@ -711,6 +758,7 @@ test("(bac-FR7d) runAgentGate SessionStart: deriveProjectKey error → fallback 
   const cwd2 = mkdtempSync(join(tmpdir(), "leina-gate-ambig3-"));
   mkdirSync(join(cwd2, ".leina"), { recursive: true });
   writeFileSync(join(cwd2, ".leina", "consent"), "enabled");
+  trustDir(cwd2);
   for (const child of ["repo-c", "repo-d"]) {
     mkdirSync(join(cwd2, child, ".git"), { recursive: true });
   }

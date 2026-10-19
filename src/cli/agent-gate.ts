@@ -27,11 +27,13 @@
 // marker — letting the PostToolUse/advisory path take over naturally.
 //
 // SCOPE-AWARE: runAgentGate early-returns 0 silently when the project root does not have
-// the consent flag set to "enabled" (`.leina/consent`). A user-global agent hook
-// therefore stays completely quiet in any repo that isn't leina-initialized. Repos with
-// `.devin/hooks.v1.json` but no consent flag resolve to "unknown" — gate stays silent
-// until the user explicitly consents via `leina init .`. This is what makes the gate
-// safe to install user-globally without polluting unrelated projects.
+// the consent flag set to "enabled" (`.leina/consent`) or is not a TRUSTED workspace on
+// this machine (the out-of-repo record `leina init` writes — a committed consent flag
+// alone grants nothing). A user-global agent hook therefore stays completely quiet in any
+// repo that isn't leina-initialized here. Repos with `.devin/hooks.v1.json` but no consent
+// flag resolve to "unknown" — gate stays silent until the user explicitly consents via
+// `leina init .`. This is what makes the gate safe to install user-globally without
+// polluting unrelated projects.
 //
 // Honest scope: this is a workflow NUDGE, not a security control and not an obstacle. The
 // project root is resolved by resolveHookProjectRoot(): it prefers Devin's documented
@@ -284,8 +286,9 @@ function maybeSelfHealGraph(cwd: string): void {
  *
  * SCOPE-AWARE: if `cwd` does not have the consent flag set to `"enabled"` (i.e. flag absent,
  * `"disabled"`, or `"unknown"` — which covers both fresh repos and legacy repos with only
- * `.devin/hooks.v1.json`), returns 0 silently — no stderr advisories, no SessionStart
- * additionalContext. This is what lets a user-global Devin hook stay quiet in unrelated repos.
+ * `.devin/hooks.v1.json`), or has no workspace-trust record on this machine, returns 0
+ * silently — no stderr advisories, no SessionStart additionalContext, no graph self-heal.
+ * This is what lets a user-global Devin hook stay quiet in unrelated repos.
  *
  * Fails OPEN on every error path (malformed JSON, missing fields, fs errors) → exit 0.
  *
@@ -318,7 +321,11 @@ export function runAgentGate(
   // Scope guard: silent no-op unless consent=enabled. A user-global hook fires in every Devin
   // project on the machine; this keeps it quiet in repos without explicit consent (including
   // legacy repos with .devin/hooks.v1.json but no consent flag — those resolve to "unknown").
-  if (!isLeinaProject(cwd)) return;
+  // WORKSPACE TRUST as well: the consent flag lives in the repo, so a clone can commit
+  // `.leina/consent = enabled`; without the out-of-repo record `leina init` writes on this
+  // machine it gets the same silence as consent "unknown" — no memory/graph context
+  // injection and no background `leina build` self-heal.
+  if (!isLeinaProject(cwd) || !isWorkspaceTrusted(cwd)) return;
 
   const payload = parseHookPayload(rawStdin, fallbackEvent);
   if (!payload) return;

@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, existsSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { trustWorkspace } from "../src/application/install/trust.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
 const MARKER_REL = ".leina/session.memory-loaded";
@@ -23,14 +24,32 @@ interface RunResult {
   stderr: string;
 }
 
-// Seed a tmp dir to BE a leina project (consent flag = "enabled"). The
-// runAgentGate scope guard reads the consent flag; any dir without consent=enabled is
+// The gate also requires workspace TRUST — an out-of-repo record under $LEINA_HOME/trust/
+// that `leina init` writes. Pin LEINA_HOME to the same sandbox runDevinHook hands every
+// spawned CLI, so the trust records written here are the ones the hook reads, and trust
+// records and memory DBs never touch the real ~/.leina.
+process.env.LEINA_HOME = SANDBOX_HOME;
+
+/** Write `dir`'s trust record into `home` (default: this file's LEINA_HOME). */
+function trustIn(dir: string, home = process.env.LEINA_HOME!): void {
+  const saved = process.env.LEINA_HOME;
+  process.env.LEINA_HOME = home;
+  try {
+    trustWorkspace(dir);
+  } finally {
+    process.env.LEINA_HOME = saved;
+  }
+}
+
+// Seed a tmp dir to BE a leina project (consent flag = "enabled" + trust record, what
+// `leina init` leaves behind). The runAgentGate scope guard requires both; any other dir is
 // silently ignored. Tests that exercise the scope guard itself use mkdtempSync directly.
 function freshProjectDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "cg-devin-hook-"));
   // Write consent=enabled — scope sentinel for PR5+ (replaces .devin/hooks.v1.json).
   mkdirSync(join(dir, ".leina"), { recursive: true });
   writeFileSync(join(dir, ".leina", "consent"), "enabled");
+  trustIn(dir);
   return dir;
 }
 
@@ -112,6 +131,7 @@ test("(devin-hook-cli-3) SessionStart injects context and re-arms marker; PreToo
   const dir = freshProjectDir();
   // Isolated memory home so the test controls what buildActiveContext sees
   const tmpHome = mkdtempSync(join(tmpdir(), "cg-devin-hook-home-"));
+  trustIn(dir, tmpHome); // the trust store lives under LEINA_HOME too
   try {
     // PostToolUse writes marker via memory-context detection
     runDevinHook(dir, "PostToolUse", {
@@ -174,6 +194,7 @@ test("(devin-hook-cli-6) UserPromptSubmit: marker absent → stdout additionalCo
   const dir = freshProjectDir();
   // Isolated memory home so buildActiveContext works with a controlled empty DB
   const tmpHome = mkdtempSync(join(tmpdir(), "cg-devin-hook-home-"));
+  trustIn(dir, tmpHome); // the trust store lives under LEINA_HOME too
   try {
     // First call — marker absent → injects additionalContext on stdout, stderr empty
     const injected = runDevinHook(dir, "UserPromptSubmit", { hook_event_name: "UserPromptSubmit" }, { LEINA_HOME: tmpHome });
