@@ -5,63 +5,137 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-## [2.1.0] — Unreleased
+## [3.0.0] — Unreleased
+
+3.0.0 ships the never-published 2.1.0 work (the task harness and a security review) together with a functional review of detection, agent ergonomics and performance. Several defaults, CLI outputs and MCP payloads changed — read *Upgrading from 2.x* first.
+
+### Upgrading from 2.x
+- **Re-run `leina setup --hosts …` (or `leina activate --hosts …`) once.** It rewrites the user-global hooks to the 3.0 command form (`leina agent-hook <Event> --host claude|devin --scope user`) and now also wires **Claude Code** (`~/.claude/settings.json`); `--no-user-hooks` opts out. Run `leina doctor` afterwards: it now flags hooks that still run another leina install.
+- **Run `leina init` once in every repo you use with leina on this machine** (also after moving or re-cloning it). Hooks, memory injection and harness automation now require an out-of-repo workspace trust record that only `init` writes; a committed `.leina/consent` grants nothing.
+- **The task harness is opt-in.** `leina init` sets it up only with `--harness` (or `--harness-preset`); repos that already have `.harness/config.json` keep it.
+- **The first graph read after upgrading rebuilds the graph once** (manifest v3, new TypeScript extractor schema).
+- **The memory database migrates on first open** (schema v8): observations stored with the invalid type `note` become `discovery`, topic snapshots stranded by an older `merge-projects` are re-homed, and lifecycle columns are added. Copy `~/.leina/memory.db` first if you want a backup.
+- **CLI scripts:** usage errors now exit **2** (an unknown command used to print the root help and exit 0); `<dir>` is optional and resolves to the project root, so `leina build packages/x` in a package that is not its own leina project acts on the repository (`leina init packages/x` makes it one); an explicit `<dir>` that does not exist is a usage error; `affected`'s depth is `--depth N`; `stats` exits 1 without a graph; `status` and `memory current-project` print `root:` first.
+- **MCP consumers:** graph and memory tools answer in compact JSON with new shapes (see *Changed*), `root` is confined to the server workspace, and `affected`-style lookups take exact symbols only.
 
 ### Added
-- **Harness subsystem (absorbed from the standalone `harness-framework`).** Lifecycle rules (intake → plan → execute → verify → deliver) + executable gates, task contracts enforced against the real git diff, and multi-platform sync — now native to leina, zero new dependencies (hand-rolled validators instead of zod, JSON front matter instead of YAML, `safe-exec` instead of execa, own glob matcher calibrated against picomatch).
+- **Per-command help and a usage contract.** `leina <command> --help`, `-h` and `leina help <command>` print that command's own usage, rendered from one command table that also drives dispatch and flag checks. Exit codes: 0 success, 1 runtime failure, 2 usage error (`leina <command>: <message>` + `run 'leina <command> --help' for usage`), with `did you mean` suggestions for commands and flags, a hint for a swapped sub-command order, and `--flag=value` for value flags.
+- **Optional `<dir>`** on every per-project command, resolved to the project root: the nearest enclosing leina project (graph, consent flag or name lock), else the git toplevel, never crossing a git toplevel. Positional rules are fixed per command (`query [<dir>] <text…>`, `affected [<dir>] <symbol>`, `path [<dir>] <from> <to>`, `memory get [<dir>] <id>`, …); `init`, `deinit` and the workspace commands take `<dir>` as given.
+- `impact analyze --depth`.
+- **Task harness (absorbed from the standalone `harness-framework`), opt-in.** Lifecycle rules (intake → plan → execute → verify → deliver) with executable gates, task contracts checked against the real git diff, and multi-platform sync — native to leina, with no new dependencies (own validators instead of zod, JSON front matter instead of YAML, `safe-exec` instead of execa, own glob matcher calibrated against picomatch).
+  - `leina init --harness [--harness-preset generic|leina-native]` seeds `.harness/config.json` and syncs the platform files; `deinit` reverses it through the sync lockfile.
   - `leina harness contract new|show|edit|end`, `verify`, `sync [--check|--force|--platforms]`, `list`, `hook <event>`.
-  - 14 builtin rules under `assets/harness/rules/` (JSON front matter); the four leina rules (`memory-first`, `graph-consult`, `graph-fresh`, `session-summary`) ship **enabled by default** — `leina init` bootstraps `.harness/config.json`, runs a harness sync in-process and leaves the repo governed; `deinit` reverses it via the sync lockfile.
-  - **Agent-gate enforcement** in trusted workspaces (see *Workspace trust*): the integrity seal always applies; scope checks, the commit/push guard and the Stop gate (retry cap, then honest yield) apply with an active contract, in strict mode, or when the config cannot be read.
-  - 5 new capabilities in the registry (22 total), exposed as MCP tools: `harness_contract_new/show/end`, `harness_verify`, `harness_rules_list`.
-  - `leina tui` → new **harness flow**: guided contract interview (goal/scope/criteria), recipe suggestions, rule selection with non-weakening constraints, status/verify/sync panels.
-  - Platform adapters (CLAUDE.md / AGENTS.md managed blocks, skills, Cursor/Windsurf/OpenCode hook wiring via `leina harness hook`) with the same lockfile and marker format as the standalone framework; on Claude Code/Devin enforcement rides the leina agent gate instead of separate hooks.
-- **Rule presets.** `leina init --harness-preset generic|leina-native` seeds a new `.harness/config.json`: `generic` disables the four leina-coupled rules so the harness works without adopting the rest of leina; `leina-native` (default) keeps the full suite.
-- **Workspace trust.** An out-of-repo record (`$LEINA_HOME/trust/`, keyed by the repo's real path) written by `leina init` and removed by `deinit`; every automated harness path and every project-layer executable gate requires it. `leina doctor` reports it.
-- `leina memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--dry-run]` — GC superseded topic snapshots (live rows always kept), optionally purge idle sessions, then `VACUUM`.
-- `leina query --json` (the flag was advertised but not implemented).
+  - 14 builtin rules under `assets/harness/rules/`. Presets: `leina-native` (default) keeps the four leina rules (`memory-first`, `graph-consult`, `graph-fresh`, `session-summary`); `generic` leaves them out so the harness works without adopting the rest of leina.
+  - Agent-gate enforcement in trusted workspaces, on Claude Code and Devin: the integrity seal always applies; scope checks, the commit/push guard and the Stop gate (retry cap, then an honest yield) apply with an active contract, in strict mode, or when the config cannot be read.
+  - 5 new capabilities (22 in total), exposed as MCP tools: `harness_contract_new/show/end`, `harness_verify`, `harness_rules_list`.
+  - `leina tui` → **harness flow**: guided contract interview, recipe suggestions, rule selection with non-weakening constraints, status/verify/sync panels.
+  - Platform adapters (CLAUDE.md / AGENTS.md managed blocks, skills, Cursor/Windsurf/OpenCode hook wiring through `leina harness hook`) with the standalone framework's lockfile and marker format.
+- **Workspace trust.** An out-of-repo record (`$LEINA_HOME/trust/`, keyed by the repo's real path) written by `leina init` and removed by `deinit`. Every automated harness path, every project-layer executable gate and the advisory hooks require it. `leina doctor` reports it.
+- **Claude Code wiring.** `setup`/`activate` merge the managed hooks into `~/.claude/settings.json` (backup on the first change; a malformed file is left untouched and reported); project wiring (`init --hosts claude`) gains **PreToolUse** for Edit/Write/MultiEdit/NotebookEdit/Bash, so harness enforcement finally runs on Claude Code.
+- **Memory lifecycle.** `leina memory resolve <dir> <id> [--note …] [--obsolete]`, `leina memory reopen <dir> <id>` (both with `--batch`), `memory update --status/--resolution`, MCP `memory_update {status, resolution}`. Resolved and obsolete notes leave the injected context; search, `get` and `verified` still return them, labelled and demoted. Short ids work on every id verb.
+- `leina memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--keep-sessions N] [--dry-run]` — GC superseded topic snapshots (live rows are always kept), optionally purge idle sessions (the newest N, default 5, always survive), then `VACUUM`.
+- **Symbol selectors** for `affected`, `path` and `impact`: a raw node id, `path/to/file.ts:name` (path suffix or absolute), `name` / `name()`, `Class.method` / `Class#method`, or a file path suffix for the module.
+- `leina query --json` (advertised before but not implemented) and `--include-tests` (MCP `includeTests`).
+- **TypeScript graph:** nodes for type aliases, enums, variables and accessors; object-literal members as methods and an anonymous default export as `default()`; member-level `implements` and `overrides` edges; module → module `imports` edges.
+- `leina doctor`: hook-wiring diagnostics — hooks that run another leina install or a missing CLI, leftover per-edit refresh entries, AI hosts with no hooks at all, committable `.leina` files hidden by `.gitignore` — and an injection-readiness check that requires consent, trust and wiring. `leina repair` fixes the install-side ones.
+- `leina status` and MCP `graph_status` list reduced-precision extraction (`degraded`).
 
 ### Changed
-- **MCP `root` is confined to the server workspace** — after resolving symlinks; roots outside it are rejected unless allow-listed with `LEINA_MCP_ALLOW_ROOTS`. `graph_visualize`'s `out` is confined the same way and must end in `.html`.
-- **MCP `memory_context` returns previews by default** (`preview`, `truncated`, `contentChars` instead of the full `content`); `full: true` restores full bodies, `limit`/`sessionLimit` bound the payload.
-- MCP `impact_analyze` resolves `symbol` like the CLI and returns `{seed, impacted, note?}`; numeric MCP arguments are integers clamped to fixed bounds; `root` is optional on every tool.
-- Harness hooks, unattended verify and MCP `harness_verify` do nothing in a workspace that is not trusted on this machine — run `leina init` there once (also after moving or re-cloning a repo). A committed `.leina/consent` grants nothing. The advisory agent-gate hooks (memory injection, background self-heal build) require trust too.
-- Harness config: `rules.<id>` overrides accept only `enabled`/`severity` (a `gate` key is an error); user and local layers can no longer weaken a blocking rule (disable, demote, or change its gate/phase/scope) nor lower `strictness`; an invalid config makes the hooks fail closed.
-- `harness verify`: only full runs update the report the commit guard reads; an unknown `--rule`, a flag without a value or an unknown sub-command exits 2; outside git it fails closed; changed files are relative to the harness root (monorepo packages); `--json` includes `loadErrors`. `contract new --max-retries` must be 1–10, and `maxRetries` now counts blocks per stop chain, with a fresh verify on every Stop.
-- The commit guard decides report freshness from working-tree content (a fingerprint recorded by verify) instead of file mtimes; reports from older versions count as stale.
-- `harness sync --platforms` only touches the named platforms (an unknown id exits 2); sync compiles only committed layers (builtin + project rules + project config); `init --hosts` keeps previously synced or auto-detected platforms; `deinit` removes the config `init` wrote while it is unchanged.
-- `memory import`/`sync` validate every line (sizes, enums, shapes; any invalid line fails the run), clamp timestamps, skip ids that belong to another project and do not resurrect compacted snapshots; `memory get`/`update` (CLI and MCP) only see the current project's ids.
+- **Hooks**
+  - Managed hook commands name their host and scope: `agent-hook <Event> --host claude|devin [--scope user]`. Entries written by 2.x keep working (the host is inferred) and are rewritten by `setup`/`activate`/`init`/`repair`.
+  - A user-global hook stays silent for an event the project's own wiring already handles, so every event is answered once.
+  - Hooks act on the project when they fire in a subdirectory, in a worktree under `.claude/worktrees/`, or in a linked git worktree.
+  - Advisories reach Claude Code as `hookSpecificOutput.additionalContext` (Claude Code never shows the model the stderr of a hook that exits 0). The Stop save nudge appears at most once per session and never while `stop_hook_active`; the injection fallback at most once per session.
+  - Session markers survive `resume` and compaction; only `startup`/`clear` reset them.
+  - Devin project hooks no longer run `leina refresh` after every edit — the read path rebuilds lazily, incrementally and under a cross-process lock.
+  - The Stop gate reuses the last full verify when HEAD, the working tree, the rules, the config, the contract and trust are all unchanged.
+- **Graph reads**
+  - `affected`, `path` and `impact` match symbols exactly: an ambiguous name uses the best match and prints the alternatives; no match prints `no exact match for "X"; did you mean: …` and exits 1 (MCP: `seed: null` + `suggestions`). There is no substring fallback any more.
+  - `affected` on an implementation also reports the callers of the interface member or base method it implements/overrides (`via Interface.member`).
+  - `affected`/`path` print the call-site `file:line` from the edge; `path` prints the real direction (`--rel-->` / `<--rel--`).
+  - `query` ranks by relevance (EN/ES stopwords, identifier splitting, IDF weighting), excludes test/mock/fixture nodes unless `--include-tests`, lists every node and edge with `file:line`, returns at most 25 nodes by default and omits `contains`/`method` edges; `--json` is `{seeds, nodes, edges, testsExcluded}`.
+- **MCP**
+  - `graph_query`, `graph_affected`, `graph_path` and `impact_analyze` answer in compact JSON: nodes `{id, label, kind, at}`, edges `{source, target, relation, at}`; `graph_affected.dependents` and `graph_path` (`{path: {nodes, edges}}`) changed shape. The `memory_*` tools answer in compact JSON too.
+  - `memory_context` returns ranked, active-only previews (default limit 20; `full: true` for whole bodies).
+  - `root` is confined to the server workspace after resolving symlinks; roots outside it are rejected unless allow-listed with `LEINA_MCP_ALLOW_ROOTS`. `graph_visualize`'s `out` is confined the same way and must end in `.html`. Numeric arguments are integers clamped to fixed bounds; `root` is optional on every tool.
+- **Memory**
+  - The injected context ranks active notes by type × recency, keeps at most 2 per topic prefix, shows short ids and dates, and includes the latest session summary; CLI `memory context`, MCP `memory_context` and the hooks share one renderer.
+  - Search uses one ranking for FTS5 and the Node 22 LIKE fallback: accent-insensitive, prefix matches fill in below exact hits, recency and status weigh in, higher score is better.
+  - Type and scope are validated on every write path (CLI, batch, MCP).
+  - Drift checks fingerprint the anchored symbol's own lines (`sym1:` anchors) instead of the whole file; a drifted `decision`/`preference` is WARNING, `resolved` caps at WARNING and `obsolete` is DO NOT USE. `memory reanchor` upgrades 2.x anchors in place and no longer mints junk anchors (short or generic names, test-only matches).
+  - Subdirectories and linked worktrees share the repository's project key; `.leina/config.json` is found by walking up.
+  - `merge-projects` moves topic history too; `memory import`/`sync` validate every line, clamp timestamps, skip other projects' ids and do not resurrect compacted snapshots; `memory get`/`update` only see the current project's ids.
+- **Build and freshness**
+  - `leina refresh` always re-extracts every file instead of reusing the extraction cache.
+  - Sources are discovered through `git ls-files` (tracked + untracked-not-ignored), with a walker fallback outside git; hidden directories (except CI config dirs), nested repositories, submodules and gitignored files are no longer indexed.
+  - The manifest (v3) records the leina version, the extractor schema and config-file hashes: upgrading leina or editing `tsconfig*.json`/`jsconfig.json`/`package.json` makes the graph stale.
+  - Node ids: declarations whose names collide case-insensitively get a `:<tag>` suffix (non-colliding ids are unchanged); static and instance members are separate nodes; calls in a top-level initializer belong to that variable.
+  - `build`/`refresh` refuse a missing or non-directory root (exit 1) instead of creating and registering it.
+  - Reduced-precision notes (no SCIP indexer or sidecar) are printed once, only for product code; read-path rebuilds stay quiet.
+- **Harness config and verify:** `rules.<id>` overrides accept only `enabled`/`severity`; user and local layers cannot weaken a blocking rule nor lower `strictness`; an invalid config fails closed. Only full `verify` runs update the commit guard's report; usage errors exit 2; outside git verify fails closed; changed files are relative to the harness root; `--json` includes `loadErrors`; `contract new --max-retries` is 1–10 and counts blocks per stop chain. The commit guard judges freshness by working-tree content. `sync --platforms` touches only the named platforms and compiles only committed layers; `init --hosts` keeps previously synced platforms; `deinit` removes the config `init` wrote while it is unchanged.
+- MCP harness tools resolve the harness root of their (confined) root like `leina harness` does for its cwd, and `harness_verify` checks trust through the repository, so a subdirectory or a nested worktree of a trusted repo runs while an independent nested clone does not; an untrusted root is `skipped` with the `leina init` command to run.
+- The AGENTS.md protocol block `init` writes documents `[<dir>]`, `--help` and exit 2, `--include-tests`, `--depth`, exact selectors, the full refresh, the init + trust requirement for injection and an opt-in harness section; the capability registry describes `query` as relevance-ranked.
+- `init`'s `.gitignore` writer rewrites a bare `.leina/` line that hid `.leina/config.json` from git.
 - Raised the `@modelcontextprotocol/sdk` range to `^1.32.1`.
 
 ### Security
 - A cloned repo could run its own code through the harness without `leina init`: via a `gate` override in `.harness/config.json`, a committed `.leina/consent`, or a repo-root module shadowing a builtin js gate. Fixed by the out-of-repo trust store, rejecting config gate overrides and per-layer module resolution.
-- A crafted `.harness/harness.lock.json` could make `deinit` / `sync --force` delete or write files outside the repo; lockfile paths are now validated and every write/delete is confined by real path.
+- A crafted `.harness/harness.lock.json` could make `deinit` / `sync --force` delete or write files outside the repo; lockfile paths are validated and every write/delete is confined by real path.
 - MCP: a symlink inside the workspace escaped `root` confinement, and `graph_visualize` could overwrite any file the user can write.
-- `memory import`/`sync` of a shipped `.leina/memory-export.jsonl` could overwrite another project's memories (later auto-injected into that project's sessions); id lookups crossed projects.
+- `memory import`/`sync` of a shipped `.leina/memory-export.jsonl` could overwrite another project's memories (later injected into that project's sessions); id lookups crossed projects.
 - Stored XSS in the offline graph viewer through repo folder names / repo keys.
-- Rule-supplied regexes (command, diff-content and file gates) run under a hard timeout (ReDoS); diff-content failures report only `file:line` plus a masked prefix, never the matched secret; the untracked-file scan never follows symlinks; the no-secrets rule catches more credential shapes.
+- Rule-supplied regexes (command, diff-content and file gates) run under a hard timeout (ReDoS); diff-content failures report only `file:line` and a masked prefix, never the matched secret; the untracked-file scan never follows symlinks; the no-secrets rule catches more credential shapes.
 - The agent cannot edit `$LEINA_HOME/harness` (user rules) or the trust store; the pre-bash integrity guard reasons about write targets instead of mentions.
 - The env store is written atomically with owner-only permissions.
 - All `npm audit` advisories resolved (MCP SDK transitive express/hono/ajv stack, brace-expansion, js-yaml, undici, source-map-js).
 
 ### Fixed
-- `graph_visualize` could terminate the whole MCP server on a refused stale graph; concurrent MCP calls on a stale graph each rebuilt it (and `graph_stats` could read a half-written graph) — builds are now single-flight per root.
-- MCP `impact_analyze` always returned empty results for a symbol name; `memory_verified` ignored `type`.
+- Under `leina setup`, Claude Code never received memory injection (only Devin got user-global hooks); harness enforcement never ran on Claude Code (no PreToolUse hook); every advisory was invisible to Claude Code (stderr with exit 0).
+- Devin hooks kept running whatever leina install they were written with, and `doctor` reported everything as healthy.
+- Hooks were silent in subdirectories and worktrees of an initialized repo.
+- After a compaction the Stop nudge asked to save a session that was already saved; a failed injection re-injected its fallback on every prompt.
+- `affected` missed callers reached through destructured dynamic imports (`const { f } = await import(…)`) and local renames, and every caller that went through an interface; same-named declarations differing only in case (`hostSpec` / `HostSpec`) collapsed into one node.
+- `affected`/`path` silently reported a different symbol when the name had no exact match (substring fallback) and picked test mocks for ambiguous names.
+- YAML was always parsed by the line-based fallback: the bundled grammar needed C++ runtime symbols web-tree-sitter 0.25 does not export.
+- `sidecar verify` / `scip verify` were broken in a published install (their fixtures were not shipped; the C#/Java ones were empty).
+- `leina build <missing dir>` created the directory, built an empty graph and registered it.
+- Concurrent reads of a stale graph each ran a full rebuild (one process per reader).
+- A graph built by an older leina still read as fresh after an upgrade.
+- Worktrees under `.claude/worktrees/` and gitignored output were indexed, duplicating symbols.
+- `memory save`/`update` accepted invalid types, which then broke `memory export` → `import`; `memory search` folded flag values into the query.
+- `merge-projects` stranded topic snapshots under the old key and could leave ghost full-text entries.
+- The TypeScript extraction cache never hit on Node 22 (its key was cut at a NUL by node:sqlite).
+- `graph_visualize` could terminate the whole MCP server on a refused stale graph; concurrent MCP calls on a stale graph each rebuilt it (and `graph_stats` could read a half-written graph) — builds are single-flight per root.
+- MCP `impact_analyze` returned nothing for a symbol name; `memory_verified` ignored `type`.
 - Source files over 4 MiB are skipped consistently by the build and the freshness check.
 - The NOCASE label index retrofit no longer blocks a read when another process holds the write lock.
 - A js gate stuck on a promise that never settles is reported as a timeout instead of letting verify exit early (seen on Node 22).
 - `memory compact` reports a locked db or a failed `VACUUM` without a stack trace and does not report a grown db while another process holds it open.
 - `env set`/`unset` match keys the parser accepts (`KEY =value`) and collapse duplicates.
-- Harness: commit detection and the integrity guard handle `&`, subshells and backticks; strict mode and the integrity seal now also apply on Claude Code/Devin and Cursor's shell hook makes the same decision as pre-bash; the OpenCode plugin blocks only on exit status 2; `.harness/state/` ignores itself; `hookCommand` must be a leina launch form; the TUI writes rule overrides only after the contract is confirmed; deinit preserves user JSON verbatim and writes atomically.
-- The root and `memory` help showed `memory <dir> <sub>`; the dispatcher reads `memory <sub> <dir>`.
-- Tests no longer write into the developer's real `~/.leina`.
+- Harness: commit detection and the integrity guard handle `&`, subshells and backticks; Cursor's shell hook makes the same decision as pre-bash; the OpenCode plugin blocks only on exit status 2; `.harness/state/` ignores itself; `hookCommand` must be a leina launch form; the TUI writes rule overrides only after the contract is confirmed; deinit preserves user JSON verbatim and writes atomically.
+- The root and `memory` help showed `memory <dir> <sub>`; the dispatcher reads `memory <sub> <dir>`. Unknown commands and memory sub-commands printed help and exited 0; other usage problems exited 1.
+- Flag values were read as the project or the symbol: `visualize --out x.html`, `audit --from id`, `init --hosts devin <dir>` and `workspace memory search` picked the wrong word. `impact analyze` ignored its depth, `workspace build/status` ignored `--single`/`--workspace`, invalid `--format`/`--max-pack-kb`/`--type`/`--scope`/`--status` values were accepted, and `stats` created an empty graph.db.
+- Tests no longer write into the developer's real `~/.leina` nor leave `.leina/` in `test/fixtures` (fixtures are built from temp copies); the 51 `test/use-cases` tests and the fake-agent-runner test, which `npm test` never ran, run again.
 
 ### Performance
-- A NOCASE label index serves `findByLabel`'s exact branch; the freshness gate and a stale-triggered rebuild share one source walk.
+- **Incremental TypeScript extraction.** Only edited files are re-extracted, plus their importers when the visible shape, the file set or an import resolution changes; a global declaration, a non-TypeScript file the checker reads, tsconfig, package.json, a lockfile, the leina version, `leina refresh` or `LEINA_TS_FULL_EXTRACT=1` force a full extraction. The incremental graph is identical to a full one. Whole `leina build`, before → after:
+
+  | Repo | Build | 2.x | 3.0 |
+  |---|---|---|---|
+  | leina (372 TS files) | nothing changed | 7.7 s · 807 MiB | 0.55 s · 259 MiB |
+  | leina | 1-file edit | ~8 s · ~830 MiB | ~0.9 s · ~300 MiB |
+  | Next.js app (751 TS files) | nothing changed | 21 s · 1.8 GiB | 0.8 s · 278 MiB |
+  | Next.js app | 1-file edit | 19.5 s · ~1.8 GiB | 1.8–2.8 s · 464–620 MiB |
+  | Next.js app | cold | 26 s · 1.9 GiB | 10 s · 1.5 GiB |
+- Stale-graph rebuilds are serialized across processes: four concurrent reads after an edit went from four rebuilds (≈ 4.5 GB combined RSS) to one (≈ 1.5 GB); waiting readers reuse its result.
+- A NOCASE label index serves exact symbol lookups; a staleness check lists the project once and shares that listing with a triggered rebuild.
+- MCP graph payloads shrank 3–8× (e.g. `graph_query` ≈ 50 KB → 5–9 KB).
 
 ### Documentation
-- CLI reference (EN/ES): `memory compact`, `graph gc`, `query --json`, `init --harness-preset`, `setup`/`activate` asset selection, the MCP confinement and argument rules, memory import/sync rules, env store limits, and the harness/trust behaviour.
-- Concepts chapter 7 (EN/ES): rule presets, the hook/gate vocabulary map, workspace trust.
-- Benchmarks: corrected the warm-cache and read-path scaling claims.
+- CLI reference (EN/ES): a help and exit-code section, the positional rules of every command, and `doctor`'s exit code; readme, usage guide and concepts show `[<dir>]`. AGENTS.md's install surface no longer claims that `init` runs `activate` or writes the user-global Devin config. CONTRIBUTING: tests isolate HOME/LEINA_HOME and build fixtures from a copy.
+- CLI reference (EN/ES) for every change above and for `memory compact`, `graph gc`, `init --harness-preset` and `setup`/`activate` asset selection, including the MCP confinement and argument rules, memory import/sync rules, env store limits, the harness and trust behaviour, symbol selectors and the memory lifecycle.
+- Concepts (EN/ES): graph ids, node kinds and relations, incremental extraction; harness presets, the hook/gate vocabulary map and workspace trust.
+- Benchmarks: corrected the warm-cache and read-path scaling claims and added the incremental-build numbers.
 
 ## [2.0.1] — 2026-07-09
 
