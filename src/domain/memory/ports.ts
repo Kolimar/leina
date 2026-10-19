@@ -1,7 +1,7 @@
 // domain/memory/ports.ts — Port interfaces for the memory domain.
-// Phase 1 (PR-1): interface definitions only — zero behavior change.
-// Concrete implementation (MemoryStore) remains in src/memory/store.ts;
-// Phase-3 reorganisation will move it to infrastructure/sqlite/memory-repository.ts.
+//
+// Concrete implementation: SQLiteMemoryRepository in
+// src/infrastructure/sqlite/memory-repository.ts (SQLite driven adapter).
 //
 // Dependency rule: this file MUST import only from domain modules.
 // No application/, infrastructure/, or cli/ imports allowed here.
@@ -22,9 +22,9 @@ import type { BatchResult } from "../shared/batch.ts";
 
 // ---------------------------------------------------------------------------
 // ResolvedAnchor — result of resolving a human-facing label to a graph node.
-// Mirrors the shape in src/memory/store.ts (which will become the infrastructure
-// adapter in Phase 3). Defined here so domain code can reference it without
-// importing from infrastructure.
+// Mirrors the shape used by src/infrastructure/sqlite/memory-repository.ts.
+// Defined here so domain code can reference it without importing from
+// infrastructure.
 // ---------------------------------------------------------------------------
 
 export interface ResolvedAnchor {
@@ -41,20 +41,19 @@ export interface ResolvedAnchor {
 
 // ---------------------------------------------------------------------------
 // AnchorResolver — injectable lookup: label → graph node(s).
-// Formalises the existing proto-port in src/memory/store.ts.
-// The concrete implementation lives in src/memory/anchor-verify.ts;
-// the port type is defined here so application-layer code can depend on
-// the abstraction, not the infrastructure module.
-// Signature matches the ACTUAL existing type (source of truth in Phase 1):
-//   (label: string) => ResolvedAnchor[]
+// The concrete implementation is makeResolveAnchor in
+// src/application/memory/anchor-verify.ts; the port type is defined here so
+// application-layer code can depend on the abstraction, not a concrete module.
+// Signature: (label: string) => ResolvedAnchor[]
 // ---------------------------------------------------------------------------
 
 export type AnchorResolver = (label: string) => ResolvedAnchor[];
 
 // ---------------------------------------------------------------------------
 // MemoryRepository — port for memory storage (driven adapter).
-// Source of truth: MemoryStore in src/memory/store.ts (Phase 1 is behavior-neutral;
-// the interface matches the ACTUAL public surface of MemoryStore verbatim).
+// Source of truth: SQLiteMemoryRepository in
+// src/infrastructure/sqlite/memory-repository.ts (the interface matches the
+// ACTUAL public surface of the implementation verbatim).
 // ---------------------------------------------------------------------------
 
 export interface MemoryRepository {
@@ -65,6 +64,11 @@ export interface MemoryRepository {
    * SQLite FTS5 is unavailable on this Node build (Node 22/23). Full stemmed
    * BM25 search is replaced by substring LIKE matching. Callers (e.g. wiring.ts)
    * use this flag to emit a warning to stderr.
+   *
+   * NOTE: this flag leaks an SQLite/FTS5 implementation detail into the domain
+   * port — a tolerated trade-off. Renaming it to something storage-neutral
+   * (e.g. `degradedSearch`) would break every implementation and caller for a
+   * purely cosmetic gain, so it stays as-is, documented honestly.
    */
   readonly usingLike: boolean;
 

@@ -1,10 +1,11 @@
 // domain/graph/ports.ts — Port interfaces for the graph domain.
-// Phase 1 (PR-1): interface definitions only — zero behavior change.
-// Concrete implementations (GraphStore, extractors, sources.ts) remain in
-// their current locations; Phase-3 reorganisation will move them.
 //
-// Dependency rule: this file MUST import only from domain modules or the
-// existing core/model.ts (which will become domain/graph/model.ts in Phase 3).
+// Concrete implementation: GraphStore in src/infrastructure/sqlite/graph-store.ts
+// (SQLite driven adapter). Read-only overlays (OverlayGraphRepository,
+// SyntheticSinkOverlay in src/application/audit/reachability.ts) implement the
+// same port for audit-time views.
+//
+// Dependency rule: this file MUST import only from other domain/ modules.
 // No application/, infrastructure/, or cli/ imports allowed here.
 
 import type {
@@ -27,8 +28,8 @@ export interface GraphStats {
 
 // ---------------------------------------------------------------------------
 // GraphRepository — port for graph storage (driven adapter)
-// Source of truth: GraphStore in src/core/store.ts (Phase 1 is behavior-neutral;
-// the interface matches the ACTUAL public surface of GraphStore, not a design ideal).
+// Source of truth: GraphStore in src/infrastructure/sqlite/graph-store.ts (the
+// interface matches the ACTUAL public surface of GraphStore, not a design ideal).
 // ---------------------------------------------------------------------------
 
 export interface GraphRepository {

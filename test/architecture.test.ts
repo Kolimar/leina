@@ -191,16 +191,28 @@ test("arch-rule-2: web-tree-sitter and ts-morph are not statically imported outs
 
 // ---------------------------------------------------------------------------
 // Rule 3: application/ layer purity. Files under src/application/ MUST NOT
-// directly import infrastructure modules (node:sqlite, node:child_process,
-// web-tree-sitter, ts-morph) — all infra access goes through domain ports (REQ-DEP-01).
+// directly import the ported infrastructure modules — node:sqlite,
+// node:child_process, web-tree-sitter, ts-morph. Access to THOSE goes through
+// domain ports (REQ-DEP-01): GraphStore for sqlite, ProcessRunner/HarnessGit
+// for child processes, the extractor seams for the heavy parser libs.
+//
+// node:fs is deliberately NOT on the list. Plain filesystem IO is permitted
+// application-layer IO by design decision: unlike sqlite/child_process/git,
+// fs never got a port, and a couple dozen application/ modules use it
+// directly — the harness in particular (verify.ts, gates/file.ts, io.ts,
+// contract-io.ts) reads and writes .harness/ state with fs on purpose.
+// Introducing an FsPort would be a large refactor with no current driver.
+// This guard therefore enforces exactly the four modules below — no more —
+// and this comment is kept in lockstep with the checked array so it never
+// promises a guarantee the test does not give.
 //
 // Status: ACTIVE (the DDD reorg landed; src/application/ holds real use-cases).
 // ---------------------------------------------------------------------------
 
 test("arch-rule-3: src/application/** imports no infrastructure modules", () => {
-  // When active, check that no file under src/application/ imports:
-  //   node:sqlite, node:fs, node:child_process, web-tree-sitter, ts-morph
-  // and verify all infra access is mediated through domain port interfaces.
+  // Checked: no file under src/application/ statically imports node:sqlite,
+  // node:child_process, web-tree-sitter, or ts-morph. node:fs is intentionally
+  // absent — see the rule header: fs is allowed application-layer IO (no port).
   const applicationDir = join(SRC, "application");
   let files: string[];
   try {
