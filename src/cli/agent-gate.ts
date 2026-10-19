@@ -45,6 +45,7 @@ import { spawnDetachedBuild } from "./background-build.ts";
 import { graphDbPath } from "./wiring.ts";
 import { isStale } from "../application/graph/manifest.ts";
 import { readConsentFlag } from "../application/install/consent.ts";
+import { isWorkspaceTrusted } from "../application/install/trust.ts";
 
 // Running any of these `leina memory <sub>` CLI commands counts as "project memory
 // loaded" for the session. Detected by inspecting the exec tool's command line (there is no
@@ -494,17 +495,20 @@ function emitStopNudge(saveMarkerPath: string): void {
 //   Stop {"decision":"block"}) ONLY when BOTH hold:
 //     1. the repo has an ACTIVE harness contract
 //        (.harness/state/current/contract.json exists), AND
-//     2. leina consent is NOT "disabled" (readConsentFlag !== "disabled";
-//        "unknown" still enforces — harness sync wires hooks independently of
-//        `leina init`, so a harness-governed repo need not be leina-enabled).
+//     2. the WORKSPACE IS TRUSTED (isWorkspaceTrusted: the out-of-repo record
+//        `leina init` writes under $LEINA_HOME/trust/, and consent not
+//        "disabled"). Contract, rules and even `.leina/consent` can all be
+//        committed by a hostile clone; the trust record cannot.
 //
 //   WITHOUT an active contract the pre-existing ADVISORY behaviour must not
 //   change BY A SINGLE BYTE: runHarnessAgentGate returns { handled: false }
 //   and the caller falls through to runAgentGate exactly as before. The same
-//   applies when consent is "disabled" — the harness branch never blocks there.
+//   applies in an untrusted workspace — no block, no verify run, and no
+//   SessionStart injection of the contract goal or rule bodies.
 //
 //   Covered explicitly by test/harness-agent-gate.test.ts (with contract →
-//   blocks; without contract → never blocks; consent disabled → never blocks).
+//   blocks; without contract → never blocks; consent disabled or untrusted
+//   → never blocks nor injects).
 //
 // The decision logic itself lives in application/harness/hooks.ts (shared with
 // `leina harness hook <event>`); this wrapper maps host payloads to those
@@ -609,7 +613,7 @@ export async function runHarnessAgentGate(
   cwd: string,
   fallbackEvent?: string,
 ): Promise<HarnessAgentGateResult> {
-  if (readConsentFlag(cwd) === "disabled") return HARNESS_NOT_HANDLED;
+  if (!isWorkspaceTrusted(cwd)) return HARNESS_NOT_HANDLED;
   if (!hasActiveHarnessContract(cwd)) return HARNESS_NOT_HANDLED;
 
   const payload = parseHookPayload(rawStdin, fallbackEvent);

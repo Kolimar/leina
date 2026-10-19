@@ -35,6 +35,7 @@ import {
   sessionStartContext,
   type HookPayload,
 } from "../../application/harness/hooks.ts";
+import { isWorkspaceTrusted } from "../../application/install/trust.ts";
 import { ShellProcessRunner } from "../../infrastructure/harness/exec.ts";
 import { HarnessGit } from "../../infrastructure/harness/git.ts";
 
@@ -403,6 +404,14 @@ export async function runHarnessHookEvent(event: string, rawPayload: string, rep
   if (!isHookEvent(event)) {
     err(`unknown hook event "${event}"`);
     process.exitCode = 2;
+    return;
+  }
+  // WORKSPACE TRUST: these hooks fire unattended, so in a workspace the user never
+  // trusted (`leina init` → out-of-repo record) they are silent no-ops — no blocks, no
+  // verify run, no contract/rule injection. Fail open: Cursor's shell hook still gets
+  // its protocol answer.
+  if (!isWorkspaceTrusted(repoRoot)) {
+    if (event === "cursor-shell") out(JSON.stringify({ permission: "allow" }));
     return;
   }
   const payload = parsePayload(rawPayload);

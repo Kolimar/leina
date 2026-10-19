@@ -40,8 +40,9 @@ export async function handleAgentHook(rest: string[]): Promise<never> {
   // Stop (advisory nudge to persist session memory when session.memory-saved is absent).
   //
   // HARNESS ENFORCEMENT BRANCH (product invariant — see runHarnessAgentGate): when the repo
-  // has an ACTIVE harness contract (.harness/state/current/contract.json) and leina consent
-  // is not "disabled", PreToolUse edit/bash and Stop may BLOCK (exit 2 / decision:block).
+  // has an ACTIVE harness contract (.harness/state/current/contract.json) and the workspace
+  // is trusted (`leina init` → out-of-repo trust record), PreToolUse edit/bash and Stop may
+  // BLOCK (exit 2 / decision:block).
   // Without a contract the advisory behaviour below is untouched, byte for byte.
   const eventName = rest[0];
   // Resolve the project root from Devin's documented DEVIN_PROJECT_DIR env var (fallback to

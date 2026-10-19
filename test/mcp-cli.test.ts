@@ -13,7 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { addMcpRegistration, removeMcpRegistration } from "../src/application/install/mcp-config.ts";
-import { jsonFrontmatterDoc } from "./helpers/harness-tmprepo.ts";
+import { trustWorkspace } from "../src/application/install/trust.ts";
+import { isolateLeinaHome, jsonFrontmatterDoc } from "./helpers/harness-tmprepo.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
 
@@ -337,6 +338,13 @@ test("(mcps-6) harness tools: parseable schemas and contract new → show → ve
         "# Trivial gate",
       ),
     );
+    // harness_verify runs only in a workspace the user trusted (`leina init`).
+    const restoreHome = isolateLeinaHome(env.LEINA_HOME!);
+    try {
+      trustWorkspace(dir);
+    } finally {
+      restoreHome();
+    }
 
     // Round 1: list + create. Dependent calls go in later rounds — tool calls
     // within one session are async and carry no ordering guarantee (see mcps-3).
@@ -396,6 +404,41 @@ test("(mcps-6) harness tools: parseable schemas and contract new → show → ve
     const ended = JSON.parse(byId3.get(2)?.result?.content?.[0]?.text ?? "{}");
     assert.equal(ended.ok, true, `end: ${byId3.get(2)?.result?.content?.[0]?.text}`);
     assert.match(String(ended.archivedTo), /history/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(mcps-6b) harness_verify in an untrusted workspace is a no-op result, never an error", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home6b-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo6b-"));
+  const env = sandboxEnv(home);
+  try {
+    // A hostile clone can commit its own consent flag — it is not trust.
+    mkdirSync(join(dir, ".leina"), { recursive: true });
+    writeFileSync(join(dir, ".leina", "consent"), "enabled");
+    mkdirSync(join(dir, ".harness", "rules"), { recursive: true });
+    writeFileSync(
+      join(dir, ".harness", "rules", "trivial.md"),
+      jsonFrontmatterDoc(
+        { id: "project/trivial", phase: "verify", severity: "blocking", gate: { type: "file", path: "a.txt", exists: true } },
+        "# Trivial gate",
+      ),
+    );
+
+    const responses = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "harness_verify", arguments: { root: dir } } },
+    ]);
+    const res = new Map(responses.map((r) => [r.id, r])).get(2);
+    assert.ok(!res?.result?.isError, `must not error: ${res?.result?.content?.[0]?.text}`);
+    const body = JSON.parse(res?.result?.content?.[0]?.text ?? "{}");
+    assert.equal(body.skipped, true);
+    assert.match(String(body.reason), /leina init/);
+    assert.equal(body.report, undefined, "no gate ran");
+    assert.equal(existsSync(join(dir, ".harness", "state", "current", "verify-report.json")), false);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });

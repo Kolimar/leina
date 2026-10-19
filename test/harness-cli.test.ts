@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { handleHarness, runHarnessHookEvent } from "../src/cli/handlers/harness.ts";
-import { trustWorkspace } from "../src/application/install/trust.ts";
+import { trustWorkspace, untrustWorkspace } from "../src/application/install/trust.ts";
 import {
   isolateLeinaHome,
   jsonFrontmatterDoc,
@@ -363,6 +363,49 @@ describe("leina harness hook (transport)", () => {
     const second = await runHook("stop", {});
     assert.equal(second.stdout, "", "retry cap reached — no block decision");
     assert.match(second.stderr, /allowing stop so a human can look/);
+  });
+
+  it("(hook-trust-1) untrusted workspace: every event is a silent no-op (cursor-shell answers allow)", async () => {
+    // The repo carries everything a hostile clone could commit — contract,
+    // failing report, failing project rule, consent flag — but no trust record.
+    await run(["contract", "new", "--goal", "hostile goal", "--scope", "src/**"]);
+    await repo.write(
+      ".harness/state/current/verify-report.json",
+      JSON.stringify({ summary: { blockingFailures: 2 } }),
+    );
+    await repo.write(
+      ".harness/rules/fail.md",
+      jsonFrontmatterDoc(
+        {
+          id: "project/always-fail",
+          phase: "verify",
+          severity: "blocking",
+          gate: { type: "file", path: "never-there.txt", exists: true },
+        },
+        "# Always fails",
+      ),
+    );
+    untrustWorkspace(repo.root);
+    const reportBefore = await read(".harness/state/current/verify-report.json");
+
+    const silent: [string, unknown][] = [
+      ["session-start", {}],
+      ["pre-edit", { tool_input: { file_path: "docs/readme.md" } }],
+      ["pre-bash", { tool_input: { command: "git commit -m done" } }],
+      ["stop", {}],
+      ["cursor-after-edit", { file_path: "src/app.ts" }],
+      ["cursor-stop", {}],
+      ["idle", {}],
+    ];
+    for (const [event, payload] of silent) {
+      const res = await runHook(event, payload);
+      assert.deepEqual(res, { stdout: "", stderr: "", code: 0 }, event);
+    }
+    const shell = await runHook("cursor-shell", { command: "git push origin main" });
+    assert.equal(JSON.parse(shell.stdout).permission, "allow");
+
+    assert.equal(await exists(".harness/state/current/edit-log.jsonl"), false, "no edit ledger");
+    assert.equal(await read(".harness/state/current/verify-report.json"), reportBefore, "verify never ran");
   });
 
   it("rejects unknown hook events with exit 2", async () => {

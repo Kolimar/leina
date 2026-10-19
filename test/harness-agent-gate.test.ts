@@ -1,13 +1,13 @@
 // harness-agent-gate.test.ts — the HARNESS ENFORCEMENT branch of the
 // host-neutral agent gate (runHarnessAgentGate) and its PRODUCT INVARIANT:
 //
-//   con contrato activo (+ consent != disabled)  → PreToolUse edit/bash y Stop
+//   con contrato activo (+ workspace confiado)   → PreToolUse edit/bash y Stop
 //                                                  PUEDEN bloquear;
 //   sin contrato activo                          → JAMÁS bloquea (handled:false,
 //                                                  el advisory queda intacto);
-//   consent disabled                             → JAMÁS bloquea.
+//   consent disabled / workspace no confiado     → JAMÁS bloquea ni inyecta.
 //
-// Matrix: {sin contrato, con contrato, consent disabled} ×
+// Matrix: {sin contrato, con contrato, consent disabled, no confiado} ×
 //         {pre-edit, pre-bash, stop, session-start}.
 //
 // Run: node --no-warnings --experimental-strip-types --test test/harness-agent-gate.test.ts
@@ -418,16 +418,67 @@ describe("harness agent gate — consent disabled", () => {
 });
 
 // ---------------------------------------------------------------------------
-// consent unknown (flag ausente) + contrato → SÍ bloquea: harness sync wires
-// hooks independientemente de `leina init`, así que un repo harness-governed
-// no necesita estar leina-enabled ("no disabled" es la condición, no "enabled").
+// workspace NO confiado + contrato → jamás bloquea ni inyecta. La confianza es
+// el registro fuera del repo que escribe `leina init` ($LEINA_HOME/trust/);
+// un clon hostil puede commitear contrato, reglas y hasta `.leina/consent =
+// enabled`, pero no ese registro.
 // ---------------------------------------------------------------------------
 
-describe("harness agent gate — consent unknown (absent) + active contract", () => {
-  it("pre-edit out-of-scope still blocks", async () => {
+describe("harness agent gate — untrusted workspace + active contract", () => {
+  const MATRIX = [
+    ["pre-edit", EDIT_OUT_OF_SCOPE],
+    ["pre-bash", BASH_COMMIT],
+    ["stop", STOP],
+    ["session-start", SESSION_START],
+  ] as const;
+
+  beforeEach(async () => {
     await newContract();
-    const run = await gate(EDIT_OUT_OF_SCOPE);
-    assert.deepEqual(run.result, { handled: true, exitCode: 2 });
-    assert.match(run.stderr, /BLOCKED/);
+    await repo.write(
+      ".harness/state/current/verify-report.json",
+      JSON.stringify({ summary: { blockingFailures: 3 } }),
+    );
+    await repo.write(
+      ".harness/rules/marker.md",
+      jsonFrontmatterDoc(
+        {
+          id: "project/marker",
+          phase: "verify",
+          severity: "blocking",
+          gate: { type: "file", path: "never-there.txt", exists: true },
+        },
+        "# Always fails (declarative — would run even untrusted)",
+      ),
+    );
+  });
+
+  for (const [name, payload] of MATRIX) {
+    it(`(gate-trust-1) consent unknown, no trust record — ${name}: silent no-op`, async () => {
+      const run = await gate(payload);
+      assert.deepEqual(run.result, { handled: false, exitCode: 0 });
+      assert.equal(run.stdout, "");
+      assert.equal(run.stderr, "");
+    });
+
+    it(`(gate-trust-2) committed .leina/consent = enabled, no trust record — ${name}: silent no-op`, async () => {
+      await repo.write(".leina/consent", "enabled");
+      const run = await gate(payload);
+      assert.deepEqual(run.result, { handled: false, exitCode: 0 });
+      assert.equal(run.stdout, "");
+      assert.equal(run.stderr, "");
+    });
+  }
+
+  it("(gate-trust-3) stop in an untrusted workspace never runs verify", async () => {
+    await fs.rm(path.join(repo.root, ".harness", "state", "current", "verify-report.json"));
+    await gate(STOP);
+    assert.equal(
+      await fs.access(path.join(repo.root, ".harness", "state", "current", "verify-report.json")).then(
+        () => true,
+        () => false,
+      ),
+      false,
+      "no verify run, no persisted report",
+    );
   });
 });

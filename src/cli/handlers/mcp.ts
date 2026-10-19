@@ -34,6 +34,7 @@ import { buildActiveContext } from "../../application/context/active-context.ts"
 import { runAudit } from "../../application/audit/run.ts";
 import type { ObservationInput, ObservationType, UpdateFields } from "../../domain/memory/model.ts";
 import { readConsentFlag } from "../../application/install/consent.ts";
+import { isWorkspaceTrusted } from "../../application/install/trust.ts";
 import { openFreshStoreOrThrow, openGraphRepo, memOpenOrThrow, buildDefaultRegistry } from "../wiring.ts";
 import { runDoctor } from "../doctor.ts";
 import { readPackageVersion } from "../../version.ts";
@@ -282,6 +283,16 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
   harness_contract_show: async (a) => harnessContractShow(rootOf(a)),
   harness_contract_end: async (a) => endContract(rootOf(a)),
   harness_verify: async (a) => {
+    // Model-driven verify runs command gates (builtin ones included, e.g. `npm test`) —
+    // only in a workspace the user trusted with `leina init` (out-of-repo record; the
+    // repo's own consent flag is not trust). Untrusted: a no-op result, never an error.
+    const root = rootOf(a);
+    if (!isWorkspaceTrusted(root)) {
+      return {
+        skipped: true,
+        reason: `workspace not trusted on this machine — harness verify does not run from MCP until a human runs 'leina init ${root}' (or runs 'leina harness verify' manually)`,
+      };
+    }
     // Long-running by design: command gates spawn real processes. Each gate is
     // bounded by its own timeout (config verify.defaultTimeoutMs, fail-closed),
     // so the call always returns — no extra MCP-side timeout needed.
@@ -290,7 +301,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       return p;
     });
     const ruleId = optStr(a, "ruleId");
-    return runVerify(rootOf(a), {
+    return runVerify(root, {
       ports: { proc: new ShellProcessRunner(), git: new HarnessGit() },
       ...(phases !== undefined ? { phases } : {}),
       ...(ruleId !== undefined ? { ruleId } : {}),
