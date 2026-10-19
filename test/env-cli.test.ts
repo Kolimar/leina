@@ -3,13 +3,25 @@
 // stdin path (the agent/script form) covers persistence end-to-end.
 // Run: node --no-warnings --experimental-strip-types --test test/env-cli.test.ts
 
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import fs, {
+  chmodSync,
+  existsSync,
+  linkSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readEnvFile, writeEnvFile } from "../src/infrastructure/env/env-file.ts";
 import {
   maskValue,
   parseEnvFile,
@@ -149,6 +161,70 @@ test("(envc-3) exec injects the stored values into the child process only", () =
   } finally {
     cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// (envf-*) env-file I/O: every write replaces the store atomically with a fresh 0600 file
+// ---------------------------------------------------------------------------
+
+// Point the in-process env-file adapter at a throwaway LEINA_HOME for the callback.
+function withLeinaHome(fn: (home: string) => void): void {
+  const home = mkdtempSync(join(tmpdir(), "leina-env-file-"));
+  const saved = process.env.LEINA_HOME;
+  process.env.LEINA_HOME = home;
+  try {
+    fn(home);
+  } finally {
+    if (saved === undefined) delete process.env.LEINA_HOME;
+    else process.env.LEINA_HOME = saved;
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test("(envf-1) a loosened (0644) store never receives the new secret: it is replaced, not rewritten", { skip: process.platform === "win32" ? "POSIX modes" : false }, () => {
+  withLeinaHome((home) => {
+    const p = join(home, ".env");
+    writeFileSync(p, "OLD=1\n", { mode: 0o644 });
+    chmodSync(p, 0o644);
+    // A second name for the loose inode — what a reader holding the old file would see.
+    linkSync(p, join(home, "old-inode"));
+
+    writeEnvFile("OLD=1\nNEW=top-secret\n");
+
+    assert.equal(statSync(p).mode & 0o777, 0o600, "the store is 0600");
+    assert.match(readFileSync(p, "utf8"), /NEW=top-secret/);
+    assert.doesNotMatch(readFileSync(join(home, "old-inode"), "utf8"), /top-secret/, "the 0644 inode never held it");
+    assert.deepEqual(readdirSync(home).sort(), [".env", "old-inode"], "no temp file left behind");
+  });
+});
+
+test("(envf-2) a write that fails midway (ENOSPC) leaves every stored secret intact", () => {
+  withLeinaHome((home) => {
+    writeEnvFile("A=1\nB=2\n");
+    const enospc = (): never => {
+      throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    };
+    // In-place writers truncate first, then run out of space; temp-file writers fail on
+    // the temp. Both paths are simulated so the test does not depend on the implementation
+    // (nothing else writes through fs during the synchronous call under test).
+    const orig = fs.writeFileSync;
+    const m1 = mock.method(fs, "writeFileSync", (file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (typeof file === "string" && file.startsWith(home)) orig(file, "");
+      if (typeof file === "number" || (typeof file === "string" && file.startsWith(home))) enospc();
+      return (orig as (...a: unknown[]) => void)(file, ...rest);
+    });
+    const m2 = mock.method(fs, "writeSync", enospc);
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => writeEnvFile("A=1\nB=2\nC=3\n"), /ENOSPC/);
+    } finally {
+      m1.mock.restore();
+      m2.mock.restore();
+      syncBuiltinESMExports();
+    }
+    assert.equal(readEnvFile(), "A=1\nB=2\n", "previous store untouched");
+    assert.deepEqual(readdirSync(home), [".env"], "the failed temp file is cleaned up");
+  });
 });
 
 test("(envc-4) invalid subcommands and key names fail with usage", () => {
