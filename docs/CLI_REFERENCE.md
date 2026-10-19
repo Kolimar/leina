@@ -565,9 +565,10 @@ Resolved rules with source layer, phase, severity, gate types and enabled state.
 
 ### `harness hook <event>`
 Platform hook entry point (reads the event JSON on stdin): `session-start` (context
-injection), `pre-edit` / `pre-bash` (hard blocks, exit 2), `stop` (completion gate: a
-fresh verify on every stop, blocking up to `maxRetries` times per stop chain, then it
-**yields honestly**), `cursor-shell` / `cursor-after-edit` / `cursor-stop` (Cursor
+injection), `pre-edit` / `pre-bash` (hard blocks, exit 2), `stop` (completion gate: every
+stop judges the current tree — the last full verify when HEAD, the working tree, rules,
+config, contract and trust are unchanged since, a fresh verify otherwise — blocking up to
+`maxRetries` times per stop chain, then it **yields honestly**), `cursor-shell` / `cursor-after-edit` / `cursor-stop` (Cursor
 protocol), `idle`. In a workspace not trusted on this machine it is a silent no-op
 (`cursor-shell` answers `allow`). An unreadable config makes `pre-edit` and the commit/push
 guard fail closed. Wired by `harness sync` for Cursor and OpenCode — including the sync

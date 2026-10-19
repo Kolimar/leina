@@ -143,16 +143,25 @@ los gates blocking `diff-content` — y los `diff` que tienen un scope que chequ
 reportan un error. Un directorio sin git tiene que deshabilitar `harness/no-secrets` para
 quedar en verde.
 
-En hosts con hooks, el **stop hook** corre un verify fresco cada vez que el agente intenta
-terminar su turno. Si pasa, permite el stop; si falla, la falla vuelve como la siguiente
-instrucción del agente (block). `maxRetries` (1–10, default 3; `contract new` rechaza
-cualquier otro valor, tanto por CLI como por MCP) acota los bloqueos de una **cadena de
-stop** — desde el primer intento de terminar el turno hasta que se permite un stop. Al
-llegar al tope el hook **cede honestamente**, nombrando las rules que fallaron en esa misma
-corrida: "allowing stop so a human can look", nunca un verde falso. Un pass o una cesión
-reinician la cuenta, y también una cadena nueva (`stop_hook_active: false`, o un
-`UserPromptSubmit`); si el contador no se puede guardar, el stop cede en vez de entrar en
-un loop sin límite.
+En hosts con hooks, el **stop hook** juzga el árbol actual cada vez que el agente intenta
+terminar su turno. **Reutiliza el último verify completo** cuando ese reporte sigue
+valiendo de forma demostrable — mismo `HEAD`, misma huella `worktree`, y las mismas rules,
+config, contract y confianza del workspace (un digest que se guarda con el reporte) — y si
+no, corre un verify fresco. Así, un turno que no cambió nada desde el último verify no
+vuelve a pagar toda la suite, mientras que cualquier edición, commit, cambio de contract o
+de rules la vuelve a correr. Una corrida filtrada nunca queda registrada, así que nunca se
+reutiliza. Si pasa, permite el stop; si falla, la falla vuelve como la siguiente
+instrucción del agente (block) — una falla reutilizada lo dice, y remite a
+`leina harness verify` para arreglos hechos fuera del árbol trackeado (dependencias,
+archivos ignorados por git, el grafo o la memoria de leina), que la huella no ve.
+`maxRetries` (1–10, default 3; `contract new` rechaza cualquier otro valor, tanto por CLI
+como por MCP) acota los bloqueos de una **cadena de stop** — desde el primer intento de
+terminar el turno hasta que se permite un stop; una falla reutilizada cuenta igual que una
+fresca. Al llegar al tope el hook **cede honestamente**, nombrando las rules que fallaron
+para este mismo árbol: "allowing stop so a human can look", nunca un verde falso. Un pass
+o una cesión reinician la cuenta, y también una cadena nueva (`stop_hook_active: false`, o
+un `UserPromptSubmit`); si el contador no se puede guardar, el stop cede en vez de entrar
+en un loop sin límite.
 
 El hook pre-bash rechaza `git commit` / `git push` mientras el reporte registrado muestre
 fallas blocking — o, en modo strict, mientras no haya un reporte fresco — y el hook
@@ -298,9 +307,10 @@ con 0.
 
 `state/.gitignore` se crea cada vez que se crea el dir de estado, así que el estado de la
 tarea queda fuera de git incluso en un repo que `leina init` nunca tocó.
-`verify-report.json` lleva, además del reporte, los `changedFiles` que juzgó y la huella
-`worktree` que recalcula el guard de commit; `retries.json` cuenta los bloqueos de la
-cadena de stop actual. Fuera del repo, `$LEINA_HOME/harness/` (por defecto
+`verify-report.json` lleva, además del reporte, los `changedFiles` que juzgó, la huella
+`worktree` que recalcula el guard de commit, y el `head` + digest `inputs` que el stop hook
+chequea antes de reutilizarlo; `retries.json` cuenta los bloqueos de la cadena de stop
+actual. Fuera del repo, `$LEINA_HOME/harness/` (por defecto
 `~/.leina/harness/`) guarda las rules y la config de usuario, y `$LEINA_HOME/trust/` los
 registros de confianza de los workspaces.
 
@@ -371,7 +381,7 @@ Ambos convergen en las **mismas funciones de decisión** de
 | abre la sesión | `SessionStart` | `session-start` | inyectar estado del contract + rules de intake |
 | antes de editar un archivo | `PreToolUse` (tool `Edit`/`Write`/`MultiEdit`/`NotebookEdit`, o `edit`/`write` en Devin) | `pre-edit` | `decidePreEdit` — scope del contract + frontera de integridad |
 | antes de un comando de shell | `PreToolUse` (tool `Bash`, o `exec` en Devin) | `pre-bash` | `decidePreBash` — guard de commit/push + frontera de integridad |
-| el agente intenta terminar su turno | `Stop` | `stop` | `decideStop` — verify fresco; permite, bloquea, o cede al llegar al tope de `maxRetries` |
+| el agente intenta terminar su turno | `Stop` | `stop` | `decideStop` — el último verify completo si sigue valiendo, si no uno fresco; permite, bloquea, o cede al llegar al tope de `maxRetries` |
 | después de correr una tool | `PostToolUse` (markers advisory) | `cursor-after-edit` (registro de ediciones) | — |
 | momentos solo-advisory | `UserPromptSubmit` / `PostCompaction` (inyección de contexto) | `cursor-stop` / `idle` | `advisoryVerifyFeedback` |
 | permiso de shell en Cursor | — | `cursor-shell` | `decideCursorShell` — exactamente la decisión de `decidePreBash` |

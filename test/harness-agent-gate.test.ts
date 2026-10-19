@@ -442,7 +442,7 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
   // false opens a chain, true continues it; every stop runs a fresh verify.
   const chainStop = (active: boolean) => gate({ hook_event_name: "Stop", stop_hook_active: active });
 
-  it("(stop-chain-1) a chain is blocked up to maxRetries times, then yields with the fresh failure", async () => {
+  it("(stop-chain-1) a chain is blocked up to maxRetries times, then yields with the failure for this tree", async () => {
     await writeFailingRule();
     await newContract({ maxRetries: 2 });
     for (const [active, count] of [[false, 1], [true, 2]] as const) {
@@ -454,7 +454,11 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
     assert.deepEqual(third.result, { handled: true, exitCode: 0 });
     assert.equal(third.stdout, "", "no block — the chain yields");
     assert.match(third.stderr, /after 2 attempts — allowing stop so a human can look/);
-    assert.match(third.stderr, /1 blocking gate\(s\) failing in the verify just run \(project\/always-fail\)/);
+    // Nothing changed between the stops, so the last full verify is reused (still this tree).
+    assert.match(
+      third.stderr,
+      /1 blocking gate\(s\) failing in the last verify \(working tree unchanged since\) \(project\/always-fail\)/,
+    );
     assert.equal(await retries(), 0, "the next chain starts from zero");
   });
 

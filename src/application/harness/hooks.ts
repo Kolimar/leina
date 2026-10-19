@@ -23,7 +23,7 @@ import { filterRules, loadResolvedRules } from "./resolver.ts";
 import { readJsonIfExists } from "./io.ts";
 import { worktreeMatches } from "./freshness.ts";
 import { gitCommitOrPush, shellWriteTargets } from "./shell-words.ts";
-import { runVerify } from "./verify.ts";
+import { reusePersistedVerify, runVerify } from "./verify.ts";
 import { renderFeedback } from "./gates/report.ts";
 
 export const HOOK_EVENTS = [
@@ -480,9 +480,13 @@ export async function decidePreBash(
 //     previous turn never eats into this one); hosts that send no flag keep
 //     counting across stops, and their UserPromptSubmit (resetStopRetries)
 //     opens the new turn instead.
-//   - EVERY stop runs a fresh verify: a pass allows and resets; a failure
-//     blocks while the chain is under the cap, and at the cap yields — with
-//     the failure just observed, never a stale claim — and resets.
+//   - EVERY stop judges the current tree: it reuses the last FULL verify only
+//     when that report provably still holds (same tree fingerprint, rules,
+//     config, contract and trust — reusePersistedVerify), otherwise it runs a
+//     fresh verify. A pass allows and resets; a failure blocks while the chain
+//     is under the cap, and at the cap yields — with the failure observed for
+//     this exact tree, never a stale claim — and resets. A reused outcome
+//     counts against the cap exactly like a fresh one.
 //   - If the counter cannot be persisted the loop could not be bounded, so
 //     the stop yields instead of blocking.
 // ---------------------------------------------------------------------------
@@ -517,7 +521,9 @@ export async function decideStop(
   const maxRetries = effectiveMaxRetries(contract?.maxRetries);
   const blocked = stopHookActive === false ? 0 : await readRetries(repoRoot);
 
-  const outcome = await runVerify(repoRoot, { ports });
+  // An unchanged tree under unchanged rules/contract: the last full verify still holds,
+  // so reuse its outcome instead of re-running every gate (reusePersistedVerify).
+  const outcome = (await reusePersistedVerify(repoRoot, ports)) ?? (await runVerify(repoRoot, { ports }));
 
   if (outcome.exitCode === 2) {
     // Broken config must not trap the user in an unstoppable session.
@@ -534,7 +540,8 @@ export async function decideStop(
     .filter((r) => r.severity === "blocking" && (r.status === "fail" || r.status === "error" || r.status === "timeout"))
     .map((r) => r.ruleId);
   const failingNow =
-    `${outcome.report.summary.blockingFailures} blocking gate(s) failing in the verify just run ` +
+    `${outcome.report.summary.blockingFailures} blocking gate(s) failing in ` +
+    `${outcome.reused ? "the last verify (working tree unchanged since)" : "the verify just run"} ` +
     `(${[...new Set(failing)].join(", ")}).`;
 
   if (blocked >= maxRetries) {
@@ -556,8 +563,14 @@ export async function decideStop(
         "(an unbounded loop is worse) — allowing stop so a human can look. Do NOT treat this task as complete.",
     };
   }
-  return { kind: "block", reason: renderFeedback(outcome.report) };
+  return { kind: "block", reason: renderFeedback(outcome.report) + (outcome.reused ? REUSED_NOTE : "") };
 }
+
+const REUSED_NOTE =
+  "\n\n(The working tree, rules and contract are unchanged since the last full verify, so its " +
+  "result was reused instead of re-running every gate. If you fixed something outside the " +
+  "tracked tree — dependencies, the leina graph or memory — run `leina harness verify` to " +
+  "refresh the report.)";
 
 // ---------------------------------------------------------------------------
 // Cursor protocol — beforeShellExecution answers on stdout with

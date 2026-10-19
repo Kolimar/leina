@@ -7,20 +7,22 @@
 // Process/git access is injected through domain ports (options.ports) — the
 // composition root (cli, tests) wires infrastructure/harness/{exec,git}.ts.
 
+import { createHash } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
 import {
   type Phase,
+  type TaskContract,
   DEFAULT_VERIFY_PHASES,
   isPhase,
 } from "../../domain/harness/model.ts";
 import { type GitPort, type HarnessPorts } from "../../domain/harness/ports.ts";
 import { isTrustedWorkspaceDir } from "../install/trust.ts";
-import { loadResolvedRules, filterRules } from "./resolver.ts";
-import { ensureStateDir, loadContract } from "./contract-io.ts";
+import { loadResolvedRules, filterRules, type Resolution } from "./resolver.ts";
+import { ensureStateDir, loadContract, stateDir } from "./contract-io.ts";
 import { harnessDir } from "./config-io.ts";
 import { readJsonIfExists } from "./io.ts";
-import { fingerprintWorktree, type WorktreeFingerprint } from "./freshness.ts";
+import { fingerprintWorktree, worktreeMatches, type WorktreeFingerprint } from "./freshness.ts";
 import { runGates } from "./gates/engine.ts";
 import { buildReport, type VerifyReport } from "./gates/report.ts";
 import { type GateContext } from "./gates/types.ts";
@@ -47,6 +49,20 @@ export interface VerifyOutcome {
    * the report the commit guard trusts. Only FULL runs do (see isFullRun).
    */
   persisted: boolean;
+  /** True when no gate ran: the outcome is the persisted report's (reusePersistedVerify). */
+  reused?: boolean;
+}
+
+/**
+ * What a verify outcome depends on besides the working tree: the resolved rules (every
+ * layer, config overrides applied), the effective config, the task contract (it lives in
+ * excluded task state, so the tree fingerprint cannot see it) and the project-gate policy
+ * (workspace trust). Recorded with a full run's report so a later reuse can prove it would
+ * judge the same inputs.
+ */
+function verifyInputsDigest(resolution: Resolution, contract: TaskContract | undefined, allowProjectExecutableGates: boolean): string {
+  const inputs = { rules: resolution.rules, config: resolution.config, contract: contract ?? null, allowProjectExecutableGates };
+  return createHash("sha256").update(JSON.stringify(inputs)).digest("hex");
 }
 
 /**
@@ -161,11 +177,11 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
 
   const persisted = isFullRun(phases, options.ruleId);
   if (persisted) {
-    // Fingerprint the tree AFTER the gates ran: the report covers the tree as
-    // verify leaves it (gate outputs included). No diff → no fingerprint →
-    // the commit guard treats the report as stale.
-    const worktree = changedUnknown ? undefined : await fingerprintWorktree(repoRoot, git, baseRef);
-    await persistReport(repoRoot, report, changed, worktree);
+    // Identify the tree AFTER the gates ran: the report covers the tree as verify
+    // leaves it (gate outputs included).
+    const { worktree, head } = await identifyTree(repoRoot, git, baseRef, changedUnknown);
+    const inputs = verifyInputsDigest(resolution, contract, policy.allowProjectExecutableGates);
+    await persistReport(repoRoot, report, changed, worktree, { inputs, head });
   }
 
   return {
@@ -175,6 +191,23 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
     exitCode: report.summary.blockingFailures > 0 ? 1 : 0,
     persisted,
   };
+}
+
+/**
+ * The tree a full run judged: its working-tree fingerprint (the commit guard's freshness
+ * check) and HEAD. HEAD is part of the Stop gate's reuse key (reusePersistedVerify): the
+ * fingerprint is relative to the diff base, so a commit that empties the changed set would
+ * otherwise look like the tree this run judged. No diff → neither → the commit guard treats
+ * the report as stale and the Stop gate never reuses it.
+ */
+async function identifyTree(
+  repoRoot: string,
+  git: GitPort,
+  baseRef: string | undefined,
+  changedUnknown: boolean,
+): Promise<{ worktree: WorktreeFingerprint | undefined; head: string | undefined }> {
+  if (changedUnknown) return { worktree: undefined, head: undefined };
+  return { worktree: await fingerprintWorktree(repoRoot, git, baseRef), head: await git.currentHead(repoRoot) };
 }
 
 /**
@@ -218,16 +251,80 @@ async function persistReport(
   report: VerifyReport,
   changedFiles: string[],
   worktree: WorktreeFingerprint | undefined,
+  reuseKey: { inputs: string; head: string | undefined },
 ): Promise<void> {
   try {
     const dir = await ensureStateDir(repoRoot);
     // The persisted document carries, on top of the report, the changed files
-    // the run judged and the working-tree fingerprint the commit guard
+    // the run judged, the working-tree fingerprint the commit guard
     // (hooks.ts readVerifySummary) recomputes to detect a report gone STALE —
-    // working tree changed after verify (freshness.ts).
-    const persisted = { ...report, changedFiles, ...(worktree !== undefined ? { worktree } : {}) };
+    // working tree changed after verify (freshness.ts) — and the HEAD + inputs
+    // digest (verifyInputsDigest) that reusePersistedVerify checks.
+    const persisted = {
+      ...report,
+      changedFiles,
+      ...(worktree !== undefined ? { worktree } : {}),
+      inputs: reuseKey.inputs,
+      ...(reuseKey.head !== undefined ? { head: reuseKey.head } : {}),
+    };
     await fs.writeFile(path.join(dir, "verify-report.json"), `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
   } catch {
     // Persisting the report is best-effort; the exit code is the contract.
   }
+}
+
+function isPersistedFullReport(v: unknown): v is VerifyReport & { worktree?: unknown; inputs: string; head: string } {
+  if (typeof v !== "object" || v === null) return false;
+  const doc = v as Record<string, unknown>;
+  const summary = doc.summary as Record<string, unknown> | undefined;
+  return (
+    doc.schemaVersion === 1 &&
+    typeof doc.inputs === "string" &&
+    typeof doc.head === "string" &&
+    Array.isArray(doc.results) &&
+    typeof summary?.blockingFailures === "number" &&
+    Array.isArray(doc.phases) &&
+    doc.phases.length === DEFAULT_VERIFY_PHASES.length &&
+    DEFAULT_VERIFY_PHASES.every((p) => (doc.phases as unknown[]).includes(p))
+  );
+}
+
+/**
+ * The outcome of the last FULL verify, when it provably still holds: the persisted report
+ * ran exactly the default phases, HEAD has not moved, its working-tree fingerprint matches
+ * the current tree, and its inputs digest (rules, config, contract, trust) matches the
+ * current inputs. Then
+ * re-running every gate would judge the same thing, so the Stop gate reuses it instead.
+ * Undefined in every other case — no report, a report from an older leina (no digest), a
+ * subset run (never persisted), a changed tree or input, or rules that no longer load.
+ * Known limit: gates that read state outside the tracked tree (git-ignored files, the leina
+ * graph or memory, the environment) are not covered by the fingerprint — after fixing such
+ * state, `leina harness verify` refreshes the report.
+ */
+export async function reusePersistedVerify(repoRoot: string, ports: HarnessPorts): Promise<VerifyOutcome | undefined> {
+  const raw = await readJsonIfExists(path.join(stateDir(repoRoot), "verify-report.json"));
+  if (!isPersistedFullReport(raw.value)) return undefined;
+  const doc = raw.value;
+  const resolution = await loadResolvedRules(repoRoot);
+  const { contract, error } = await loadContract(repoRoot);
+  if (resolution.errors.length > 0 || error !== undefined) return undefined;
+  if (doc.inputs !== verifyInputsDigest(resolution, contract, isTrustedWorkspaceDir(repoRoot))) return undefined;
+  if (doc.head !== (await ports.git.currentHead(repoRoot))) return undefined;
+  if (!(await worktreeMatches(repoRoot, ports.git, doc.worktree))) return undefined;
+  const report: VerifyReport = {
+    schemaVersion: 1,
+    phases: doc.phases,
+    startedAt: doc.startedAt,
+    durationMs: doc.durationMs,
+    results: doc.results,
+    summary: doc.summary,
+  };
+  return {
+    report,
+    loadErrors: [],
+    warnings: resolution.warnings,
+    exitCode: doc.summary.blockingFailures > 0 ? 1 : 0,
+    persisted: false,
+    reused: true,
+  };
 }

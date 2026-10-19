@@ -140,15 +140,23 @@ gates run instead of skipping, path/language scoping is not applied, and blockin
 `diff-content` gates — and `diff` gates with a scope to check — report an error. A non-git
 directory has to disable `harness/no-secrets` to go green.
 
-On hosts with hooks, the **stop hook** runs a fresh verify every time the agent tries to
-end its turn. A pass allows the stop; a failure comes back as the agent's next instruction
-(block). `maxRetries` (1–10, default 3; `contract new` rejects anything else, CLI and MCP
-alike) caps the blocks of one **stop chain** — from the first attempt to end the turn
-until a stop is allowed. At the cap the hook **yields honestly**, naming the rules that
-failed in that very run: "allowing stop so a human can look", never a fake green. A pass
-or a yield resets the count, and so does a new chain (`stop_hook_active: false`, or a
-`UserPromptSubmit`); if the counter cannot be saved, the stop yields rather than loop
-unbounded.
+On hosts with hooks, the **stop hook** judges the current tree every time the agent tries
+to end its turn. It **reuses the last full verify** when that report provably still holds —
+same `HEAD`, same `worktree` fingerprint, and the same rules, config, contract and
+workspace trust (a digest recorded with the report) — and runs a fresh verify otherwise.
+So a turn that changed nothing since the last verify does not pay for the whole suite
+again, while any edit, commit, contract or rule change re-runs it. A filtered run is never
+recorded, so it is never reused. A pass allows the stop; a failure comes back as the
+agent's next instruction (block) — a reused failure says so, and points at
+`leina harness verify` for fixes made outside the tracked tree (dependencies, git-ignored
+files, the leina graph or memory), which the fingerprint cannot see. `maxRetries` (1–10,
+default 3; `contract new` rejects anything else, CLI and MCP alike) caps the blocks of one
+**stop chain** — from the first attempt to end the turn until a stop is allowed; a reused
+failure counts exactly like a fresh one. At the cap the hook **yields honestly**, naming
+the rules that failed for this very tree: "allowing stop so a human can look", never a
+fake green. A pass or a yield resets the count, and so does a new chain
+(`stop_hook_active: false`, or a `UserPromptSubmit`); if the counter cannot be saved, the
+stop yields rather than loop unbounded.
 
 The pre-bash hook refuses `git commit` / `git push` while the recorded report shows
 blocking failures — or, in strict mode, while there is no fresh report — and the pre-edit
@@ -284,8 +292,9 @@ whatever the host can or cannot enforce, `leina harness verify` exits 0 or it do
 
 `state/.gitignore` is created whenever the state dir is, so task state stays out of git
 even in a repo `leina init` never touched. `verify-report.json` carries, besides the
-report, the `changedFiles` it judged and the `worktree` fingerprint the commit guard
-recomputes; `retries.json` counts the blocks of the current stop chain. Outside the repo,
+report, the `changedFiles` it judged, the `worktree` fingerprint the commit guard
+recomputes, and the `head` + `inputs` digest the stop hook checks before reusing it;
+`retries.json` counts the blocks of the current stop chain. Outside the repo,
 `$LEINA_HOME/harness/` (default `~/.leina/harness/`) holds the user rules and config, and
 `$LEINA_HOME/trust/` the workspace trust records.
 
@@ -355,7 +364,7 @@ vocabularies differ, the brain does not:
 | session opens | `SessionStart` | `session-start` | inject contract status + intake rules |
 | before a file edit | `PreToolUse` (tool `Edit`/`Write`/`MultiEdit`/`NotebookEdit`, or Devin `edit`/`write`) | `pre-edit` | `decidePreEdit` — contract scope + integrity boundary |
 | before a shell command | `PreToolUse` (tool `Bash`, or Devin `exec`) | `pre-bash` | `decidePreBash` — commit/push guard + integrity boundary |
-| agent tries to end the turn | `Stop` | `stop` | `decideStop` — fresh verify; allow, block, or yield at the `maxRetries` cap |
+| agent tries to end the turn | `Stop` | `stop` | `decideStop` — last full verify if still valid, else a fresh one; allow, block, or yield at the `maxRetries` cap |
 | after a tool ran | `PostToolUse` (advisory markers) | `cursor-after-edit` (edit ledger) | — |
 | advisory-only moments | `UserPromptSubmit` / `PostCompaction` (context injection) | `cursor-stop` / `idle` | `advisoryVerifyFeedback` |
 | Cursor shell permission | — | `cursor-shell` | `decideCursorShell` — exactly `decidePreBash`'s decision |

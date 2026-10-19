@@ -598,8 +598,10 @@ Rules resueltas con capa de origen, phase, severity, tipos de gate y estado de h
 ### `harness hook <event>`
 Punto de entrada de hooks de plataforma (lee el JSON del evento por stdin): `session-start`
 (inyección de contexto), `pre-edit` / `pre-bash` (bloqueos duros, exit 2), `stop` (gate de
-completitud: un verify fresco en cada stop, que bloquea hasta `maxRetries` veces por cadena
-de stop y después **cede honestamente**), `cursor-shell` / `cursor-after-edit` /
+completitud: cada stop juzga el árbol actual — el último verify completo si HEAD, el árbol
+de trabajo, las rules, la config, el contract y la confianza no cambiaron desde entonces, si
+no un verify fresco — y bloquea hasta `maxRetries` veces por cadena de stop y después
+**cede honestamente**), `cursor-shell` / `cursor-after-edit` /
 `cursor-stop` (protocolo Cursor), `idle`. En un workspace sin confianza en esta máquina es
 un no-op silencioso (`cursor-shell` responde `allow`). Una config ilegible hace que
 `pre-edit` y el guard de commit/push fallen cerrados. Lo cablea `harness sync` para Cursor
