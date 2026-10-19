@@ -325,6 +325,32 @@ describe("loadConfig layering", () => {
     assert.deepEqual(Object.keys(loaded.localRuleOverrides["project/x"] ?? {}), ["enabled"]);
   });
 
+  // strictness: user-local layers ($LEINA_HOME/harness/config.json below the
+  // project, config.local.json above it) may only RAISE it.
+  for (const [name, files, expected] of [
+    ["config.local cannot lower a project strict", { ".harness/config.json": "strict", ".harness/config.local.json": "guided" }, "strict"],
+    ["user config cannot lower a project strict", { "leina-home/harness/config.json": "guided", ".harness/config.json": "strict" }, "strict"],
+    ["config.local may raise a project guided", { ".harness/config.json": "guided", ".harness/config.local.json": "strict" }, "strict"],
+    ["user config may raise the default", { "leina-home/harness/config.json": "strict" }, "strict"],
+    ["the project may still choose guided", { ".harness/config.json": "guided" }, "guided"],
+  ] as const) {
+    it(`(cfg-strict-1) ${name}`, async () => {
+      for (const [file, strictness] of Object.entries(files)) {
+        await repo.write(file, JSON.stringify({ strictness }));
+      }
+      const loaded = await loadConfig(repo.root);
+      assert.deepEqual(loaded.errors, []);
+      assert.equal(loaded.config.strictness, expected);
+    });
+  }
+
+  it("(cfg-strict-2) an invalid local strictness is still reported", async () => {
+    await repo.write(".harness/config.json", JSON.stringify({ strictness: "strict" }));
+    await repo.write(".harness/config.local.json", JSON.stringify({ strictness: "lax" }));
+    const loaded = await loadConfig(repo.root);
+    assert.ok(loaded.errors.some((e) => e.includes("strictness")), JSON.stringify(loaded.errors));
+  });
+
   it("reports malformed JSON without crashing", async () => {
     await repo.write(".harness/config.json", "{ nope");
     const loaded = await loadConfig(repo.root);

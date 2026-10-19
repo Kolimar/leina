@@ -6,14 +6,15 @@
 // Invariant: user-local layers may tune timeouts and disable *their own*
 // additions, but may NOT downgrade a project blocking rule to advisory —
 // enforceability is not defeatable by local config. resolver.ts enforces it
-// using the project/local split of rule overrides this loader reports.
+// using the project/local split of rule overrides this loader reports; the
+// loader itself keeps local layers from lowering `strictness`.
 //
 // Directory names are contract: `.harness/` and its file names never change,
 // so repos initialized by the original harness-framework keep working.
 
 import path from "node:path";
 import os from "node:os";
-import { type HarnessConfig, type RuleOverride } from "../../domain/harness/model.ts";
+import { type HarnessConfig, type RuleOverride, STRICTNESS_LEVELS } from "../../domain/harness/model.ts";
 import { validateConfig, validateRuleOverride } from "../../domain/harness/validate.ts";
 import { readJsonIfExists } from "./io.ts";
 
@@ -76,6 +77,7 @@ export async function loadConfig(repoRoot: string): Promise<LoadedConfig> {
   const mergedRaw: Record<string, unknown> = {};
   const ruleLayers: { local: boolean; rules: Record<string, RuleOverride> }[] = [];
   const ruleErrors: string[] = [];
+  const strictnessVotes: { value: unknown; local: boolean }[] = [];
 
   for (const layer of layers) {
     const obj = layer.data;
@@ -86,9 +88,12 @@ export async function loadConfig(repoRoot: string): Promise<LoadedConfig> {
     for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
       if (key === "$schema") continue;
       if (key === "rules") ruleLayers.push({ local: layer.local, rules: validateRuleLayer(value, ruleErrors) });
+      else if (key === "strictness") strictnessVotes.push({ value, local: layer.local });
       else mergedRaw[key] = value;
     }
   }
+  const strictness = resolveStrictness(strictnessVotes);
+  if (strictness !== undefined) mergedRaw.strictness = strictness;
 
   const result = validateConfig(mergedRaw);
   const invalid = [...(result.ok ? [] : result.errors), ...ruleErrors];
@@ -110,6 +115,19 @@ export async function loadConfig(repoRoot: string): Promise<LoadedConfig> {
     localRuleOverrides: local,
     errors,
   };
+}
+
+/**
+ * `strictness` across layers: the project (or the default) decides, and user-local
+ * layers may only RAISE it to "strict" — a config.local.json "guided" must not turn a
+ * strict repo's hard gates into warnings. An invalid value is passed through so
+ * validateConfig reports it.
+ */
+function resolveStrictness(votes: { value: unknown; local: boolean }[]): unknown {
+  const invalid = votes.find((v) => !(STRICTNESS_LEVELS as readonly unknown[]).includes(v.value));
+  if (invalid) return invalid.value;
+  if (votes.some((v) => v.local && v.value === "strict")) return "strict";
+  return votes.filter((v) => !v.local).at(-1)?.value;
 }
 
 function validateRuleLayer(value: unknown, errors: string[]): Record<string, RuleOverride> {

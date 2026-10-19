@@ -390,6 +390,51 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
 });
 
 // ---------------------------------------------------------------------------
+// config inválida / strictness local → fail CLOSED. Una config rota no puede
+// convertir el commit-block de un repo strict en allow.
+// ---------------------------------------------------------------------------
+
+describe("harness agent gate — config integrity (trusted, active contract)", () => {
+  const STRICT_CONFIG = JSON.stringify({ ...JSON.parse(FIXTURE_CONFIG), strictness: "strict" });
+
+  beforeEach(async () => {
+    await setConsent("enabled");
+    await newContract();
+    await repo.write(".harness/config.json", STRICT_CONFIG);
+  });
+
+  it("(cfg-closed-1) invalid config.local.json: git commit is blocked naming the config error", async () => {
+    await repo.write(".harness/config.local.json", JSON.stringify({ verify: { parallelism: 0 } }));
+    const run = await gate(BASH_COMMIT);
+    assert.deepEqual(run.result, { handled: true, exitCode: 2 });
+    assert.match(run.stderr, /harness config is invalid/);
+    assert.match(run.stderr, /parallelism/);
+  });
+
+  it("(cfg-closed-2) malformed config.local.json: in-scope edits are blocked, task state stays writable", async () => {
+    await repo.write(".harness/config.local.json", "{ nope");
+    const edit = await gate({ hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: "src/app.ts" } });
+    assert.deepEqual(edit.result, { handled: true, exitCode: 2 });
+    assert.match(edit.stderr, /harness config is invalid/);
+    assert.match(edit.stderr, /config\.local\.json/);
+
+    const state = await gate({
+      hook_event_name: "PreToolUse",
+      tool_name: "Edit",
+      tool_input: { file_path: ".harness/state/current/plan.md" },
+    });
+    assert.deepEqual(state.result, { handled: false, exitCode: 0 });
+  });
+
+  it("(cfg-closed-3) config.local strictness guided cannot unlock a commit without a verify report", async () => {
+    await repo.write(".harness/config.local.json", JSON.stringify({ strictness: "guided" }));
+    const run = await gate(BASH_COMMIT);
+    assert.deepEqual(run.result, { handled: true, exitCode: 2 });
+    assert.match(run.stderr, /no verify report found and strictness is "strict"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SIN contrato → jamás bloquea, advisory intacto
 // ---------------------------------------------------------------------------
 

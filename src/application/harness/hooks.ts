@@ -136,6 +136,22 @@ export type PreDecision = { block: false } | { block: true; message: string };
 
 const ALLOW: PreDecision = { block: false };
 
+/**
+ * Fail CLOSED on config errors: loadConfig falls back to the built-in defaults
+ * (guided) when a layer is invalid, so trusting that fallback would let one
+ * broken file — e.g. config.local.json `{"verify":{"parallelism":0}}` — turn a
+ * strict repo's hard gates into allows.
+ */
+function invalidConfigBlock(errors: string[]): PreDecision {
+  return {
+    block: true,
+    message:
+      `BLOCKED: the harness config is invalid, so its enforcement cannot be evaluated: ${errors.join("; ")}. ` +
+      "A human must fix it (.harness/config.json, .harness/config.local.json or the user config under " +
+      "$LEINA_HOME/harness/); `leina harness verify` reports the same error.",
+  };
+}
+
 function repoRelative(repoRoot: string, filePath: string): string {
   const abs = path.isAbsolute(filePath) ? filePath : path.join(repoRoot, filePath);
   return path.relative(repoRoot, abs).replaceAll("\\", "/");
@@ -212,7 +228,10 @@ async function decidePreEditInner(repoRoot: string, filePath: string | undefined
   const rel = repoRelative(repoRoot, filePath);
   if (rel.startsWith("..")) return ALLOW; // outside the repo — not ours to police
 
-  const [{ config }, { contract }] = await Promise.all([loadConfig(repoRoot), loadContract(repoRoot)]);
+  const [{ config, errors: configErrors }, { contract }] = await Promise.all([
+    loadConfig(repoRoot),
+    loadContract(repoRoot),
+  ]);
 
   // Task state is always writable — plan.md, checklists, contract amendments.
   if (matchesAny(rel, [".harness/state/**"])) return ALLOW;
@@ -234,6 +253,8 @@ async function decidePreEditInner(repoRoot: string, filePath: string | undefined
         "Do not modify the harness to get past a gate.",
     };
   }
+
+  if (configErrors.length > 0) return invalidConfigBlock(configErrors);
 
   // The rest of .harness/ (generated files, future additions): strict seals it.
   if (matchesAny(rel, [".harness/**"]) && config.strictness === "strict") {
@@ -537,6 +558,9 @@ export async function decidePreBash(repoRoot: string, command: string | undefine
   const action = gitCommitOrPush(command);
   if (action === undefined) return ALLOW;
 
+  const { config, errors: configErrors } = await loadConfig(repoRoot);
+  if (configErrors.length > 0) return invalidConfigBlock(configErrors);
+
   // A STALE report reads as absent: guided mode stops trusting an outdated
   // green (or blocking on an outdated red); strict mode demands a re-verify.
   const { summary, present, stale } = await readVerifySummary(repoRoot);
@@ -550,7 +574,6 @@ export async function decidePreBash(repoRoot: string, command: string | undefine
     };
   }
 
-  const { config } = await loadConfig(repoRoot);
   if (!present && config.strictness === "strict") {
     return {
       block: true,
