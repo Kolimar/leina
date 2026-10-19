@@ -1,11 +1,11 @@
 // cli/handlers/impact.ts — handler para `leina impact analyze <symbol> [--json]`.
 //
-// Reutiliza openFreshStore + resolveSeed del path de query.
+// Reutiliza openFreshStore + analyzeSymbolImpact (resolveSeed del path de query; el
+// mismo use-case que el tool MCP `impact_analyze`).
 // Nunca lanza error al usuario: símbolo no encontrado → listas vacías, exit 0.
 
 import { openFreshStore } from "../wiring.ts";
-import { resolveSeed } from "../../application/graph/query.ts";
-import { analyzeImpact, type ImpactResult } from "../../application/graph/impact.ts";
+import { analyzeSymbolImpact, type ImpactResult } from "../../application/graph/impact.ts";
 import type { GraphNode } from "../../domain/graph/model.ts";
 import { fail } from "../io.ts";
 
@@ -37,12 +37,8 @@ async function runImpactAnalyze(source: string[]): Promise<void> {
   }
 
   const store = await openFreshStore(dir);
-  const seed = resolveSeed(store, symbolArg);
-
-  // Símbolo no encontrado → listas vacías, sin error
-  const result = seed
-    ? analyzeImpact(store, seed.id)
-    : { impacted: { files: [], tests: [], services: [], configs: [] } };
+  // Símbolo no encontrado → seed null + listas vacías, sin error
+  const { seed, ...result } = analyzeSymbolImpact(store, symbolArg);
   store.close();
 
   if (wantJson) {

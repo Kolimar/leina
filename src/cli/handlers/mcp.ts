@@ -27,7 +27,7 @@ import { isPhase, type Phase } from "../../domain/harness/model.ts";
 import { ShellProcessRunner } from "../../infrastructure/harness/exec.ts";
 import { HarnessGit } from "../../infrastructure/harness/git.ts";
 import { affected, queryGraph, resolveSeed, shortestPath } from "../../application/graph/query.ts";
-import { analyzeImpact } from "../../application/graph/impact.ts";
+import { analyzeSymbolImpact } from "../../application/graph/impact.ts";
 import { graphStatus } from "../../application/graph/manifest.ts";
 import { searchMemory, getVerifiedContext } from "../../application/memory/query.ts";
 import { previewRecentContext } from "../../application/memory/context-preview.ts";
@@ -297,7 +297,14 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
     }
   },
   impact_analyze: async (a) =>
-    withFreshStore(rootOf(a), (s) => analyzeImpact(s, str(a, "symbol"))),
+    withFreshStore(rootOf(a), (s) => {
+      // Same seed resolution as the CLI (label/file → node id); analyzeImpact alone
+      // expects a node id and silently returned empty lists for a symbol name.
+      const symbol = str(a, "symbol");
+      const { seed, impacted } = analyzeSymbolImpact(s, symbol, optNum(a, "depth"));
+      if (!seed) return { seed: null, impacted, note: `no graph node matches "${symbol}"` };
+      return { seed: { id: seed.id, label: seed.label, sourceFile: seed.sourceFile }, impacted };
+    }),
   memory_add: (a) =>
     withMemStore(rootOf(a), (s) => {
       // Batch form (schemaVersion 2): `items` array — same per-item normalisation and

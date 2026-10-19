@@ -9,7 +9,7 @@
 
 import type { GraphNode } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
-import { IMPACT_RELATIONS } from "./query.ts";
+import { IMPACT_RELATIONS, resolveSeed } from "./query.ts";
 
 export interface ImpactResult {
   impacted: {
@@ -114,4 +114,20 @@ export function analyzeImpact(
 
   const reached = bfsReached(store, seedId, seedNode, depth);
   return categorize(reached);
+}
+
+/**
+ * Symbol-level entry point shared by both transports (`impact analyze` and MCP
+ * `impact_analyze`): resolve `symbol` (node id, label or file) to its seed node the
+ * way `affected`/`path` do, then run analyzeImpact from it. An unresolved symbol
+ * yields `seed: null` and empty lists — analyzeImpact itself only accepts node ids.
+ */
+export function analyzeSymbolImpact(
+  store: GraphRepository,
+  symbol: string,
+  depth?: number,
+): ImpactResult & { seed: GraphNode | null } {
+  const seed = resolveSeed(store, symbol);
+  if (!seed) return { seed: null, impacted: { files: [], tests: [], services: [], configs: [] } };
+  return { seed, ...analyzeImpact(store, seed.id, depth) };
 }

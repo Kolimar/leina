@@ -399,6 +399,48 @@ test("(mcps-9) a refused stale graph is a tool error, never a server exit", asyn
   }
 });
 
+test("(mcps-10) impact_analyze resolves the symbol like the CLI and honours depth", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home10-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo10-"));
+  const env = sandboxEnv(home);
+  try {
+    // Call chain across files: a() → b() → c().
+    writeFileSync(join(dir, "c.ts"), "export function c(): number { return 1; }\n");
+    writeFileSync(join(dir, "b.ts"), "import { c } from \"./c\";\nexport function b(): number { return c(); }\n");
+    writeFileSync(join(dir, "a.ts"), "import { b } from \"./b\";\nexport function a(): number { return b(); }\n");
+    await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "graph_build", arguments: { root: dir } } },
+    ]);
+    const responses = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "impact_analyze", arguments: { root: dir, symbol: "c" } } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "impact_analyze", arguments: { root: dir, symbol: "c", depth: 1 } } },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "impact_analyze", arguments: { root: dir, symbol: "no_such_symbol" } } },
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+    interface Impact { seed: { label: string } | null; impacted: { files: string[] }; note?: string }
+    const parse = (id: number): Impact => JSON.parse(byId.get(id)?.result?.content?.[0]?.text ?? "{}") as Impact;
+
+    const full = parse(2);
+    assert.equal(full.seed?.label, "c()", "symbol name resolved to its node");
+    assert.deepEqual([...full.impacted.files].sort(), ["a.ts", "b.ts", "c.ts"], "default depth reaches the whole chain");
+
+    const shallow = parse(3);
+    assert.deepEqual([...shallow.impacted.files].sort(), ["b.ts", "c.ts"], "depth 1 stops at the direct caller");
+
+    const missing = parse(4);
+    assert.equal(missing.seed, null);
+    assert.deepEqual(missing.impacted.files, []);
+    assert.match(missing.note ?? "", /no graph node matches/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(mcps-6) harness tools: parseable schemas and contract new → show → verify → list → end over stdio", async () => {
   const home = mkdtempSync(join(tmpdir(), "leina-mcp-home6-"));
   const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo6-"));
