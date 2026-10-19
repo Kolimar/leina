@@ -9,6 +9,7 @@ import fs from "node:fs/promises";
 import { type FileGate } from "../../../domain/harness/model.ts";
 import { hasGlobMagic, isGlobMatch } from "../../../domain/harness/glob.ts";
 import { fileExists } from "../io.ts";
+import { matchLinesBounded } from "./engine.ts";
 import { type GateContext, type GateOutcome } from "./types.ts";
 
 const WALK_EXCLUDED = new Set([".git", "node_modules"]);
@@ -64,8 +65,14 @@ export async function runFileGate(gate: FileGate, ctx: GateContext): Promise<Gat
     return { status: "fail", detail: `no file matches "${gate.path}"` };
   }
 
+  // Rule-supplied regexes run inside a vm hard timeout: a catastrophic pattern
+  // (ReDoS) blocks the event loop synchronously, so the engine's cooperative
+  // withTimeout could never interrupt it — and this gate is declarative, so it
+  // runs even in an untrusted workspace. Bounded by the gate's own timeout,
+  // capped at the helper's 5s default, per file.
+  const regexTimeoutMs = Math.min(gate.timeoutMs ?? ctx.defaultTimeoutMs, 5000);
   for (const rel of matches) {
-    const outcome = await checkFileConstraints(gate, ctx.repoRoot, rel);
+    const outcome = await checkFileConstraints(gate, ctx.repoRoot, rel, regexTimeoutMs);
     if (outcome !== undefined) return outcome;
   }
   return { status: "pass", detail: `${matches.length} file(s) match "${gate.path}" and satisfy constraints` };
@@ -76,6 +83,7 @@ async function checkFileConstraints(
   gate: FileGate,
   repoRoot: string,
   rel: string,
+  regexTimeoutMs: number,
 ): Promise<GateOutcome | undefined> {
   const content = await fs.readFile(path.join(repoRoot, rel), "utf8");
 
@@ -86,29 +94,42 @@ async function checkFileConstraints(
     };
   }
   if (gate.contentMatch !== undefined) {
-    const re = compile(gate.contentMatch);
-    if (re instanceof Error) return { status: "error", detail: `invalid contentMatch regex: ${re.message}` };
-    if (!re.test(content)) {
+    const verdict = contentMatches(gate.contentMatch, content, regexTimeoutMs);
+    if ("error" in verdict) return regexError("contentMatch", verdict);
+    if (!verdict.matched) {
       return { status: "fail", detail: `${rel} does not match /${gate.contentMatch}/` };
     }
   }
   if (gate.contentNotMatch !== undefined) {
-    const re = compile(gate.contentNotMatch);
-    if (re instanceof Error) {
-      return { status: "error", detail: `invalid contentNotMatch regex: ${re.message}` };
-    }
-    if (re.test(content)) {
+    const verdict = contentMatches(gate.contentNotMatch, content, regexTimeoutMs);
+    if ("error" in verdict) return regexError("contentNotMatch", verdict);
+    if (verdict.matched) {
       return { status: "fail", detail: `${rel} matches forbidden /${gate.contentNotMatch}/` };
     }
   }
   return undefined;
 }
 
-function compile(pattern: string): RegExp | Error {
-  try {
-    // eslint-disable-next-line security/detect-non-literal-regexp -- pattern comes from trusted rule files (.harness/rules/, bundled assets), invalid patterns map to an error outcome
-    return new RegExp(pattern, "m");
-  } catch (err) {
-    return err as Error;
-  }
+type ContentVerdict = { matched: boolean } | { error: string; invalid: boolean };
+
+/**
+ * Multiline test of the WHOLE file (`m` flag: ^/$ anchor per line, and a
+ * pattern may still span lines) through the bounded evaluator, which receives
+ * the content as a single "line".
+ */
+function contentMatches(pattern: string, content: string, timeoutMs: number): ContentVerdict {
+  // Compile first (cheap, against zero lines) so a broken pattern reads as
+  // invalid rather than as an evaluation failure.
+  const probe = matchLinesBounded(pattern, "m", []);
+  if ("error" in probe) return { error: probe.error, invalid: true };
+  const evaluated = matchLinesBounded(pattern, "m", [content], timeoutMs);
+  if ("error" in evaluated) return { error: evaluated.error, invalid: false };
+  return { matched: evaluated.matches.length > 0 };
+}
+
+function regexError(key: string, verdict: { error: string; invalid: boolean }): GateOutcome {
+  return {
+    status: "error",
+    detail: verdict.invalid ? `invalid ${key} regex: ${verdict.error}` : `${key} regex evaluation failed: ${verdict.error}`,
+  };
 }

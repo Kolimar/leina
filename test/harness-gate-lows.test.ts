@@ -1,6 +1,7 @@
 // harness-gate-lows.test.ts — hardening fixes around the gate engine:
-//   L1  ReDoS: rule-supplied regexes (expectStdoutMatch, forbidAdded) run
-//       inside a vm hard timeout — a catastrophic pattern cannot hang verify.
+//   L1  ReDoS: rule-supplied regexes (expectStdoutMatch, forbidAdded,
+//       contentMatch/contentNotMatch) run inside a vm hard timeout — a
+//       catastrophic pattern cannot hang verify.
 //   L2  Atomic co-owned writes: writeFileAtomic never leaves a truncated
 //       CLAUDE.md/opencode.json behind and preserves permissions.
 //   L3  maxRetries cap: a hostile contract.json cannot extend the Stop-block
@@ -22,6 +23,7 @@ import path from "node:path";
 import { matchLinesBounded } from "../src/application/harness/gates/engine.ts";
 import { runCommandGate } from "../src/application/harness/gates/command.ts";
 import { runDiffContentGate } from "../src/application/harness/gates/diff-content.ts";
+import { runFileGate } from "../src/application/harness/gates/file.ts";
 import { writeFileAtomic } from "../src/application/harness/adapters/writer.ts";
 import { decideStop } from "../src/application/harness/hooks.ts";
 import { saveContract } from "../src/application/harness/contract-io.ts";
@@ -126,6 +128,48 @@ describe("L1: bounded regex evaluation (ReDoS)", () => {
       assert.equal(r.status, "error");
       assert.match(r.detail, /timed out/);
       assert.ok(elapsed < 3000, `gate must not hang (took ${elapsed}ms)`);
+    } finally {
+      await repo.cleanup();
+    }
+  });
+
+  it("(file-redos-1) file gate: catastrophic contentMatch / contentNotMatch error within the gate timeout", async () => {
+    // The file gate is declarative, so it runs even in an untrusted workspace —
+    // its patterns must be as bounded as the executable gates' ones.
+    const repo = await makeTmpRepo(false);
+    try {
+      await repo.write("notes.md", `header\n${REDOS_INPUT}\n`);
+      for (const key of ["contentMatch", "contentNotMatch"] as const) {
+        const started = Date.now();
+        const r = await runFileGate(
+          { type: "file", path: "notes.md", exists: true, [key]: REDOS_PATTERN, timeoutMs: 400 },
+          stubCtx(repo.root, stubGit("")),
+        );
+        const elapsed = Date.now() - started;
+        assert.equal(r.status, "error", key);
+        assert.match(r.detail, new RegExp(`${key} regex evaluation failed: .*timed out`), key);
+        assert.ok(elapsed < 3000, `${key}: gate must not hang (took ${elapsed}ms)`);
+      }
+    } finally {
+      await repo.cleanup();
+    }
+  });
+
+  it("(file-redos-2) file gate keeps multiline semantics and reports invalid patterns", async () => {
+    const repo = await makeTmpRepo(false);
+    try {
+      await repo.write("plan.md", "# Plan\n\n## Steps\n- one\n");
+      const ctx = stubCtx(repo.root, stubGit(""));
+      const run = (gate: Partial<{ contentMatch: string; contentNotMatch: string }>) =>
+        runFileGate({ type: "file", path: "plan.md", exists: true, ...gate }, ctx);
+      assert.equal((await run({ contentMatch: "^## Steps$" })).status, "pass", "^/$ match per line");
+      assert.equal((await run({ contentMatch: "Plan\\n\\n## Steps" })).status, "pass", "spans lines");
+      assert.equal((await run({ contentMatch: "^- two$" })).status, "fail");
+      assert.equal((await run({ contentNotMatch: "^- one$" })).status, "fail");
+      assert.equal((await run({ contentNotMatch: "^TODO" })).status, "pass");
+      const invalid = await run({ contentMatch: "(" });
+      assert.equal(invalid.status, "error");
+      assert.match(invalid.detail, /invalid contentMatch regex/);
     } finally {
       await repo.cleanup();
     }
