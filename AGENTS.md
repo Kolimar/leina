@@ -220,10 +220,10 @@ hosts on macOS (Devin.app) and Windows do not inherit the shell PATH from launch
 
 **Project root resolution.** The `agent-hook` (alias `devin-hook`) events are NOT pinned to a baked dir (a single
 user-global hook fires in every repo, so it must resolve the project at runtime). It resolves
-via `resolveHookProjectRoot(process.env, process.cwd())` (`src/cli/agent-gate.ts`): it prefers
-Devin's documented `DEVIN_PROJECT_DIR` env var — the contract for telling a hook its workspace
-root; no hook stdin payload carries a `cwd` — and falls back to `process.cwd()` when the var is
-absent/blank. Everything downstream of the hook keys off this root: the scope guard
+via `resolveHookProjectRoot(process.env, process.cwd())` (`src/cli/agent-gate.ts`): the first
+non-blank of Claude Code's documented `CLAUDE_PROJECT_DIR` and Devin's documented
+`DEVIN_PROJECT_DIR` — the hosts' contract for telling a hook its workspace root; no hook stdin
+payload carries a `cwd` — falling back to `process.cwd()` when both are absent/blank. Everything downstream of the hook keys off this root: the scope guard
 (`isLeinaProject` + `isWorkspaceTrusted`), the session markers, and `buildActiveContext`
 (project key + graph.db + freshness). The PostToolUse `refresh` hook is the exception — it
 carries the project dir baked at init time, so it is unaffected by the runtime root resolution.
