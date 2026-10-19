@@ -201,3 +201,58 @@ derives the `leina-*` list by scanning the builtin rules at call time, so a new
 leina-coupled rule automatically joins the preset's exclusion list. To adopt the
 `generic` preset today, write that JSON as your `.harness/config.json`; keep (or reset
 to) `{}` for `leina-native`.
+
+## Vocabulary map — two hook vocabularies, one brain, three "gates"
+
+The harness arrived from an origin framework, and part of its vocabulary landed
+duplicated or overloaded. This section is the disambiguation table.
+
+### Two hook-event vocabularies for the same lifecycle
+
+There are two event vocabularies because there are two **transports**, not two engines:
+
+- `leina agent-hook <Event>` — the host-neutral **agent gate** (chapter 6), speaking the
+  `.devin/hooks.v1.json` event shape (`SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+  `PostToolUse`, `PostCompaction`, `Stop`). Installed by `leina init` for Claude Code and
+  Devin/Windsurf.
+- `leina harness hook <event>` — the harness's own hook CLI, with its own event names
+  (`session-start`, `pre-edit`, `pre-bash`, `stop`, `cursor-*`, `idle`). Wired by
+  `harness sync` for Cursor and OpenCode.
+
+Both converge on the **same decision functions** in `application/harness/hooks.ts` — the
+vocabularies differ, the brain does not:
+
+| lifecycle moment | agent-gate event (`leina agent-hook`) | harness hook event (`leina harness hook`) | shared decision |
+|---|---|---|---|
+| session opens | `SessionStart` | `session-start` | inject contract status + intake rules |
+| before a file edit | `PreToolUse` (tool `Edit`/`Write`/`MultiEdit`/`NotebookEdit`, or Devin `edit`/`write`) | `pre-edit` | `decidePreEdit` — contract scope + integrity boundary |
+| before a shell command | `PreToolUse` (tool `Bash`, or Devin `exec`) | `pre-bash` | `decidePreBash` — commit/push guard + integrity boundary |
+| agent tries to end the turn | `Stop` | `stop` | `decideStop` — run verify; block, or yield after `maxRetries` |
+| after a tool ran | `PostToolUse` (advisory markers) | `cursor-after-edit` (edit ledger) | — |
+| advisory-only moments | `UserPromptSubmit` / `PostCompaction` (context injection) | `cursor-stop` / `idle` | `advisoryVerifyFeedback` |
+| Cursor shell permission | — | `cursor-shell` | `decideCursorShell` |
+
+### Why enforcement is bifurcated per host
+
+- **Claude Code and Devin/Windsurf** already run the agent gate that `leina init`
+  installs. `harness sync` therefore ships them only rule **text** (the `CLAUDE.md`
+  managed block + skills; `.devin/` + `.windsurf/` rule mirrors) — enforcement rides the
+  gate that is already there. The gate blocks **only while a contract is active** (and
+  leina consent is not disabled); without a contract it stays purely advisory.
+- **Cursor and OpenCode** have no agent gate, so `harness sync` writes hook wiring that
+  calls `leina harness hook <event>` directly. OpenCode's generated plugin turns a
+  non-zero exit into a hard block; Cursor gets advisory hooks plus a shell permission
+  guard.
+
+One brain, two doors: whichever transport fires, the decision comes from the same
+functions, so hosts cannot drift apart in behaviour.
+
+### The word "gate" means three different things
+
+| name to prefer | what it is | where it lives | can it refuse? |
+|---|---|---|---|
+| **verify gates** (rule gates) | the executable proofs (`command`, `file`, `diff`, `diff-content`, `checklist`, `js`) run by `leina harness verify` — the completion wall | rule frontmatter + `application/harness/gates/` | yes — exit 1 blocks completion |
+| **agent gate** (hook bridge) | the host-hook entry point `leina agent-hook`: injects context, and relays the harness decisions above to the host | `cli/agent-gate.ts` | only while a contract is active; otherwise advisory |
+| **freshness gate** (graph) | the staleness check the *graph* runs before answering a read — auto-rebuild or refuse (chapter 3); unrelated to the harness | graph read path | it refuses graph *reads*, never tasks |
+
+In harness prose, a bare "gate" should mean a **verify gate**; qualify the other two.

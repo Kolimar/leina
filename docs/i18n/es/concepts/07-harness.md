@@ -204,3 +204,60 @@ deriva la lista `leina-*` escaneando las rules builtin al momento de la llamada,
 una nueva rule acoplada a leina se suma automáticamente a la lista de exclusión del
 preset. Para adoptar el preset `generic` hoy, escribí ese JSON como tu
 `.harness/config.json`; mantené (o volvé a) `{}` para `leina-native`.
+
+## Mapa de vocabulario — dos vocabularios de hooks, un cerebro, tres "gates"
+
+El harness llegó desde un framework de origen, y parte de su vocabulario aterrizó
+duplicado o sobrecargado. Esta sección es la tabla de desambiguación.
+
+### Dos vocabularios de eventos de hook para el mismo ciclo de vida
+
+Hay dos vocabularios de eventos porque hay dos **transportes**, no dos engines:
+
+- `leina agent-hook <Event>` — el **agent gate** neutral al host (capítulo 6), que habla
+  la forma de eventos de `.devin/hooks.v1.json` (`SessionStart`, `UserPromptSubmit`,
+  `PreToolUse`, `PostToolUse`, `PostCompaction`, `Stop`). Lo instala `leina init` para
+  Claude Code y Devin/Windsurf.
+- `leina harness hook <event>` — el CLI de hooks propio del harness, con sus propios
+  nombres de eventos (`session-start`, `pre-edit`, `pre-bash`, `stop`, `cursor-*`,
+  `idle`). Lo cablea `harness sync` para Cursor y OpenCode.
+
+Ambos convergen en las **mismas funciones de decisión** de
+`application/harness/hooks.ts` — los vocabularios difieren, el cerebro no:
+
+| momento del ciclo | evento del agent-gate (`leina agent-hook`) | evento del harness hook (`leina harness hook`) | decisión compartida |
+|---|---|---|---|
+| abre la sesión | `SessionStart` | `session-start` | inyectar estado del contract + rules de intake |
+| antes de editar un archivo | `PreToolUse` (tool `Edit`/`Write`/`MultiEdit`/`NotebookEdit`, o `edit`/`write` en Devin) | `pre-edit` | `decidePreEdit` — scope del contract + frontera de integridad |
+| antes de un comando de shell | `PreToolUse` (tool `Bash`, o `exec` en Devin) | `pre-bash` | `decidePreBash` — guard de commit/push + frontera de integridad |
+| el agente intenta terminar su turno | `Stop` | `stop` | `decideStop` — corre verify; bloquea, o cede tras `maxRetries` |
+| después de correr una tool | `PostToolUse` (markers advisory) | `cursor-after-edit` (registro de ediciones) | — |
+| momentos solo-advisory | `UserPromptSubmit` / `PostCompaction` (inyección de contexto) | `cursor-stop` / `idle` | `advisoryVerifyFeedback` |
+| permiso de shell en Cursor | — | `cursor-shell` | `decideCursorShell` |
+
+### Por qué la exigencia está bifurcada por host
+
+- **Claude Code y Devin/Windsurf** ya corren el agent gate que instala `leina init`.
+  `harness sync` por eso les envía solo **texto** de rules (el bloque managed de
+  `CLAUDE.md` + skills; espejos de rules en `.devin/` + `.windsurf/`) — la exigencia
+  viaja por el gate que ya está instalado. El gate bloquea **solo mientras hay un
+  contract activo** (y el consentimiento de leina no está deshabilitado); sin contract se
+  queda puramente advisory.
+- **Cursor y OpenCode** no tienen agent gate, así que `harness sync` escribe el cableado
+  de hooks que llama a `leina harness hook <event>` directamente. El plugin generado de
+  OpenCode convierte un exit distinto de cero en un bloqueo duro; Cursor recibe hooks
+  advisory más un guard de permiso de shell.
+
+Un cerebro, dos puertas: dispare el transporte que dispare, la decisión sale de las
+mismas funciones, así que los hosts no pueden divergir en comportamiento.
+
+### La palabra "gate" significa tres cosas distintas
+
+| nombre a preferir | qué es | dónde vive | ¿puede negarse? |
+|---|---|---|---|
+| **verify gates** (gates de rules) | las pruebas ejecutables (`command`, `file`, `diff`, `diff-content`, `checklist`, `js`) que corre `leina harness verify` — el muro de completitud | frontmatter de las rules + `application/harness/gates/` | sí — exit 1 bloquea la completitud |
+| **agent gate** (puente de hooks) | el punto de entrada de hooks del host `leina agent-hook`: inyecta contexto y traslada al host las decisiones del harness de arriba | `cli/agent-gate.ts` | solo mientras hay un contract activo; si no, advisory |
+| **freshness gate** (grafo) | el chequeo de staleness que corre el *grafo* antes de responder una lectura — auto-rebuild o rechazo (capítulo 3); no tiene relación con el harness | ruta de lectura del grafo | rechaza *lecturas* del grafo, nunca tareas |
+
+En la prosa del harness, un "gate" a secas debería significar un **verify gate**;
+calificá los otros dos.

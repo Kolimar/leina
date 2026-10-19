@@ -62,7 +62,7 @@ Leelos en este orden si venís de cero:
 | 4 | [La memoria de proyecto](./04-memoria.md) | `observations`, `sessions`, el *project key*, búsqueda FTS5/BM25 | el bibliotecario |
 | 5 | [Cómo se hablan grafo y memoria](./05-comunicacion-grafo-memoria.md) | `anchors` y *drift detection* (USABLE / WARNING / DO-NOT-USE) | los post-its |
 | 6 | [Hooks e inyección de contexto](./06-hooks-e-inyeccion.md) | Ciclo de vida de los hooks del agente, markers, inyección activa | el conserje |
-| 7 | [El harness](./07-harness.md) | Rules con gates ejecutables, contracts de tarea, `verify` como oráculo de completitud, sync multi-host | el inspector de obra |
+| 7 | [El harness](./07-harness.md) | Rules con gates ejecutables, contracts de tarea, `verify` como oráculo de completitud, sync multi-host, presets de rules (`generic`/`leina-native`) y el glosario de vocabulario (eventos de hook, los tres "gates") | el inspector de obra |
 
 ---
 

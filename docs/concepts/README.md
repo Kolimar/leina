@@ -62,7 +62,7 @@ Read them in this order if you're starting from scratch:
 | 4 | [Project memory](./04-memoria.md) | `observations`, `sessions`, the *project key*, FTS5/BM25 search | the librarian |
 | 5 | [How the graph and memory talk to each other](./05-comunicacion-grafo-memoria.md) | `anchors` and *drift detection* (USABLE / WARNING / DO-NOT-USE) | the sticky notes |
 | 6 | [Hooks and context injection](./06-hooks-e-inyeccion.md) | Agent hooks lifecycle, markers, active injection | the concierge |
-| 7 | [The harness](./07-harness.md) | Rules with executable gates, task contracts, `verify` as the completion oracle, multi-host sync | the site inspector |
+| 7 | [The harness](./07-harness.md) | Rules with executable gates, task contracts, `verify` as the completion oracle, multi-host sync, rule presets (`generic`/`leina-native`), and the vocabulary glossary (hook events, the three "gates") | the site inspector |
 
 ---
 
