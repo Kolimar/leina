@@ -255,8 +255,12 @@ test("(compact-7) sessions untouched by default; purged only via sessionsOlderTh
     const r2 = store.compact({ sessionsOlderThanDays: 60, now: Date.now() + fortyDays });
     assert.equal(r2.sessionsRemoved, 0, "younger than the window — kept");
 
-    // Window 30 days with fake now = +40 days → purged, reference severed.
-    const r3 = store.compact({ sessionsOlderThanDays: 30, now: Date.now() + fortyDays });
+    // The newest sessions are kept by default, however idle (compact-18) — opt out here.
+    const kept = store.compact({ sessionsOlderThanDays: 30, now: Date.now() + fortyDays });
+    assert.equal(kept.sessionsRemoved, 0, "the newest 5 sessions always survive by default");
+
+    // Window 30 days with fake now = +40 days, keepSessions 0 → purged, reference severed.
+    const r3 = store.compact({ sessionsOlderThanDays: 30, keepSessions: 0, now: Date.now() + fortyDays });
     assert.equal(r3.sessionsRemoved, 1, "idle session purged");
     assert.equal(counts(path).sessions, 0);
     const reread = store.get(obs.observation.id);
@@ -322,6 +326,7 @@ test("(compact-9) compactMemory validates options and capability", () => {
     assert.throws(() => compactMemory(store, { keepPerTopic: -1 }), /non-negative integer/);
     assert.throws(() => compactMemory(store, { keepPerTopic: 1.5 }), /non-negative integer/);
     assert.throws(() => compactMemory(store, { sessionsOlderThanDays: 0 }), /positive number of days/);
+    assert.throws(() => compactMemory(store, { keepSessions: -1 }), /keepSessions must be a non-negative integer/);
     const report = compactMemory(store, {});
     assert.equal(report.supersededRemoved, 0, "empty project compacts to zeros");
   } finally {
@@ -622,5 +627,48 @@ test("(compact-16) CLI: a write-locked db fails compact (even --dry-run) with an
     holder?.kill();
     rmSync(home, { recursive: true, force: true });
     rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("(compact-18) the newest sessions always survive the sessions purge (keepSessions, CLI --keep-sessions)", () => {
+  const { store, path, dir } = tmpStore("keepsessions");
+  try {
+    const t0 = Date.now() - 1000;
+    for (let i = 0; i < 8; i++) {
+      const s = store.saveSession(`summary ${i}`);
+      // Distinct start times (saves in one millisecond would tie): session i started at t0 + i.
+      const db = new DatabaseSync(path);
+      db.prepare("UPDATE sessions SET started_at = ?, ended_at = ? WHERE id = ?").run(t0 + i, t0 + i, s.id);
+      db.close();
+    }
+    const later = Date.now() + 400 * 86_400_000; // every session is idle for ~400 days
+    const dry = store.compact({ sessionsOlderThanDays: 30, now: later, dryRun: true });
+    assert.equal(dry.sessionsRemoved, 3, "default keeps the newest 5 of 8");
+    const r = compactMemory(store, { sessionsOlderThanDays: 30, keepSessions: 2, now: later });
+    assert.equal(r.sessionsRemoved, 6);
+    assert.equal(counts(path).sessions, 2);
+    const left = store.recentContext({ sessionLimit: 10 }).sessions.map((s) => s.summary);
+    assert.deepEqual(left, ["summary 7", "summary 6"], "the two newest survived");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const home = mkdtempSync(join(tmpdir(), "leina-compact-ks-"));
+  const proj = mkdtempSync(join(tmpdir(), "leina-compact-ksp-"));
+  try {
+    const env = { ...process.env, LEINA_HOME: home };
+    const run = (...args: string[]) =>
+      spawnSync(process.execPath, ["--no-warnings", "--experimental-strip-types", CLI, ...args], { encoding: "utf8", env });
+    const bad = run("memory", "compact", proj, "--sessions-older-than", "30", "--keep-sessions", "-1");
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /--keep-sessions must be a non-negative integer/);
+    assert.equal(run("memory", "session", proj, "--content", "only one").status, 0);
+    const ok = run("memory", "compact", proj, "--sessions-older-than", "1", "--keep-sessions", "0", "--dry-run");
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /0 session\(s\)/, "a fresh session is younger than the cutoff");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(proj, { recursive: true, force: true });
   }
 });

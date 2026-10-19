@@ -348,13 +348,15 @@ Minting is **additive** (unions with any anchors the observation already has) an
 `--dry-run` reports what would be minted/rejected without writing. Prints a summary
 (`{processed, minted, rejected}`) plus a per-observation breakdown.
 
-### `memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--dry-run]`
+### `memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--keep-sessions N] [--dry-run]`
 Garbage-collect this project's **superseded snapshots** — the prior revisions every
 `--topic` upsert keeps — then `VACUUM` so the freed pages go back to the OS. The live row of
 every topic (and every non-topic observation) is always kept; anchors of deleted snapshots
 are removed in the same transaction. `--keep N` retains the N newest snapshots per topic
 (default 0). Sessions are untouched unless `--sessions-older-than DAYS` purges the ones idle
-for longer than that. `--dry-run` reports the counts without writing. Only the current
+for longer than that; even then the project's `--keep-sessions N` newest sessions (default 5;
+`0` lets the age cutoff alone decide) always survive, so a project left idle for months keeps
+its last summaries to resume from. `--dry-run` reports the counts without writing. Only the current
 project is compacted; re-running is idempotent. Prints the removal counts and the db size
 before/after — or, when another leina process holds the db open, that the space is
 reclaimed once it closes. If the memory db is locked the command exits 1 with a one-line

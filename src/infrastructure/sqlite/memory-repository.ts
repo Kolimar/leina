@@ -16,7 +16,7 @@ import {
   rankSearchCandidates,
   type RankCandidate,
 } from "../../domain/memory/search-rank.ts";
-import type { CompactOptions, CompactReport } from "../../application/memory/compact.ts";
+import { DEFAULT_KEEP_SESSIONS, type CompactOptions, type CompactReport } from "../../application/memory/compact.ts";
 import type {
   Observation,
   ObservationInput,
@@ -1650,7 +1650,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     keep: number,
     dryRun: boolean,
     now: number,
-    sessionsOlderThanDays?: number,
+    sessions: { olderThanDays?: number; keep: number },
   ): { supersededRemoved: number; anchorsRemoved: number; sessionsRemoved: number } {
     // Victims: this project's superseded snapshots beyond the newest `keep` per
     // (scope, topic). Newest = updated_at, tie-broken by revision (deterministic for
@@ -1683,9 +1683,9 @@ export class SQLiteMemoryRepository implements MemoryRepository {
           .run(this.projectKey, keep) as { changes: number }
       ).changes;
       const sessionsRemoved =
-        sessionsOlderThanDays === undefined
+        sessions.olderThanDays === undefined
           ? 0
-          : this._purgeIdleSessionsInTx(now - sessionsOlderThanDays * 86_400_000);
+          : this._purgeIdleSessionsInTx(now - sessions.olderThanDays * 86_400_000, sessions.keep);
       this.db.exec(dryRun ? "ROLLBACK" : "COMMIT");
       return { supersededRemoved, anchorsRemoved, sessionsRemoved };
     } catch (e) {
@@ -1695,25 +1695,22 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   }
 
   // Purge sessions whose last activity (ended_at, or started_at for never-closed
-  // sessions) predates `cutoff`, severing observation references first so no dangling
+  // sessions) predates `cutoff` — except the project's `keepNewest` most recent ones (by
+  // start), which always survive — severing observation references first so no dangling
   // session_id remains. The UPDATE fires obs_au on live rows with identical
   // title/content — a semantic no-op for the FTS index. Assumes an open transaction.
-  private _purgeIdleSessionsInTx(cutoff: number): number {
+  private _purgeIdleSessionsInTx(cutoff: number, keepNewest: number): number {
+    const victims = `
+      SELECT id FROM sessions
+       WHERE project_key = ? AND COALESCE(ended_at, started_at) < ?
+         AND id NOT IN (SELECT id FROM sessions WHERE project_key = ?
+                         ORDER BY started_at DESC, id DESC LIMIT ?)`;
+    const args = [this.projectKey, cutoff, this.projectKey, keepNewest] as const;
     this.db
-      .prepare(
-        `UPDATE observations SET session_id = NULL
-          WHERE project_key = ? AND session_id IN (
-            SELECT id FROM sessions
-             WHERE project_key = ? AND COALESCE(ended_at, started_at) < ?)`,
-      )
-      .run(this.projectKey, this.projectKey, cutoff);
+      .prepare(`UPDATE observations SET session_id = NULL WHERE project_key = ? AND session_id IN (${victims})`)
+      .run(this.projectKey, ...args);
     return (
-      this.db
-        .prepare(
-          `DELETE FROM sessions
-            WHERE project_key = ? AND COALESCE(ended_at, started_at) < ?`,
-        )
-        .run(this.projectKey, cutoff) as { changes: number }
+      this.db.prepare(`DELETE FROM sessions WHERE id IN (${victims})`).run(...args) as { changes: number }
     ).changes;
   }
 
@@ -1738,12 +1735,10 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   compact(opts: CompactOptions = {}): CompactReport {
     const dryRun = opts.dryRun ?? false;
     const dbBytesBefore = this.dbSizeOnDisk();
-    const removed = this._compactGc(
-      opts.keepPerTopic ?? 0,
-      dryRun,
-      opts.now ?? Date.now(),
-      opts.sessionsOlderThanDays,
-    );
+    const removed = this._compactGc(opts.keepPerTopic ?? 0, dryRun, opts.now ?? Date.now(), {
+      olderThanDays: opts.sessionsOlderThanDays,
+      keep: opts.keepSessions ?? DEFAULT_KEEP_SESSIONS,
+    });
 
     if (dryRun) {
       return { ...removed, dbBytesBefore, dbBytesAfter: dbBytesBefore, dryRun: true };

@@ -11,7 +11,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { formatBatchResults } from "../../domain/shared/batch.ts";
 import { getVerifiedContext } from "../../application/memory/query.ts";
 import { reanchorObservations } from "../../application/memory/reanchor.ts";
-import { compactMemory, type CompactReport } from "../../application/memory/compact.ts";
+import { compactMemory, DEFAULT_KEEP_SESSIONS, type CompactReport } from "../../application/memory/compact.ts";
 import {
   buildContextView,
   contextCountLabel,
@@ -531,11 +531,13 @@ function memCompact(rest: string[], dir: string): void {
   if (days !== undefined && (!Number.isFinite(days) || days <= 0)) {
     fail("--sessions-older-than must be a positive number of days");
   }
+  const keepSessions = Number(optFlag(rest, "--keep-sessions", String(DEFAULT_KEEP_SESSIONS)));
+  if (!Number.isInteger(keepSessions) || keepSessions < 0) fail("--keep-sessions must be a non-negative integer");
   const dryRun = hasFlag(rest, "--dry-run");
   const { store, close } = memOpenGuarded(dir);
   let r: CompactReport;
   try {
-    r = compactMemory(store, { keepPerTopic: keep, sessionsOlderThanDays: days, dryRun });
+    r = compactMemory(store, { keepPerTopic: keep, sessionsOlderThanDays: days, keepSessions, dryRun });
   } catch (e) {
     // Usually the GC transaction never started (another process held the write lock past
     // busy_timeout) and nothing was written. A lock lost later — between VACUUM and the
@@ -594,7 +596,7 @@ function memHelp(): void {
       `  current-project <dir>              (show derived project key + detection method)\n` +
       `  merge-projects <dir> --from <key> --to <key> [--dry-run]  (rename/merge project keys)\n` +
       `  reanchor <dir> [--dry-run]         (retro-anchor observations to real graph nodes)\n` +
-      `  compact <dir> [--keep N] [--sessions-older-than DAYS] [--dry-run]\n` +
+      `  compact <dir> [--keep N] [--sessions-older-than DAYS] [--keep-sessions N] [--dry-run]\n` +
       `                                     (GC superseded snapshots — live rows always kept;\n` +
       `                                      --keep N retains N newest snapshots per topic, default 0;\n` +
       `                                      sessions untouched unless --sessions-older-than; then VACUUM)\n` +

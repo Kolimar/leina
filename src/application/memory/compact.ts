@@ -14,6 +14,9 @@
 // implementations that have no storage of their own. Application-defined ports
 // follow the existing precedent of NodeVerifier in application/memory/query.ts.
 
+/** Sessions purge never removes this many of the project's newest sessions (by default). */
+export const DEFAULT_KEEP_SESSIONS = 5;
+
 export interface CompactOptions {
   /**
    * Retain the N most recent superseded snapshots per (scope, topic). Default 0:
@@ -28,6 +31,12 @@ export interface CompactOptions {
    * sessions are never touched unless explicitly requested.
    */
   sessionsOlderThanDays?: number;
+  /**
+   * The N most recent sessions (by start time) always survive the sessions purge, however
+   * idle — so a project that sat untouched for months still has its last session summaries
+   * to resume from. Default DEFAULT_KEEP_SESSIONS (5); 0 lets the age cutoff alone decide.
+   */
+  keepSessions?: number;
   /** Compute and report counts, then roll back — no writes, no VACUUM. */
   dryRun?: boolean;
   /** Reference timestamp for the sessions cutoff (test seam; defaults to Date.now()). */
@@ -92,5 +101,9 @@ export function compactMemory(repo: unknown, opts: CompactOptions = {}): Compact
   ) {
     throw new Error("sessionsOlderThanDays must be a positive number of days");
   }
-  return repo.compact({ ...opts, keepPerTopic: keep });
+  const keepSessions = opts.keepSessions ?? DEFAULT_KEEP_SESSIONS;
+  if (!Number.isInteger(keepSessions) || keepSessions < 0) {
+    throw new Error("keepSessions must be a non-negative integer");
+  }
+  return repo.compact({ ...opts, keepPerTopic: keep, keepSessions });
 }

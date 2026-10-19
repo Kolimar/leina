@@ -376,13 +376,16 @@ se adivinan. El minting es **aditivo** (se une a los anchors que la observación
 rechazaría sin escribir. Imprime un resumen (`{processed, minted, rejected}`) y el detalle por
 observación.
 
-### `memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--dry-run]`
+### `memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--keep-sessions N] [--dry-run]`
 Recolecta los **snapshots superseded** de este proyecto (las revisiones previas que guarda
 cada upsert con `--topic`) y después hace `VACUUM` para devolverle el espacio al sistema
 operativo. La fila viva de cada topic (y toda observación sin topic) se conserva siempre; los
 anchors de los snapshots borrados se eliminan en la misma transacción. `--keep N` conserva los
 N snapshots más nuevos por topic (default 0). Las sesiones no se tocan salvo que
-`--sessions-older-than DAYS` purgue las inactivas hace más de esa cantidad de días.
+`--sessions-older-than DAYS` purgue las inactivas hace más de esa cantidad de días; aun así,
+las `--keep-sessions N` sesiones más nuevas del proyecto (default 5; `0` deja que decida solo
+el corte por antigüedad) sobreviven siempre, así un proyecto inactivo durante meses conserva
+sus últimos resúmenes para retomar.
 `--dry-run` informa los conteos sin escribir. Solo compacta el proyecto actual y re-correrlo es
 idempotente. Imprime los conteos y el tamaño de la db antes/después — o, si otro proceso de
 leina tiene la db abierta, que el espacio se recupera cuando se cierre. Si la db de memoria
