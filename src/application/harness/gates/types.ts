@@ -8,6 +8,7 @@
 import {
   type Gate,
   type Phase,
+  type RuleLayer,
   type Severity,
   type TaskContract,
 } from "../../../domain/harness/model.ts";
@@ -34,6 +35,8 @@ export interface GateContext {
   generatedPaths?: string[];
   /** Set per-run by the engine: source path of the rule owning the gate. */
   ruleSourcePath?: string;
+  /** Set per-run by the engine: layer of that rule (js module resolution follows its trust). */
+  ruleLayer?: RuleLayer;
   /** Base ref the changed files were computed against, if any. */
   baseRef?: string;
   contract?: TaskContract;

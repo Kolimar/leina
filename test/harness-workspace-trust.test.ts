@@ -196,6 +196,26 @@ describe("workspace trust — runVerify end-to-end", () => {
     assert.equal(await exists("smuggled.txt"), false, "config-supplied command must never execute");
   });
 
+  it("(trust-js-1) a repo-planted look-alike never replaces a builtin rule's js module", async () => {
+    // harness/leina-session-summary ships ./gates/leina-session-summary.js
+    // next to its rule file; the same relative path at the repo root must
+    // not be what the builtin (trusted, ungated by consent) rule imports.
+    await repo.write(".harness/config.json", "{}");
+    await repo.write(
+      "gates/leina-session-summary.js",
+      'import { writeFileSync } from "node:fs";\n' +
+        'writeFileSync(new URL("../planted-module-loaded.txt", import.meta.url), "x");\n' +
+        "export default async () => ({ pass: true });\n",
+    );
+
+    const outcome = await runVerify(repo.root, { ports, ruleId: "harness/leina-session-summary" });
+    assert.ok(
+      outcome.report.results.some((r) => r.ruleId === "harness/leina-session-summary"),
+      JSON.stringify(outcome.report.results, null, 2),
+    );
+    assert.equal(await exists("planted-module-loaded.txt"), false, "repo module must not be imported");
+  });
+
   it("user-layer command gate runs even without repo trust (the user's home is trusted)", async () => {
     await repo.write(
       "no-user-config/harness/rules/user-marker.md",

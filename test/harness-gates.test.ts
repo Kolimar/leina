@@ -7,6 +7,10 @@
 
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { runCommandGate } from "../src/application/harness/gates/command.ts";
 import { runFileGate } from "../src/application/harness/gates/file.ts";
 import { runDiffGate } from "../src/application/harness/gates/diff.ts";
@@ -363,6 +367,63 @@ describe("js gate", () => {
       ctx({ ruleSourcePath: `${repo.root}/rules-dir/rule.md` }),
     );
     assert.equal(r.status, "pass");
+  });
+
+  // Import-time side effect: a marker next to the module proves it was loaded.
+  const markerModule = (marker: string, result: string): string =>
+    'import { writeFileSync } from "node:fs";\n' +
+    `writeFileSync(new URL("./${marker}", import.meta.url), "x");\n` +
+    `export default async () => (${result});\n`;
+
+  it("(js-res-1) builtin/user rules load the module next to their rule file — never a repo look-alike", async () => {
+    const ruleDir = await fs.mkdtemp(path.join(os.tmpdir(), "leina-js-trusted-"));
+    try {
+      await repo.write("gates/shadow.mjs", markerModule("shadow-loaded.txt", '{ pass: false, message: "repo module" }'));
+      await fs.mkdir(path.join(ruleDir, "gates"));
+      await fs.writeFile(
+        path.join(ruleDir, "gates", "shadow.mjs"),
+        'export default async () => ({ pass: true, message: "shipped module" });\n',
+      );
+      for (const ruleLayer of ["builtin", "user"] as const) {
+        const r = await runJsGate(
+          { type: "js", module: "./gates/shadow.mjs" },
+          ctx({ ruleLayer, ruleSourcePath: path.join(ruleDir, "rule.md") }),
+        );
+        assert.equal(r.status, "pass", ruleLayer);
+        assert.equal(r.detail, "shipped module", ruleLayer);
+      }
+      assert.equal(existsSync(path.join(repo.root, "gates", "shadow-loaded.txt")), false, "repo module never imported");
+    } finally {
+      await fs.rm(ruleDir, { recursive: true, force: true });
+    }
+  });
+
+  it("(js-res-2) project rules cannot load a module outside the repo (../, absolute, escaping symlink)", async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "leina-js-outside-"));
+    const link = path.join(repo.root, "linked-out");
+    try {
+      const evil = path.join(outside, "evil.mjs");
+      await fs.writeFile(evil, markerModule("evil-loaded.txt", "{ pass: true }"));
+      await fs.symlink(outside, link);
+      const projectCtx = ctx({ ruleLayer: "project", ruleSourcePath: path.join(repo.root, ".harness", "rules", "r.md") });
+      for (const module of [path.relative(repo.root, evil), evil, "linked-out/evil.mjs"]) {
+        const r = await runJsGate({ type: "js", module }, projectCtx);
+        assert.equal(r.status, "error", module);
+        assert.match(r.detail, /outside the repository|repo-relative/, module);
+      }
+      assert.equal(existsSync(path.join(outside, "evil-loaded.txt")), false, "escaping module never imported");
+    } finally {
+      await fs.rm(link, { force: true });
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("(js-res-3) project rules still load repo-relative and in-repo near-rule modules", async () => {
+    await repo.write("gates/in-repo.mjs", "export default async () => ({ pass: true, message: 'in repo' });\n");
+    await repo.write(".harness/rules/near.mjs", "export default async () => ({ pass: true, message: 'near rule' });\n");
+    const projectCtx = ctx({ ruleLayer: "project", ruleSourcePath: path.join(repo.root, ".harness", "rules", "r.md") });
+    assert.equal((await runJsGate({ type: "js", module: "gates/in-repo.mjs" }, projectCtx)).detail, "in repo");
+    assert.equal((await runJsGate({ type: "js", module: "near.mjs" }, projectCtx)).detail, "near rule");
   });
 });
 

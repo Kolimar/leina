@@ -192,7 +192,7 @@ async function executeRun(
   let outcome: GateOutcome;
   try {
     // Command gates own their timeout via the process runner; wrap the rest here.
-    const raw = dispatch(run.gate, { ...ctx, ruleSourcePath: run.ruleSourcePath });
+    const raw = dispatch(run.gate, { ...ctx, ruleSourcePath: run.ruleSourcePath, ruleLayer: run.ruleLayer });
     outcome =
       run.gate.type === "command"
         ? await raw
