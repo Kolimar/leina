@@ -32,7 +32,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   blanketFile,
-  devinUserConfigFile,
   HOSTS,
   type HostId,
   type HostSpec,
@@ -44,7 +43,6 @@ import {
   shareWorkflowsDir,
 } from "./share-paths.ts";
 import { buildDevinArtifactsFromAgents } from "../../application/install/devin-skills.ts";
-import { CLI_EXEC_GRANT, grantCliExecPermission } from "../../application/install/permissions.ts";
 import { portWorkflows, rewriteAssetPaths } from "../../application/install/port.ts";
 import { copyTree, linkOrCopy, resolveLinkTarget, unlinkIfManaged, type LinkResult } from "./symlinks.ts";
 import {
@@ -430,42 +428,6 @@ export function installGlobal(
     hostLinks,
     hosts,
   };
-}
-
-/** Outcome of ensuring the user-global `Exec(leina)` permission grant. */
-export type CliGrantResult = "added" | "present" | "skipped-malformed";
-
-/**
- * Idempotently pre-authorize the leina CLI in the user-global Devin config
- * (`~/.config/devin/config.json`) by adding `Exec(leina)` to `permissions.allow`. One
- * machine-wide grant covers every repo, so the agent never gets a permission prompt for
- * `leina ...` in any project.
- *
- * Creates the file (and its parent dir) when absent; merges into an existing config otherwise.
- * Returns:
- *   - "added"            the grant was written (file created or `allow` extended)
- *   - "present"          the grant was already there → no write
- *   - "skipped-malformed" the file exists but is malformed / wrong-shaped → left untouched
- */
-export function ensureUserConfigCliGrant(): CliGrantResult {
-  const cfgPath = devinUserConfigFile();
-  // Read directly and treat any failure as "absent" (EAFP) rather than exists-then-read,
-  // which is a TOCTOU race: the file could change between the check and the read.
-  let existing: string | null;
-  try {
-    existing = readFileSync(cfgPath, "utf8");
-  } catch {
-    existing = null;
-  }
-  const next = grantCliExecPermission(existing);
-  if (next !== null) {
-    mkdirSync(dirname(cfgPath), { recursive: true });
-    writeFileSync(cfgPath, next);
-    return "added";
-  }
-  // next === null → nothing to write. grantCliExecPermission returns null both when the grant is
-  // already present and when the file is malformed/wrong-shaped; distinguish them for the report.
-  return existing?.includes(CLI_EXEC_GRANT) ? "present" : "skipped-malformed";
 }
 
 /**
