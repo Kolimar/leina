@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -396,6 +396,81 @@ test("(compact-10) CLI: memory compact reports removals and sizes; bad --keep fa
     const bad = runCli(["memory", "compact", repoDir, "--keep", "nope"], env);
     assert.equal(bad.code, 1, "invalid --keep exits non-zero");
     assert.match(bad.stderr, /--keep must be a non-negative integer/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// compact vs portable memory: the committable export carries superseded snapshots, so a
+// later import/sync must not bring back history this store already compacted away —
+// while a store that never had that history still receives it.
+// ---------------------------------------------------------------------------
+
+test("(compact-12) import does not resurrect compacted snapshots; history still reaches stores without it", () => {
+  const a = tmpStore("resurrect-a");
+  const b = tmpStore("resurrect-b");
+  const c = tmpStore("resurrect-c");
+  try {
+    for (let i = 1; i <= 5; i++) {
+      a.store.save({ title: `Rev ${i}`, content: `v${i}`, type: "decision", topicKey: "deploy/policy" });
+    }
+    const exported = a.store.exportAll();
+    assert.equal(exported.length, 5, "4 snapshots + the live row exported");
+
+    a.store.compact();
+    assert.equal(counts(a.path).superseded, 0);
+    const r = a.store.importObservations(exported);
+    assert.equal(counts(a.path).superseded, 0, "compacted snapshots stay gone");
+    assert.deepEqual({ inserted: r.inserted, skippedOlder: r.skippedOlder }, { inserted: 0, skippedOlder: 5 });
+
+    // A store without that history gets all of it, whatever the line order.
+    b.store.importObservations([...exported].reverse());
+    assert.deepEqual({ live: counts(b.path).live, superseded: counts(b.path).superseded }, { live: 1, superseded: 4 });
+
+    // Incremental: a store synced while the topic was at rev 2 must still record rev 2 when
+    // rev 3 arrives — its live row is about to be overwritten. snaps[n] holds revision n+1.
+    const live = exported.find((o) => o.supersededBy === undefined)!;
+    const snaps = exported.filter((o) => o.supersededBy !== undefined).sort((x, y) => x.revision - y.revision);
+    const liveAt = (rev: number): ExportedObservation => {
+      const s = snaps[rev - 1]!;
+      return { ...live, revision: rev, title: s.title, content: s.content, updatedAt: s.updatedAt };
+    };
+    c.store.importObservations([snaps[0]!, liveAt(2)]);
+    c.store.importObservations([snaps[0]!, snaps[1]!, liveAt(3)]);
+    assert.equal(counts(c.path).superseded, 2, "the rev-2 snapshot is kept: the import overwrote rev 2");
+  } finally {
+    for (const s of [a, b, c]) {
+      s.store.close();
+      rmSync(s.dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("(compact-13) CLI: sync → compact → sync keeps the compacted history gone (db and snapshot file)", () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-compact-sync-home-"));
+  const repoDir = mkdtempSync(join(tmpdir(), "leina-compact-sync-"));
+  try {
+    const env = { ...process.env, LEINA_HOME: home };
+    for (let i = 1; i <= 5; i++) {
+      const s = runCli(["memory", "save", repoDir, "--title", `T${i}`, "--content", `b${i}`, "--topic", "sync/topic"], env);
+      assert.equal(s.code, 0, s.stderr);
+    }
+    const snapFile = join(repoDir, ".leina", "memory-export.jsonl");
+    const lines = (): number => readFileSync(snapFile, "utf8").trim().split("\n").length;
+
+    assert.equal(runCli(["memory", "sync", repoDir], env).code, 0);
+    assert.equal(lines(), 5, "first sync exports 4 snapshots + the live row");
+
+    const compact = runCli(["memory", "compact", repoDir], env);
+    assert.match(compact.stdout, /removed 4 superseded snapshot\(s\)/);
+
+    const sync2 = runCli(["memory", "sync", repoDir], env);
+    assert.equal(sync2.code, 0, sync2.stderr);
+    assert.match(sync2.stdout, /absorbed snapshot: 0 new/);
+    assert.equal(counts(join(home, "memory.db")).superseded, 0, "no snapshot resurrected in the db");
+    assert.equal(lines(), 1, "the rewritten snapshot file no longer carries them");
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(repoDir, { recursive: true, force: true });

@@ -348,6 +348,24 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     return local.id;
   }
 
+  // The committable export carries superseded snapshots, so without this rule every
+  // `memory sync` after `memory compact` re-inserted the history compact had just removed.
+  // An incoming snapshot this store does not have is skipped when the row it was
+  // superseded by is here and has already moved past it: strictly older than our row,
+  // it is history we compacted away (or never needed). At the SAME revision our row IS
+  // that version, so the snapshot is kept only when this import is about to overwrite
+  // the row (`incomingRevision` = highest revision the batch carries per id). A store
+  // without the row (a fresh machine) still receives the full history.
+  private _isPassedSnapshot(item: ExportedObservation, incomingRevision: Map<string, number>): boolean {
+    if (item.supersededBy === undefined) return false;
+    const target = this.db
+      .prepare("SELECT revision FROM observations WHERE id=? AND project_key=?")
+      .get(item.supersededBy, this.projectKey) as unknown as { revision: number } | undefined;
+    if (target === undefined) return false;
+    if (item.revision !== target.revision) return item.revision < target.revision;
+    return (incomingRevision.get(item.supersededBy) ?? 0) <= target.revision;
+  }
+
   // An imported entry may never claim to be newer than the moment it is imported: a
   // far-future updatedAt (year 2286) would pin it on top of every recency-ordered read
   // (SessionStart injection included) and win every later merge tie. createdAt never
@@ -401,10 +419,19 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     const isNewer = (a: { revision: number; updatedAt: number }, b: { revision: number; updatedAt: number }): boolean =>
       a.revision > b.revision || (a.revision === b.revision && a.updatedAt > b.updatedAt);
 
+    const incomingRevision = new Map<string, number>();
+    for (const i of items) incomingRevision.set(i.id, Math.max(incomingRevision.get(i.id) ?? 0, i.revision));
+    // Snapshots first: _isPassedSnapshot must judge them against the rows as they were
+    // BEFORE this import, not after the batch's own live rows were applied.
+    const ordered = [
+      ...items.filter((i) => i.supersededBy !== undefined),
+      ...items.filter((i) => i.supersededBy === undefined),
+    ];
+
     const now = Date.now();
     this.db.exec("BEGIN");
     try {
-      for (const raw of items) {
+      for (const raw of ordered) {
         const item = SQLiteMemoryRepository.clampTimestamps(raw, now);
         const owner = ownerStmt.get(item.id) as unknown as
           { project_key: string; revision: number; updated_at: number } | undefined;
@@ -424,6 +451,10 @@ export class SQLiteMemoryRepository implements MemoryRepository {
           );
           writeAnchors(item.id, item.anchors);
           report.updated++;
+          continue;
+        }
+        if (this._isPassedSnapshot(item, incomingRevision)) {
+          report.skippedOlder++;
           continue;
         }
 

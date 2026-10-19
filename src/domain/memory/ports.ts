@@ -240,7 +240,9 @@ export interface MemoryRepository {
    * clamped to the import time; projectKey remapped to this store's key); known ids update
    * only when strictly newer; live topic_key collisions resolve toward the newer side,
    * superseding the older one. An id already owned by ANOTHER project is never touched —
-   * it is skipped and counted in `skippedForeign`.
+   * it is skipped and counted in `skippedForeign`. An unknown superseded snapshot whose
+   * row has already moved past it here (e.g. removed by `memory compact`) is not
+   * re-inserted; it counts as `skippedOlder`.
    */
   importObservations(items: ExportedObservation[]): ImportReport;
 
