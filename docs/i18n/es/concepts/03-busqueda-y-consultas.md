@@ -79,7 +79,9 @@ Dos reglas hacen que el resultado sea **confiable**:
    distinguido `EXTRACTED`/`INFERRED`/`AMBIGUOUS` en la extracción — ver
    [El grafo](./02-grafo.md#el-edge-la-calle).)
 
-Cada hit reporta el `node`, la `depth` a la que se alcanzó y la `viaRelation`.
+Cada hit reporta el `node`, la `depth` a la que se alcanzó, la `viaRelation`, el `target` del
+que depende y el `site` — el `file:line` del propio edge (el call site), que es lo que imprime
+la CLI.
 
 ---
 
@@ -98,6 +100,8 @@ flowchart LR
 
 Sirve para responder "¿cómo llega el login a la base de datos?" mostrando la cadena concreta de
 llamadas/imports que une los dos extremos. Devuelve `null` si no hay camino dentro del límite.
+Como el recorrido es no dirigido, cada paso registra si su edge apunta hacia adelante o hacia
+atrás, y la salida dibuja la flecha en ese sentido: `A <--calls-- B` significa que B llama a A.
 
 ---
 

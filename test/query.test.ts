@@ -283,3 +283,46 @@ test("affected: a class seed does NOT expand to its methods (symbol semantics un
     assert.deepEqual(ids, [], "method callers are not the class's dependents");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Locations + direction (what the CLI prints)
+// ---------------------------------------------------------------------------
+
+test("(loc-1) affected: each hit carries the EDGE's call site, not the caller's definition line", () => {
+  // caller() is defined at L10 and calls target() at L12; a module-level caller at L36.
+  const nodes = [
+    node("target", "target()", { sourceLocation: "L1" }),
+    node("caller", "caller()", { sourceFile: "src/a.ts", sourceLocation: "L10" }),
+    node("mod", "test/a.test.ts", { kind: "module", sourceFile: "test/a.test.ts", sourceLocation: undefined }),
+    node("noloc", "noLoc()", { sourceFile: "src/n.ts", sourceLocation: "L7" }),
+  ];
+  const edges = [
+    edge("caller", "target", { sourceFile: "src/a.ts", sourceLocation: "L12" }),
+    edge("mod", "target", { sourceFile: "test/a.test.ts", sourceLocation: "L36" }),
+    edge("noloc", "target", { sourceFile: "src/n.ts" }),
+  ];
+  withGraph(nodes, edges, (store) => {
+    const byId = new Map(affected(store, "target", 1).map((h) => [h.node.id, h]));
+    assert.equal(byId.get("caller")?.site, "src/a.ts:12", "call site, not the L10 definition");
+    assert.equal(byId.get("mod")?.site, "test/a.test.ts:36", "module-level caller keeps its line (was file:?)");
+    assert.equal(byId.get("noloc")?.site, "src/n.ts:7", "no edge location → the dependent's definition");
+    assert.equal(byId.get("caller")?.target, "target");
+  });
+});
+
+test("(loc-2) shortestPath: each step records the real edge direction and its site", () => {
+  // b calls a (b→a) and b calls c (b→c): the path a ~ c walks a <- b -> c.
+  const nodes = [node("a", "a"), node("b", "b"), node("c", "c")];
+  const edges = [
+    edge("b", "a", { sourceFile: "b.ts", sourceLocation: "L4" }),
+    edge("b", "c", { sourceFile: "b.ts", sourceLocation: "L5" }),
+  ];
+  withGraph(nodes, edges, (store) => {
+    const path = shortestPath(store, "a", "c");
+    assert.ok(path);
+    assert.deepEqual(
+      path.map((s) => [s.from.id, s.to.id, s.forward, s.site]),
+      [["a", "b", false, "b.ts:4"], ["b", "c", true, "b.ts:5"]],
+    );
+  });
+});

@@ -4,6 +4,7 @@
 import type { GraphEdge, GraphNode, Relation } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
 import { normalizeLabel, splitIdentifier } from "../../domain/shared/id.ts";
+import { edgeAt } from "./present.ts";
 import { resolveSeedQuery } from "./seed.ts";
 
 // Relations that propagate impact through the graph (blast radius, `affected` command).
@@ -35,6 +36,10 @@ export interface AffectedHit {
   node: GraphNode;
   depth: number;
   viaRelation: Relation;
+  /** Id of the node this dependent depends on (the edge target it was reached through). */
+  target: string;
+  /** Where the dependency happens — the edge's own location (a call site), `file:line`. */
+  site: string;
 }
 
 // Blast radius: who depends on this node? Walk INCOMING edges (BFS backward).
@@ -116,7 +121,7 @@ function affectedHitFor(
   seen.add(e.source);
   const node = store.getNode(e.source);
   if (!node) return null;
-  return { node, depth, viaRelation: e.relation };
+  return { node, depth, viaRelation: e.relation, target: e.target, site: edgeAt(e, node) };
 }
 
 // Resolve a selector to its best EXACT match (id, label, Owner.member, path:symbol — see
@@ -131,9 +136,17 @@ export interface PathStep {
   to: GraphNode;
   relation: Relation;
   confidence: string;
+  /**
+   * The path walks the undirected view: true when the underlying edge points from → to,
+   * false when it points to → from (e.g. `to` calls `from`).
+   */
+  forward: boolean;
+  /** Where the edge happens (a call site, an import), `file:line`. */
+  site: string;
 }
 
-// Shortest path on the undirected view (BFS).
+// Shortest path on the undirected view (BFS). Each step records the real direction of its
+// edge, so a caller can print `A <--calls-- B` instead of a misleading forward arrow.
 export function shortestPath(
   store: GraphRepository,
   sourceId: string,
@@ -197,6 +210,8 @@ function reconstruct(
         to,
         relation: p.edge.relation,
         confidence: p.edge.confidence,
+        forward: p.edge.source === from.id,
+        site: edgeAt(p.edge, store.getNode(p.edge.source)),
       });
     }
     cur = p.id;

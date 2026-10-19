@@ -80,7 +80,9 @@ Two rules make the result **trustworthy**:
    `EXTRACTED`/`INFERRED`/`AMBIGUOUS` at extraction time pays off — see
    [The graph](./02-grafo.md#el-edge-la-calle).)
 
-Each hit reports the `node`, the `depth` at which it was reached, and the `viaRelation`.
+Each hit reports the `node`, the `depth` at which it was reached, the `viaRelation`, the
+`target` it depends on and the `site` — the `file:line` of the edge itself (the call site),
+which is what the CLI prints.
 
 ---
 
@@ -98,6 +100,8 @@ flowchart LR
 
 It's useful for answering "how does the CLI reach the database?" by showing the concrete chain
 of calls/imports that links the two ends. Returns `null` if there's no path within the limit.
+Because the walk is undirected, each step records whether its edge points forward or backward,
+and the output draws the arrow that way: `A <--calls-- B` means B calls A.
 
 ---
 

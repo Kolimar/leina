@@ -69,12 +69,16 @@ sus selectores) y sale con código 1.
 ### `affected <dir> <symbol> [depth]`
 Blast radius — qué depende (transitivamente, hasta `depth`, por defecto 3) de `<symbol>` (ver
 [Seleccionar un símbolo](#seleccionar-un-símbolo-affected-path-impact-analyze)). **Ejecutá esto
-antes de renombrar o migrar un símbolo.** Imprime cada dependiente con su relation y su
-ubicación de origen.
+antes de renombrar o migrar un símbolo.** Imprime una línea por dependiente — su label (los
+métodos calificados como `Clase.metodo()`), la relation y el `file:line` donde ocurre la
+dependencia (el call site o la referencia, no la línea donde se define el dependiente).
 
 ### `path <dir> <from> <to>`
 Camino de dependencia más corto entre dos símbolos (ambos resueltos como en `affected`).
-Imprime cada salto como `--relation(confidence)--> node`.
+Imprime el node de partida con su sitio de definición y luego una línea por salto con el
+`file:line` de la edge. La búsqueda ignora la dirección de las edges, la salida no:
+`--calls(EXTRACTED)--> b` significa que el node anterior llama a `b`;
+`<--calls(EXTRACTED)-- b` significa que `b` llama al node anterior.
 
 ### `impact analyze [<dir>] <symbol> [--json]`
 **Análisis de impacto** de primer nivel: un BFS bidireccional desde el node que matchea

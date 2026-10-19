@@ -67,11 +67,15 @@ candidates (and their selectors) and exits 1.
 ### `affected <dir> <symbol> [depth]`
 Blast radius — what (transitively, up to `depth`, default 3) depends on `<symbol>` (see
 [Selecting a symbol](#selecting-a-symbol-affected-path-impact-analyze)). **Run this before
-renaming or migrating a symbol.** Prints each dependent with its relation and source location.
+renaming or migrating a symbol.** Prints one line per dependent — its label (methods qualified
+as `Class.method()`), the relation, and the `file:line` where the dependency happens (the call
+site or reference, not the dependent's definition line).
 
 ### `path <dir> <from> <to>`
-Shortest dependency path between two symbols (both resolved like `affected`'s). Prints each
-hop as `--relation(confidence)--> node`.
+Shortest dependency path between two symbols (both resolved like `affected`'s). Prints the
+start node with its definition site, then one line per hop with the edge's `file:line`. The
+search ignores edge direction, the output does not: `--calls(EXTRACTED)--> b` means the
+previous node calls `b`; `<--calls(EXTRACTED)-- b` means `b` calls the previous node.
 
 ### `impact analyze [<dir>] <symbol> [--json]`
 First-level **impact analysis**: a bidirectional traversal from the node matching `<symbol>`

@@ -8,6 +8,7 @@ import { acquireForegroundBuildLock, buildLockPath } from "../background-build.t
 import { loadFreshnessConfig } from "../../infrastructure/config/freshness.ts";
 import { affected, queryGraph, shortestPath } from "../../application/graph/query.ts";
 import { ambiguityNote, noMatchMessage, resolveSeedQuery } from "../../application/graph/seed.ts";
+import { displayLabel, nodeAt } from "../../application/graph/present.ts";
 import type { GraphNode } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
 import { openGraphRepo as openStore, openFreshStore, openEventSink, buildDefaultRegistry } from "../wiring.ts";
@@ -181,14 +182,16 @@ export async function handleAffected(rest: string[]): Promise<void> {
   const store = await openFreshStore(root);
   const seed = resolveOrFail(store, label);
   const hits = affected(store, seed.id, depth);
+  // One line per dependent: its (owner-qualified) label, the relation, and WHERE the
+  // dependency happens — the edge's call site, not the dependent's definition line.
+  const lines = hits.map(
+    (h) => `  ${"  ".repeat(h.depth - 1)}${displayLabel(store, h.node)}  [${h.viaRelation}]  ${h.site}`,
+  );
+  const title = `Blast radius of ${displayLabel(store, seed)} (${nodeAt(seed)}):`;
   store.close();
-  console.log(`Blast radius of ${seed.label} (${seed.sourceFile}):`);
+  console.log(title);
   if (hits.length === 0) console.log("  (nothing depends on it)");
-  for (const h of hits) {
-    console.log(
-      `  ${"  ".repeat(h.depth - 1)}${h.node.label}  [${h.viaRelation}]  ${h.node.sourceFile}:${h.node.sourceLocation ?? "?"}`,
-    );
-  }
+  for (const line of lines) console.log(line);
 }
 
 export async function handlePath(rest: string[]): Promise<void> {
@@ -199,15 +202,19 @@ export async function handlePath(rest: string[]): Promise<void> {
   const a = resolveOrFail(store, from);
   const b = resolveOrFail(store, to);
   const steps = shortestPath(store, a.id, b.id);
+  // The search is undirected, the arrows are not: `X <--calls-- Y` means Y calls X.
+  const lines = (steps ?? []).map((st) => {
+    const arrow = st.forward ? `--${st.relation}(${st.confidence})-->` : `<--${st.relation}(${st.confidence})--`;
+    return `  ${arrow} ${displayLabel(store, st.to)}  ${st.site}`;
+  });
+  const [aLabel, bLabel] = [displayLabel(store, a), displayLabel(store, b)];
   store.close();
   if (!steps) {
-    console.log(`No path between ${a.label} and ${b.label}.`);
+    console.log(`No path between ${aLabel} and ${bLabel}.`);
     return;
   }
-  console.log(`${a.label}`);
-  for (const s of steps) {
-    console.log(`  --${s.relation}(${s.confidence})--> ${s.to.label}`);
-  }
+  console.log(`${aLabel}  (${nodeAt(a)})`);
+  for (const line of lines) console.log(line);
 }
 
 // `graph gc` — housekeeping for the global project registry (~/.leina/projects.json).

@@ -192,6 +192,30 @@ test("(GC-9) path: prints a path or a 'no path' notice", () => {
   }
 });
 
+test("(GC-15) affected prints the call-site line; path prints the real edge direction", () => {
+  const dir = mkdtempSync(join(tmpdir(), "leina-graphcli-loc-"));
+  try {
+    writeFileSync(join(dir, "b.ts"), `export function beta(): number { return 1; }\n`);
+    writeFileSync(
+      join(dir, "a.ts"),
+      `import { beta } from "./b.ts";\nexport function alpha(): number {\n  const x = 1;\n  return beta() + x;\n}\n`,
+    );
+    writeFileSync(join(dir, "c.ts"), `import { beta } from "./b.ts";\n\n\nexport const v = beta();\n`);
+    runCli(["build", dir]);
+    const r = runCli(["affected", dir, "beta"]);
+    assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
+    assert.match(r.stdout, /Blast radius of beta\(\) \(b\.ts:1\):/);
+    assert.match(r.stdout, /alpha\(\) {2}\[calls\] {2}a\.ts:4\n/, "call at L4, not alpha's definition at L2");
+    assert.match(r.stdout, /c\.ts {2}\[calls\] {2}c\.ts:4\n/, "module-level caller keeps its line");
+    const fwd = runCli(["path", dir, "alpha", "beta"]);
+    assert.match(fwd.stdout, /^alpha\(\) {2}\(a\.ts:2\)\n {2}--calls\(EXTRACTED\)--> beta\(\) {2}a\.ts:4\n$/);
+    const back = runCli(["path", dir, "beta", "alpha"]);
+    assert.match(back.stdout, /^beta\(\) {2}\(b\.ts:1\)\n {2}<--calls\(EXTRACTED\)-- alpha\(\) {2}a\.ts:4\n$/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(GC-10) query: prints seeds and subgraph summary", () => {
   const dir = tmpProject();
   try {
