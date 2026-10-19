@@ -50,7 +50,12 @@ Si cambiás uno de los dos mecanismos de control, cambiá el otro.
 
 - **Los tests acompañan al comportamiento.** Los comandos, flags o fixes nuevos vienen con un
   test en `test/` (la suite es `node:test` plano; seguí el nombrado `(prefix-N)` que usan los
-  tests vecinos).
+  tests vecinos). `npm test` corre `test/*.test.ts` y `test/use-cases/*.test.ts`.
+- **Los tests no dejan rastro.** Un test que corre la CLI o toca estado global apunta `HOME`
+  y `LEINA_HOME` a un directorio temporal, y un test que construye o extrae un grafo de
+  `test/fixtures/*` trabaja sobre una copia (`copyFixture` en `test/helpers/fixture-copy.ts`):
+  un build escribe `.leina/` bajo la raíz que extrae, y una caché de extracción vieja que
+  quede en un fixture la reusaría la corrida siguiente.
 - **`npm test`, `npm run typecheck` y `npm run lint` tienen que pasar.** CI corre los tres en
   Node 22 y 24. El gate de lint tolera cero warnings; un hallazgo de una regla de seguridad
   que revisaste y juzgaste seguro recibe un `eslint-disable-next-line` inline con el

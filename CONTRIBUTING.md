@@ -49,6 +49,12 @@ enforcement, change the other.
 
 - **Tests accompany behavior.** New commands, flags, or fixes come with a test in `test/`
   (the suite is plain `node:test`; follow the `(prefix-N)` naming used by neighboring tests).
+  `npm test` runs `test/*.test.ts` and `test/use-cases/*.test.ts`.
+- **Tests leave no trace.** A test that runs the CLI or touches global state points `HOME`
+  and `LEINA_HOME` at a temp dir, and a test that builds or extracts a graph from
+  `test/fixtures/*` works on a copy (`copyFixture` in `test/helpers/fixture-copy.ts`): a
+  build writes `.leina/` under the root it extracts, and a stale extraction cache left in a
+  fixture would be reused by the next run.
 - **`npm test`, `npm run typecheck` and `npm run lint` must pass.** CI runs all three on
   Node 22 and 24. The lint gate tolerates zero warnings; a security-rule finding you have
   reviewed and judged safe gets an inline `eslint-disable-next-line` with the reasoning

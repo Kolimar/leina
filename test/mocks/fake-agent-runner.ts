@@ -6,7 +6,7 @@
 // test/devin-hook-cli.test.ts.
 //
 // NOTE: No parameter properties (--experimental-strip-types compatibility).
-// Run: node --no-warnings --experimental-strip-types --test test/mocks/fake-agent-runner.test.ts
+// Run: node --no-warnings --experimental-strip-types --test test/fake-agent-runner.test.ts
 
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -62,8 +62,11 @@ export class FakeAgentRunner {
         "--experimental-strip-types",
         CLI,
         "init",
-        "--project",
         dir,
+        "--hosts",
+        "devin",
+        "--profile",
+        "devin",
       ],
       {
         encoding: "utf8",

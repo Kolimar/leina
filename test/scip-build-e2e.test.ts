@@ -5,14 +5,18 @@
 // compiler-grade paths are exercised over the real registry order, not just
 // the ScipExtractor adapter in isolation.
 
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { copyFixture } from "./helpers/fixture-copy.ts";
 
-const FIXTURE_DIR = fileURLToPath(new URL("./fixtures/scip/go/", import.meta.url));
+// Built from a temp copy: a build writes .leina/ under the root it extracts.
+const FIXTURE = copyFixture("scip", "go");
+after(() => FIXTURE.cleanup());
+const FIXTURE_DIR = FIXTURE.dir;
 const HELPER = fileURLToPath(new URL("./helpers/fake-scip-indexer.ts", import.meta.url));
 const FAKE_INDEXER_CMD = `${process.execPath} --no-warnings --experimental-strip-types ${HELPER}`;
 const ENV_VAR = "LEINA_SCIP_GO_INDEXER";

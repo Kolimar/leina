@@ -1,15 +1,15 @@
-// test/mocks/fake-agent-runner.test.ts — R-7: FakeAgentRunner sequence test.
+// test/fake-agent-runner.test.ts — R-7: FakeAgentRunner sequence test.
 //
 // Validates that a 3-step sequence (SessionStart → PostToolUse(memory save) → Stop)
 // produces the expected hook outputs and on-disk markers.
 //
-// Run: node --no-warnings --experimental-strip-types --test test/mocks/fake-agent-runner.test.ts
+// Run: node --no-warnings --experimental-strip-types --test test/fake-agent-runner.test.ts
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { FakeAgentRunner } from "./fake-agent-runner.ts";
+import { FakeAgentRunner } from "./mocks/fake-agent-runner.ts";
 
 const SAVE_MARKER_REL = ".leina/session.memory-saved";
 

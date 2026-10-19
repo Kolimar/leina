@@ -5,7 +5,7 @@
 //
 // Run: node --no-warnings --experimental-strip-types --test test/extractor-contract.test.ts
 
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { TsmorphExtractor } from "../src/infrastructure/extractors/semantic/tsmorph.ts";
@@ -14,9 +14,13 @@ import { SidecarExtractor } from "../src/infrastructure/extractors/semantic/side
 import { TreesitterExtractor } from "../src/infrastructure/extractors/treesitter.ts";
 import { EXTRACTOR_ORDER, orderRegistry } from "../src/application/graph/extractor-registry.ts";
 import type { GraphExtractor } from "../src/domain/graph/extractor.ts";
+import { copyFixture } from "./helpers/fixture-copy.ts";
 
 const VERSION = "1.4.0-test";
-const fixtureDir = join(import.meta.dirname, "fixtures", "tsmorph-crossfile");
+// Extracted from a temp copy: the extractors write their cache under .leina/ of the root.
+const FIXTURE = copyFixture("tsmorph-crossfile");
+after(() => FIXTURE.cleanup());
+const fixtureDir = FIXTURE.dir;
 const fixtureFiles = [
   join(fixtureDir, "callee.ts"),
   join(fixtureDir, "caller.ts"),

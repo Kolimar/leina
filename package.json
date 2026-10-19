@@ -50,8 +50,8 @@
     "lint:fix": "eslint . --fix",
     "audit": "npm audit",
     "audit:fix": "npm audit fix",
-    "test": "npm run check:native-assets && node --no-warnings --experimental-strip-types --test test/*.test.ts",
-    "test:coverage": "npm run check:native-assets && mkdir -p coverage && node --no-warnings --experimental-strip-types --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-reporter=spec --test-reporter-destination=stdout test/*.test.ts"
+    "test": "npm run check:native-assets && node --no-warnings --experimental-strip-types --test test/*.test.ts test/use-cases/*.test.ts",
+    "test:coverage": "npm run check:native-assets && mkdir -p coverage && node --no-warnings --experimental-strip-types --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-reporter=spec --test-reporter-destination=stdout test/*.test.ts test/use-cases/*.test.ts"
   },
   "engines": {
     "node": ">=22.13.0"

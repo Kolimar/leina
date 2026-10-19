@@ -7,19 +7,23 @@
 //
 // Run: node --no-warnings --experimental-strip-types --test test/impact.test.ts
 
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+import { copyFixture } from "./helpers/fixture-copy.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const REPO_ROOT = join(import.meta.dirname, "..");
-const MIXED_REPO = join(import.meta.dirname, "fixtures", "mixed-repo");
+// Built from a temp copy: a build writes .leina/ under the root it extracts.
+const MIXED = copyFixture("mixed-repo");
+after(() => MIXED.cleanup());
+const MIXED_REPO = MIXED.dir;
 
 async function buildMixedRepoGraph(tmpDir: string): Promise<import("../src/domain/graph/ports.ts").GraphRepository> {
   const { buildGraph } = await import("../src/application/graph/build.ts");

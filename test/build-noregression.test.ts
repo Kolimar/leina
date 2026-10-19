@@ -17,11 +17,12 @@
 //
 // Run: node --no-warnings --experimental-strip-types --test test/build-noregression.test.ts
 
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { copyFixture } from "./helpers/fixture-copy.ts";
 
 // Baseline congelado ANTES del refactor (medido sobre el pipeline original).
 //
@@ -52,7 +53,14 @@ const KIND_SNAPSHOT = {
   },
 } as const;
 
-const fixtureDir = join(import.meta.dirname, "fixtures", "tsmorph-crossfile");
+// Built from temp copies: a build writes .leina/ under the root it extracts.
+const TSMORPH = copyFixture("tsmorph-crossfile");
+const MIXED_REPO = copyFixture("mixed-repo");
+after(() => {
+  TSMORPH.cleanup();
+  MIXED_REPO.cleanup();
+});
+const fixtureDir = TSMORPH.dir;
 
 // Helper: construye el grafo y devuelve {nodes, edges, nodesByKind, edgesByRelation}.
 async function runBuild(noTsmorph: boolean, customDir?: string): Promise<{
@@ -165,7 +173,7 @@ test("(noregr-mixed) pipeline de registry con NO_TSMORPH=1 produce conteos idén
 // Los nodos service/config de YAML se contabilizan aparte y no rompen el snapshot TS.
 // ---------------------------------------------------------------------------
 test("(noregr-mixed-yaml) YAML en el pipeline no altera los conteos de nodos TS de código", async () => {
-  const mixedRepoDir = join(import.meta.dirname, "fixtures", "mixed-repo");
+  const mixedRepoDir = MIXED_REPO.dir;
   const result = await runBuild(false, mixedRepoDir);
 
   // Los kinds de CÓDIGO no deben incluir nodos infra (service, config)
