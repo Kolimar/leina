@@ -78,6 +78,36 @@ test("(fbl-2) existing v4 db without the index is retrofitted on the next R/W op
   }
 });
 
+test("(fbl-5) retrofit never waits on a held write lock: open serves unaccelerated, a later open retrofits", () => {
+  const { path, dir } = tmpDb("locked");
+  try {
+    const w = new GraphStore(path);
+    w.addNodes([node("a", "Anchor")]);
+    w.close();
+    const raw = new DatabaseSync(path);
+    raw.exec(`DROP INDEX ${INDEX_NAME}`);
+    // Another writer (a long build in a different process) holds the write lock.
+    raw.exec("BEGIN IMMEDIATE");
+    raw.exec("UPDATE nodes SET community = community WHERE 0");
+    try {
+      const t0 = Date.now();
+      const store = new GraphStore(path); // must neither throw "database is locked" nor stall
+      const elapsed = Date.now() - t0;
+      assert.ok(elapsed < 2000, `open did not wait out the busy timeout (${elapsed}ms)`);
+      assert.equal(store.findByLabel("anchor")[0]?.id, "a", "reads still answer, unaccelerated");
+      store.close();
+      assert.equal(hasIndex(path), false, "index skipped while the lock is held");
+    } finally {
+      raw.exec("COMMIT");
+      raw.close();
+    }
+    new GraphStore(path).close();
+    assert.ok(hasIndex(path), "the next open after the lock is released retrofits the index");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(fbl-3) findByLabel results are unchanged: exact > functional-exact > substring", () => {
   const { path, dir } = tmpDb("results");
   try {

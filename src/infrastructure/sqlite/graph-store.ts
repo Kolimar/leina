@@ -111,6 +111,15 @@ function rowToEdge(r: EdgeRow): GraphEdge {
 
 const GRAPH_SCHEMA_VERSION = 4;
 
+const BUSY_TIMEOUT_MS = 5000;
+
+/** SQLITE_BUSY (5) / SQLITE_LOCKED (6), extended codes included, as node:sqlite reports them. */
+function isBusyOrLocked(err: unknown): boolean {
+  const e = err as { errcode?: unknown; message?: unknown };
+  if (typeof e.errcode === "number") return [5, 6].includes(e.errcode & 0xff);
+  return typeof e.message === "string" && /database (table )?is locked/i.test(e.message);
+}
+
 // Reject a graph.db written by a newer binary BEFORE any schema work runs (its rows may
 // reference columns this binary doesn't know). Closes the handle before throwing so a
 // rejected open never leaks it. Returns the on-disk schema version so the caller can
@@ -134,7 +143,7 @@ export class GraphStore implements GraphRepository {
     // Another process (background build, MCP server, a second CLI) may hold the write
     // lock; without a busy_timeout every statement below fails immediately with
     // SQLITE_BUSY instead of waiting its turn.
-    this.db.exec("PRAGMA busy_timeout = 5000;");
+    this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
 
     // Read-only hardening for `graph serve` (defense in depth). The physical file is
     // still opened R/W so a WAL database reads without needing write access to its -shm
@@ -179,14 +188,25 @@ export class GraphStore implements GraphRepository {
   // IF NOT EXISTS makes the create race-safe against a concurrent open doing the same.
   // Read-only connections never reach this (they return before the version fast path)
   // — findByLabel stays correct without the index, just unaccelerated.
+  //
+  // The DDL needs the write lock, which another process (a long build) may hold far
+  // longer than busy_timeout — and this runs on the READ path (every query opens R/W).
+  // The index is only an accelerator, so it is attempted once without waiting: busy or
+  // locked → serve unaccelerated now, retry on a later open. Any other error still throws.
   #ensureLabelNocaseIndex(): void {
     const present = this.db
       .prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_nodes_label_nocase'")
       .get();
-    if (present === undefined) {
+    if (present !== undefined) return;
+    this.db.exec("PRAGMA busy_timeout = 0;");
+    try {
       this.db.exec(
         "CREATE INDEX IF NOT EXISTS idx_nodes_label_nocase ON nodes(label COLLATE NOCASE)",
       );
+    } catch (err) {
+      if (!isBusyOrLocked(err)) throw err;
+    } finally {
+      this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
     }
   }
 
