@@ -706,7 +706,7 @@ leina init <dir> --hosts claude --profile devin
 leina init <dir> --hosts devin,claude --profile devin --build
 ```
 
-### `deinit [--project <dir>]`
+### `deinit [<dir> | --project <dir>]`
 Inverso de `init` (por repo; por defecto, el directorio actual). Escribe el consent flag
 `disabled`, borra el registro de confianza del workspace en esta máquina y, en modo
 strip-inverse, elimina los artefactos gestionados del repo: el bloque de protocolo

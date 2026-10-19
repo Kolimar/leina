@@ -960,8 +960,10 @@ function deinitHooks(project: string, removed: string[]): void {
 }
 
 export function handleDeinit(rest: string[]): void {
-  const projectArg = optFlag(rest, "--project", undefined);
-  const project = projectArg ? resolvePath(projectArg) : resolvePath(process.cwd());
+  // leina deinit [<dir> | --project <dir>] — same resolution as init: a positional <dir>
+  // must never be silently ignored in favour of the cwd (it would deinit the wrong repo).
+  const positional = rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined;
+  const project = resolvePath(optFlag(rest, "--project", undefined) ?? positional ?? process.cwd());
 
   const written: string[] = [];
   const removed: string[] = [];

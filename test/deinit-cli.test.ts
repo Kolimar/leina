@@ -386,3 +386,41 @@ test("(T3-empty) deinit removes AGENTS.md/.gitignore entirely when they held ONL
     cleanup();
   }
 });
+
+// ---------------------------------------------------------------------------
+// T3-4: `deinit <dir>` (positional, like `init <dir>`) targets <dir> — never the cwd.
+//       Spawned with cwd = ANOTHER initialized project, so a regression deinits that
+//       sandbox project (asserted below), not whatever directory runs the suite.
+// ---------------------------------------------------------------------------
+
+test("(T3-4) deinit <dir> posicional apunta a <dir>, no al cwd", () => {
+  const { env, cleanup } = makeSandbox();
+  const target = tmpProject();
+  const bystander = tmpProject();
+  try {
+    assert.equal(runCli(env, "init", "--project", target).status, 0, "init target");
+    assert.equal(runCli(env, "init", "--project", bystander).status, 0, "init bystander");
+
+    const r = spawnSync(
+      process.execPath,
+      ["--no-warnings", "--experimental-strip-types", CLI, "deinit", target],
+      { encoding: "utf8", env, cwd: bystander },
+    );
+    assert.equal(r.status, 0, `deinit <dir> exit 0 (stderr: ${r.stderr})`);
+
+    assert.equal(
+      readFileSync(join(target, ".leina", "consent"), "utf8").trim(),
+      "disabled",
+      "the positional <dir> was deinitialized",
+    );
+    assert.equal(
+      readFileSync(join(bystander, ".leina", "consent"), "utf8").trim(),
+      "enabled",
+      "the cwd project was left alone",
+    );
+  } finally {
+    cleanup();
+    rmSync(target, { recursive: true, force: true });
+    rmSync(bystander, { recursive: true, force: true });
+  }
+});

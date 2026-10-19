@@ -325,7 +325,7 @@ export function printRootHelp(): void {
       `                          the project .mcp.json (committable, for teams). --harness-preset\n` +
       `                          generic seeds a harness WITHOUT the leina-* rules (leina-native,\n` +
       `                          the default, keeps them)\n` +
-      `  deinit [--project <path>]\n` +
+      `  deinit [<dir> | --project <dir>]\n` +
       `                          per-repo teardown (inverse of init): strip managed blocks +\n` +
       `                          set consent=disabled + remove .devin/hooks.v1.json. Idempotent.\n` +
       `  build <dir> [--json]    build the graph\n` +

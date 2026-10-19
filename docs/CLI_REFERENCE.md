@@ -671,7 +671,7 @@ Example (standalone full init):
 leina init <dir> --hosts claude --profile devin
 ```
 
-### `deinit [--project <dir>]`
+### `deinit [<dir> | --project <dir>]`
 Inverse of `init` (per repo; defaults to the current directory). Writes the consent flag
 `disabled`, removes this machine's workspace trust record, and strip-inverse removes the
 repo's managed artifacts: the `AGENTS.md` protocol block, the `.gitignore` block, the local
