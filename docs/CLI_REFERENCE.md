@@ -677,6 +677,9 @@ site); `confidence` appears only when it is not `EXTRACTED`, `context` only when
 Signatures, community ids, `fileType` and `weight` are left out — `leina build --json` still
 exports the full graph.
 
+The **memory tools** (`memory_*`) answer in compact, unindented JSON too (same fields as
+before 3.0, about 10% fewer characters on a `memory_context` or `memory_search` answer).
+
 | CLI | MCP tool | Notes |
 |---|---|---|
 | `query` | `graph_query` | builds the graph on first use; `includeTests` mirrors `--include-tests`; `maxNodes` defaults to 25; returns `{seeds: [id], nodes, edges, testsExcluded}` (seeds lead `nodes`; no `contains`/`method` edges) |

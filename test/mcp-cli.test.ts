@@ -205,7 +205,7 @@ test("(mcps-1) initialize → tools/list → tools/call over stdio against a rea
     // memory round-trip through MCP.
     assert.ok(!byId.get(4)?.result?.isError, "memory_add succeeded");
     const hitsText = byId.get(5)?.result?.content?.[0]?.text ?? "";
-    assert.match(hitsText, /"title": "t"/);
+    assert.match(hitsText, /"title":"t"/);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
@@ -864,9 +864,10 @@ test("(mcps-15) memory_update status: resolve hides from memory_context, keeps s
     ]);
     const byId = new Map(responses.map((r) => [r.id, r]));
     assert.ok(!byId.get(2)?.result?.isError, byId.get(2)?.result?.content?.[0]?.text);
-    assert.match(byId.get(2)?.result?.content?.[0]?.text ?? "", /"status": "resolved"/);
+    assert.match(byId.get(2)?.result?.content?.[0]?.text ?? "", /"status":"resolved"/);
+    assert.doesNotMatch(byId.get(2)?.result?.content?.[0]?.text ?? "", /\n/, "memory tools answer in compact JSON");
     assert.doesNotMatch(byId.get(3)?.result?.content?.[0]?.text ?? "", /gadget/, "resolved note is not context");
-    assert.match(byId.get(4)?.result?.content?.[0]?.text ?? "", /"status": "resolved"/, "search still returns it, labelled");
+    assert.match(byId.get(4)?.result?.content?.[0]?.text ?? "", /"status":"resolved"/, "search still returns it, labelled");
     assert.equal(byId.get(5)?.result?.isError, true);
     assert.match(byId.get(5)?.result?.content?.[0]?.text ?? "", /invalid status "done"/);
   } finally {

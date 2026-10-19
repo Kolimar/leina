@@ -717,6 +717,10 @@ ocurre (el call site); `confidence` aparece solo cuando no es `EXTRACTED` y `con
 existe. Se omiten firmas, ids de comunidad, `fileType` y `weight` — `leina build --json` sigue
 exportando el grafo completo.
 
+Las **tools de memoria** (`memory_*`) también responden JSON compacto, sin indentar (los mismos
+campos que antes de 3.0, alrededor de un 10% menos de caracteres en una respuesta de
+`memory_context` o `memory_search`).
+
 | CLI | MCP tool | Notas |
 |---|---|---|
 | `query` | `graph_query` | construye el grafo en el primer uso; `includeTests` equivale a `--include-tests`; `maxNodes` por defecto 25; devuelve `{seeds: [id], nodes, edges, testsExcluded}` (las seeds encabezan `nodes`; sin edges `contains`/`method`) |

@@ -741,8 +741,22 @@ function listTools(): { name: string; description: string; inputSchema: object }
 }
 
 // Tools whose (potentially large) answers are serialised without indentation: the model
-// reads JSON either way, and indentation was a third of a graph_query payload.
-const COMPACT_TOOLS: ReadonlySet<string> = new Set(["graph_query", "graph_affected", "graph_path", "impact_analyze"]);
+// reads JSON either way, and indentation was a third of a graph_query payload. The memory
+// tools return note lists and note bodies, where it is pure overhead too.
+const COMPACT_TOOLS: ReadonlySet<string> = new Set([
+  "graph_query",
+  "graph_affected",
+  "graph_path",
+  "impact_analyze",
+  "memory_add",
+  "memory_search",
+  "memory_verified",
+  "memory_context",
+  "memory_get",
+  "memory_update",
+  "memory_suggest_topic",
+  "memory_session",
+]);
 
 export async function handleMcp(_rest: string[]): Promise<void> {
   const server = new Server(
