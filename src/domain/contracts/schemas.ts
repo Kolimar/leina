@@ -135,6 +135,8 @@ export const harnessVerifyOutputSchema: JsonSchema = {
     loadErrors: { type: "array" },
     warnings: { type: "array" },
     exitCode: { type: "number" },
+    usageError: { type: "string" },
+    persisted: { type: "boolean" },
   },
 };
 

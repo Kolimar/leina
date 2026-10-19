@@ -89,6 +89,33 @@ async function run(args: string[]): Promise<RunResult> {
   }
 }
 
+/** Same dispatch as `leina harness hook <event>` (runHarnessHookEvent), minus stdin. */
+async function runHook(event: string, payload: unknown): Promise<RunResult> {
+  const prevExit = process.exitCode;
+  process.exitCode = undefined;
+  const outChunks: string[] = [];
+  const errChunks: string[] = [];
+  const origOut = process.stdout.write.bind(process.stdout);
+  const origErr = process.stderr.write.bind(process.stderr);
+  process.stdout.write = ((c: string | Uint8Array) => {
+    outChunks.push(String(c));
+    return true;
+  });
+  process.stderr.write = ((c: string | Uint8Array) => {
+    errChunks.push(String(c));
+    return true;
+  });
+  try {
+    await runHarnessHookEvent(event, JSON.stringify(payload), repo.root);
+    const code = typeof process.exitCode === "number" ? process.exitCode : 0;
+    return { stdout: outChunks.join(""), stderr: errChunks.join(""), code };
+  } finally {
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+    process.exitCode = prevExit;
+  }
+}
+
 async function read(rel: string): Promise<string> {
   return fs.readFile(path.join(repo.root, rel), "utf8");
 }
@@ -174,6 +201,36 @@ describe("leina harness contract + verify (e2e)", () => {
     assert.equal(await exists(".harness/state/current/contract.json"), false);
     const history = await fs.readdir(path.join(repo.root, ".harness", "state", "history"));
     assert.equal(history.length, 1);
+  });
+
+  it("(verify-partial-cli-1) a filtered verify cannot unlock a commit the full verify blocked", async () => {
+    await repo.write(".harness/config.json", JSON.stringify({ ...JSON.parse(FIXTURE_CONFIG), strictness: "strict" }));
+    await repo.write(
+      ".harness/rules/fail.md",
+      jsonFrontmatterDoc(
+        { id: "project/always-fail", phase: "verify", severity: "blocking", gate: { type: "command", run: "exit 1" } },
+        "# Always fails",
+      ),
+    );
+    repo.git("add", ".");
+    repo.git("commit", "-m", "strict + failing rule");
+
+    const full = await run(["verify"]);
+    assert.equal(full.code, 1, full.stderr);
+    const commit = { tool_input: { command: "git commit -am x" } };
+    assert.equal((await runHook("pre-bash", commit)).code, 2, "red full verify blocks the commit");
+
+    const partial = await run(["verify", "--rule", "harness/diff-in-scope"]);
+    assert.equal(partial.code, 0, partial.stderr);
+    assert.match(partial.stderr, /filtered run .* not recorded/);
+    assert.equal((await runHook("pre-bash", commit)).code, 2, "still blocked after the filtered run");
+  });
+
+  it("(verify-partial-cli-2) --rule with an unknown id exits 2 and names it", async () => {
+    const res = await run(["verify", "--rule", "does/not-exist"]);
+    assert.equal(res.code, 2);
+    assert.match(res.stderr, /unknown rule "does\/not-exist"/);
+    assert.doesNotMatch(res.stderr, /passed/);
   });
 
   it("contract edit widens scope explicitly and rejects unknown criteria", async () => {
@@ -299,32 +356,6 @@ describe("leina harness list (e2e)", () => {
 // ---------------------------------------------------------------------------
 
 describe("leina harness hook (transport)", () => {
-  async function runHook(event: string, payload: unknown): Promise<RunResult> {
-    const prevExit = process.exitCode;
-    process.exitCode = undefined;
-    const outChunks: string[] = [];
-    const errChunks: string[] = [];
-    const origOut = process.stdout.write.bind(process.stdout);
-    const origErr = process.stderr.write.bind(process.stderr);
-    process.stdout.write = ((c: string | Uint8Array) => {
-      outChunks.push(String(c));
-      return true;
-    });
-    process.stderr.write = ((c: string | Uint8Array) => {
-      errChunks.push(String(c));
-      return true;
-    });
-    try {
-      await runHarnessHookEvent(event, JSON.stringify(payload), repo.root);
-      const code = typeof process.exitCode === "number" ? process.exitCode : 0;
-      return { stdout: outChunks.join(""), stderr: errChunks.join(""), code };
-    } finally {
-      process.stdout.write = origOut;
-      process.stderr.write = origErr;
-      process.exitCode = prevExit;
-    }
-  }
-
   it("session-start prints contract status + intake rules on stdout", async () => {
     await run(["contract", "new", "--goal", "hooked goal", "--scope", "src/**"]);
     const res = await runHook("session-start", {});

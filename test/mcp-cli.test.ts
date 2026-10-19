@@ -633,6 +633,7 @@ test("(mcps-6) harness tools: parseable schemas and contract new → show → ve
       { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "harness_contract_show", arguments: { root: dir } } },
       { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "harness_verify", arguments: { root: dir, ruleId: "project/trivial" } } },
       { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "harness_rules_list", arguments: { root: dir } } },
+      { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "harness_verify", arguments: { root: dir, ruleId: "does/not-exist" } } },
     ]);
     const byId2 = new Map(responses2.map((r) => [r.id, r]));
 
@@ -650,6 +651,10 @@ test("(mcps-6) harness tools: parseable schemas and contract new → show → ve
     assert.ok(trivial, "project rule resolved through MCP");
     assert.equal(trivial.layer, "project");
     assert.deepEqual(trivial.gates, ["file"]);
+
+    // (verify-partial-mcp) an unknown ruleId is a tool error, not an empty green run.
+    assert.equal(byId2.get(5)?.result?.isError, true, `unknown rule: ${byId2.get(5)?.result?.content?.[0]?.text}`);
+    assert.match(byId2.get(5)?.result?.content?.[0]?.text ?? "", /unknown rule "does\/not-exist"/);
 
     // Round 3: close the contract.
     const responses3 = await driveMcp(dir, env, [

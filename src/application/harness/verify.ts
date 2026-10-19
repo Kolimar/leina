@@ -1,8 +1,8 @@
 // application/harness/verify.ts — "the wall". Loads rules, resolves the
 // deterministic scope (contract + git diff), runs every applicable gate,
-// persists the machine report for hooks/CI, and maps the outcome to the
-// exit-code contract:
-//   0 = all blocking gates pass · 1 = blocking failure · 2 = engine/config error.
+// persists the machine report for hooks/CI (full runs only — a --rule/--phase
+// subset never replaces it), and maps the outcome to the exit-code contract:
+//   0 = all blocking gates pass · 1 = blocking failure · 2 = engine/config/usage error.
 //
 // Process/git access is injected through domain ports (options.ports) — the
 // composition root (cli, tests) wires infrastructure/harness/{exec,git}.ts.
@@ -37,8 +37,26 @@ export interface VerifyOutcome {
   /** Config/rule-loading problems — engine errors, distinct from gate failures. */
   loadErrors: string[];
   warnings: string[];
-  /** 0 = all blocking pass · 1 = blocking failure · 2 = engine/config error. */
+  /** 0 = all blocking pass · 1 = blocking failure · 2 = engine/config/usage error. */
   exitCode: 0 | 1 | 2;
+  /** The caller asked for something that does not exist (unknown rule id). Also in loadErrors. */
+  usageError?: string;
+  /**
+   * Whether this run (re)writes `.harness/state/current/verify-report.json` —
+   * the report the commit guard trusts. Only FULL runs do (see isFullRun).
+   */
+  persisted: boolean;
+}
+
+/**
+ * A run is FULL when nothing narrows it below the default: no `ruleId`, and
+ * the phases include every default verify phase. Only a full run speaks for
+ * the task, so only a full run may replace the persisted report — otherwise
+ * `verify --rule <something green>` would overwrite a red verdict and unlock
+ * the commit guard.
+ */
+function isFullRun(phases: readonly Phase[], ruleId: string | undefined): boolean {
+  return ruleId === undefined && DEFAULT_VERIFY_PHASES.every((p) => phases.includes(p));
 }
 
 export function parsePhases(raw: string | undefined): Phase[] | { error: string } {
@@ -66,6 +84,20 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
       loadErrors,
       warnings: resolution.warnings,
       exitCode: 2,
+      persisted: false,
+    };
+  }
+
+  // An unknown rule id would otherwise run zero gates and report green.
+  if (options.ruleId !== undefined && !resolution.rules.some((r) => r.id === options.ruleId)) {
+    const usageError = `unknown rule "${options.ruleId}" — \`leina harness list\` shows the resolved rule ids`;
+    return {
+      report: buildReport(phases, startedAt, []),
+      loadErrors: [usageError],
+      warnings: resolution.warnings,
+      exitCode: 2,
+      usageError,
+      persisted: false,
     };
   }
 
@@ -81,7 +113,16 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
     changedFiles: changed,
     ...(contract?.taskType !== undefined ? { taskType: contract.taskType } : {}),
   });
-  if (options.ruleId) rules = rules.filter((r) => r.id === options.ruleId);
+  const warnings = [...resolution.warnings];
+  if (options.ruleId !== undefined) {
+    rules = rules.filter((r) => r.id === options.ruleId);
+    if (rules.length === 0) {
+      warnings.push(
+        `rule "${options.ruleId}" does not apply to this run (disabled, outside phases ` +
+          `[${phases.join(", ")}], or out of the task's scope) — nothing ran`,
+      );
+    }
+  }
 
   const ctx: GateContext = {
     repoRoot,
@@ -105,13 +146,15 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
   const results = await runGates(rules, ctx, resolution.config.verify.parallelism, policy);
   const report = buildReport(phases, startedAt, results);
 
-  await persistReport(repoRoot, report, changed);
+  const persisted = isFullRun(phases, options.ruleId);
+  if (persisted) await persistReport(repoRoot, report, changed);
 
   return {
     report,
     loadErrors: [],
-    warnings: resolution.warnings,
+    warnings,
     exitCode: report.summary.blockingFailures > 0 ? 1 : 0,
+    persisted,
   };
 }
 

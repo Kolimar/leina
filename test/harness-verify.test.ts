@@ -221,6 +221,56 @@ describe("runVerify", () => {
   });
 });
 
+describe("filtered runs (--rule / --phase)", () => {
+  const reportPath = () => path.join(repo.root, ".harness", "state", "current", "verify-report.json");
+  const persistedFailures = async (): Promise<number> =>
+    JSON.parse(await fs.readFile(reportPath(), "utf8")).summary.blockingFailures;
+
+  it("(verify-partial-1) a --rule run never replaces the full report the commit guard reads", async () => {
+    await repo.write(".harness/rules/ok.md", RULE_OK);
+    await repo.write(".harness/rules/fail.md", RULE_FAIL);
+    const full = await runVerify(repo.root, { ports });
+    assert.equal(full.exitCode, 1);
+    assert.equal(full.persisted, true);
+    assert.equal(await persistedFailures(), 1);
+
+    const partial = await runVerify(repo.root, { ports, ruleId: "project/always-pass" });
+    assert.equal(partial.exitCode, 0);
+    assert.equal(partial.persisted, false);
+    assert.equal(await persistedFailures(), 1, "the red full report is still what the guard sees");
+  });
+
+  it("(verify-partial-2) a phase subset is not persisted; the default phases or a superset are", async () => {
+    await repo.write(".harness/rules/fail.md", RULE_FAIL);
+    const subset = await runVerify(repo.root, { ports, phases: ["deliver"] });
+    assert.equal(subset.persisted, false);
+    await assert.rejects(fs.access(reportPath()), "nothing persisted by a phase subset");
+
+    const superset = await runVerify(repo.root, { ports, phases: ["intake", "verify", "deliver"] });
+    assert.equal(superset.persisted, true);
+    assert.equal(await persistedFailures(), 1);
+  });
+
+  it("(verify-partial-3) an unknown rule id is a usage error (exit 2), not an empty green run", async () => {
+    const outcome = await runVerify(repo.root, { ports, ruleId: "does/not-exist" });
+    assert.equal(outcome.exitCode, 2);
+    assert.match(outcome.usageError ?? "", /unknown rule "does\/not-exist"/);
+    assert.deepEqual(outcome.loadErrors, [outcome.usageError]);
+    assert.equal(outcome.persisted, false);
+    await assert.rejects(fs.access(reportPath()));
+  });
+
+  it("(verify-partial-4) a known rule that does not apply to the run is reported, not silently green", async () => {
+    const outcome = await runVerify(repo.root, { ports, ruleId: "harness/tests-pass" });
+    assert.equal(outcome.exitCode, 0);
+    assert.deepEqual(outcome.report.results, []);
+    assert.ok(
+      outcome.warnings.some((w) => /harness\/tests-pass.*does not apply/.test(w)),
+      `warnings: ${outcome.warnings.join(" | ")}`,
+    );
+  });
+});
+
 describe("recipes", () => {
   it("loads builtin recipes and lets a project override by name", async () => {
     const builtin = await loadRecipes(repo.root);

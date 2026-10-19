@@ -293,7 +293,15 @@ async function handleVerifySub(repoRoot: string, rest: string[]): Promise<void> 
   for (const warning of outcome.warnings) err(`warning: ${warning}`);
   for (const error of outcome.loadErrors) err(`error: ${error}`);
 
-  if (outcome.loadErrors.length === 0) err(renderHuman(outcome.report));
+  if (outcome.loadErrors.length === 0) {
+    err(renderHuman(outcome.report));
+    if (!outcome.persisted) {
+      err(
+        "note: filtered run (--rule/--phase) — not recorded as the task's verify report; " +
+          "the commit guard keeps the last full `leina harness verify`",
+      );
+    }
+  }
   if (hasFlag(rest, "--json")) out(JSON.stringify(outcome.report, null, 2));
   process.exitCode = outcome.exitCode;
 }

@@ -441,11 +441,13 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       return p;
     });
     const ruleId = optStr(a, "ruleId");
-    return runVerify(root, {
+    const outcome = await runVerify(root, {
       ports: { proc: new ShellProcessRunner(), git: new HarnessGit() },
       ...(phases !== undefined ? { phases } : {}),
       ...(ruleId !== undefined ? { ruleId } : {}),
     });
+    if (outcome.usageError !== undefined) throw new Error(outcome.usageError); // → isError
+    return outcome;
   },
   harness_rules_list: async (a) => harnessRulesList(rootOf(a)),
   doctor_run: (a) => runDoctor(readPackageVersion(), rootOf(a)),
