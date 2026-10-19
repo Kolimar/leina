@@ -371,7 +371,7 @@ export function printRootHelp(): void {
       `                          LEINA_EVENTS_PERSIST=1)\n` +
       `  memory <dir> <sub>      local memory: save|update|get|search|verified|context|session|\n` +
       `                          session-start|suggest-topic|current-project|merge-projects|reanchor|\n` +
-      `                          export|import|sync  (run 'leina memory' for each sub-command's flags)\n` +
+      `                          compact|export|import|sync  (run 'leina memory' for each sub-command's flags)\n` +
       `  mcp                     MCP server over stdio (tools = the capability registry);\n` +
       `                          register with your host: command "leina", args ["mcp"]\n` +
       `  mcp <register|unregister|status> [--hosts claude,cursor,windsurf]\n` +

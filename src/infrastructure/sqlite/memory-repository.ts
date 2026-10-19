@@ -3,11 +3,12 @@
 // FTS5 rides the implicit rowid; all search JOINs use rowid, NEVER the TEXT id column.
 
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { makeId, normalizeLabel } from "../../domain/shared/id.ts";
-import { ensureMemorySchema } from "./schema.ts";
+import { ensureMemorySchema, OBS_FTS_DDL } from "./schema.ts";
+import type { CompactOptions, CompactReport } from "../../application/memory/compact.ts";
 import type {
   Observation,
   ObservationInput,
@@ -251,6 +252,7 @@ function buildLikeSnippet(content: string, tokens: string[]): string {
 
 export class SQLiteMemoryRepository implements MemoryRepository {
   private readonly db: DatabaseSync;
+  private readonly dbPath: string;
   private readonly projectKey: string;
   // Whether FTS5 was available when this repository was opened. Propagated from
   // ensureMemorySchema so we never probe twice.
@@ -264,6 +266,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   constructor(memPath: string, projectKey: string, resolveAnchor?: AnchorResolver, opts?: { readOnly?: boolean }) {
     mkdirSync(dirname(memPath), { recursive: true });
     this.db = new DatabaseSync(memPath);
+    this.dbPath = memPath;
     // Same rationale as GraphStore: wait for a concurrent writer instead of failing
     // immediately with SQLITE_BUSY (the global memory.db is shared across processes).
     this.db.exec("PRAGMA busy_timeout = 5000;");
@@ -1415,6 +1418,176 @@ export class SQLiteMemoryRepository implements MemoryRepository {
       try { this.db.exec("ROLLBACK"); } catch { /* ignore */ }
       throw e;
     }
+  }
+
+  // ---- compact --------------------------------------------------------------
+  //
+  // GC of this project's superseded snapshot rows (+ optional idle-session purge),
+  // then VACUUM. Implements the CompactCapableRepository port defined by
+  // application/memory/compact.ts. Correctness invariants:
+  //
+  //   · Live rows are untouched: every DELETE is scoped to superseded_by IS NOT NULL,
+  //     so the live revision of each topic (and every non-topic observation) survives.
+  //   · Anchors cascade: memory_anchors has no FK, so anchors of deleted snapshots are
+  //     deleted explicitly IN THE SAME transaction — no dangling anchor rows. Anchors
+  //     of live observations are never touched.
+  //   · FTS stays consistent in two independent ways. (1) Snapshot rows were never in
+  //     obs_fts (the obs_ai/obs_ad triggers are guarded on superseded_by IS NULL), so
+  //     deleting them fires no FTS delete and leaves the index intact. (2) VACUUM may
+  //     RENUMBER the implicit rowids of `observations` (its PRIMARY KEY is TEXT, so
+  //     rowid is NOT stable across VACUUM) while obs_fts — an external-content table —
+  //     addresses documents BY rowid. After every VACUUM the index is therefore rebuilt
+  //     from scratch over live rows only (all projects — the FTS table is global),
+  //     mirroring schema.ts migrateV3toV4. Skipped in LIKE mode (no obs_fts).
+  //   · VACUUM runs OUTSIDE any transaction (SQLite requires it) after the GC commit;
+  //     busy_timeout=5000 lets it wait for concurrent readers. If it still fails
+  //     (another process holds the db), the GC is already committed and NO rowids were
+  //     renumbered (VACUUM is atomic), so the FTS index is still valid — the error says
+  //     to just re-run compact later; the re-run is idempotent.
+  //   · sessions purge severs cleanly: observations pointing at a purged session get
+  //     session_id = NULL (the obs_au trigger re-indexes live rows with identical
+  //     title/content — a semantic no-op), so no dangling session references remain.
+
+  // On-disk footprint: main db file plus its WAL sidecar (un-checkpointed pages live
+  // there until the post-VACUUM truncate checkpoint folds them back).
+  private dbSizeOnDisk(): number {
+    let total = 0;
+    for (const p of [this.dbPath, `${this.dbPath}-wal`]) {
+      try {
+        total += statSync(p).size;
+      } catch {
+        // absent sidecar (or :memory: db) — contributes nothing
+      }
+    }
+    return total;
+  }
+
+  // GC transaction: snapshot deletion (anchors cascade first) + optional sessions
+  // purge, all in ONE BEGIN IMMEDIATE. `dryRun` rolls back after counting.
+  private _compactGc(
+    keep: number,
+    dryRun: boolean,
+    now: number,
+    sessionsOlderThanDays?: number,
+  ): { supersededRemoved: number; anchorsRemoved: number; sessionsRemoved: number } {
+    // Victims: this project's superseded snapshots beyond the newest `keep` per
+    // (scope, topic). Newest = updated_at, tie-broken by revision (deterministic for
+    // same-millisecond upserts — revision IS the version sequence within a topic).
+    // COALESCE(topic_key, id) puts the rare snapshot WITHOUT a topic_key (import edge
+    // case) in its own group, so any keep >= 1 always preserves it rather than lumping
+    // all topic-less snapshots into one shared bucket.
+    const victimsSql = `
+      SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY scope, COALESCE(topic_key, id)
+          ORDER BY updated_at DESC, revision DESC, id DESC
+        ) AS rn
+        FROM observations
+        WHERE project_key = ? AND superseded_by IS NOT NULL
+      ) WHERE rn > ?`;
+
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      // Anchors first — the victim subquery reads `observations`, so the cascade
+      // must run while the snapshot rows still exist.
+      const anchorsRemoved = (
+        this.db
+          .prepare(`DELETE FROM memory_anchors WHERE observation_id IN (${victimsSql})`)
+          .run(this.projectKey, keep) as { changes: number }
+      ).changes;
+      const supersededRemoved = (
+        this.db
+          .prepare(`DELETE FROM observations WHERE id IN (${victimsSql})`)
+          .run(this.projectKey, keep) as { changes: number }
+      ).changes;
+      const sessionsRemoved =
+        sessionsOlderThanDays === undefined
+          ? 0
+          : this._purgeIdleSessionsInTx(now - sessionsOlderThanDays * 86_400_000);
+      this.db.exec(dryRun ? "ROLLBACK" : "COMMIT");
+      return { supersededRemoved, anchorsRemoved, sessionsRemoved };
+    } catch (e) {
+      try { this.db.exec("ROLLBACK"); } catch { /* ignore */ }
+      throw e;
+    }
+  }
+
+  // Purge sessions whose last activity (ended_at, or started_at for never-closed
+  // sessions) predates `cutoff`, severing observation references first so no dangling
+  // session_id remains. The UPDATE fires obs_au on live rows with identical
+  // title/content — a semantic no-op for the FTS index. Assumes an open transaction.
+  private _purgeIdleSessionsInTx(cutoff: number): number {
+    this.db
+      .prepare(
+        `UPDATE observations SET session_id = NULL
+          WHERE project_key = ? AND session_id IN (
+            SELECT id FROM sessions
+             WHERE project_key = ? AND COALESCE(ended_at, started_at) < ?)`,
+      )
+      .run(this.projectKey, this.projectKey, cutoff);
+    return (
+      this.db
+        .prepare(
+          `DELETE FROM sessions
+            WHERE project_key = ? AND COALESCE(ended_at, started_at) < ?`,
+        )
+        .run(this.projectKey, cutoff) as { changes: number }
+    ).changes;
+  }
+
+  // Post-VACUUM FTS reconstruction: drop + recreate obs_fts and reindex live rows only,
+  // across ALL projects (the FTS table is global). Mirrors schema.ts migrateV3toV4.
+  private _rebuildFtsIndex(): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.exec("DROP TABLE IF EXISTS obs_fts");
+      this.db.exec(OBS_FTS_DDL);
+      this.db.exec(
+        `INSERT INTO obs_fts(rowid, title, content)
+           SELECT rowid, title, content FROM observations WHERE superseded_by IS NULL`,
+      );
+      this.db.exec("COMMIT");
+    } catch (e) {
+      try { this.db.exec("ROLLBACK"); } catch { /* ignore */ }
+      throw e;
+    }
+  }
+
+  compact(opts: CompactOptions = {}): CompactReport {
+    const dryRun = opts.dryRun ?? false;
+    const dbBytesBefore = this.dbSizeOnDisk();
+    const removed = this._compactGc(
+      opts.keepPerTopic ?? 0,
+      dryRun,
+      opts.now ?? Date.now(),
+      opts.sessionsOlderThanDays,
+    );
+
+    if (dryRun) {
+      return { ...removed, dbBytesBefore, dbBytesAfter: dbBytesBefore, dryRun: true };
+    }
+
+    // VACUUM — outside any transaction, after the GC commit. Failure here (db busy
+    // beyond busy_timeout) leaves a fully consistent db: rows already gone, rowids
+    // unrenumbered (VACUUM is atomic), FTS valid — re-running compact finishes the job.
+    try {
+      this.db.exec("VACUUM");
+    } catch (e) {
+      throw new Error(
+        `memory compact: removed ${removed.supersededRemoved} snapshot row(s) but VACUUM could not ` +
+          `run (${(e as Error).message}). The database is consistent; disk space was not reclaimed — ` +
+          `re-run compact when no other leina process is using the memory db.`,
+      );
+    }
+
+    // VACUUM may have renumbered observation rowids (see the invariants block above),
+    // so the rowid-addressed FTS index must be rebuilt. Skipped in LIKE mode (no obs_fts).
+    if (this.fts5) this._rebuildFtsIndex();
+
+    // Fold the WAL back into the main file so the reported after-size is honest.
+    try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);"); } catch { /* size reporting only */ }
+
+    return { ...removed, dbBytesBefore, dbBytesAfter: this.dbSizeOnDisk(), dryRun: false };
   }
 
 

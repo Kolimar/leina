@@ -1,7 +1,7 @@
 // cli/handlers/memory.ts — `leina memory <sub>` command handler.
 // sub-commands: save | update | get | search | verified | context | session |
 //               session-start | suggest-topic | current-project | merge-projects |
-//               reanchor | export | import | sync
+//               reanchor | compact | export | import | sync
 //
 // handleMemory is a thin dispatcher: it resolves <dir> and routes to a per-subcommand
 // function (each kept under the Cognitive-Complexity gate) via MEM_HANDLERS.
@@ -11,6 +11,7 @@ import { join, resolve as resolvePath } from "node:path";
 import { formatBatchResults } from "../../domain/shared/batch.ts";
 import { getVerifiedContext } from "../../application/memory/query.ts";
 import { reanchorObservations } from "../../application/memory/reanchor.ts";
+import { compactMemory } from "../../application/memory/compact.ts";
 import type {
   ExportedObservation,
   ObservationInput,
@@ -358,6 +359,46 @@ function memReanchor(rest: string[], dir: string): void {
   }
 }
 
+// Human-readable byte size for the compact report (matches the small scale of memory.db).
+function fmtBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+// memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--dry-run]
+// GC this project's superseded snapshot rows (every topic's LIVE row is always kept;
+// --keep N retains the N most recent snapshots per topic, default 0 = drop them all),
+// optionally purge sessions idle for more than DAYS days, then VACUUM so the freed
+// pages go back to the OS. Idempotent — a second run removes nothing.
+function memCompact(rest: string[], dir: string): void {
+  const keep = Number(optFlag(rest, "--keep", "0") ?? "0");
+  if (!Number.isInteger(keep) || keep < 0) fail("--keep must be a non-negative integer");
+  const daysRaw = optFlag(rest, "--sessions-older-than", undefined);
+  const days = daysRaw !== undefined ? Number(daysRaw) : undefined;
+  if (days !== undefined && (!Number.isFinite(days) || days <= 0)) {
+    fail("--sessions-older-than must be a positive number of days");
+  }
+  const dryRun = hasFlag(rest, "--dry-run");
+  const { store, close } = memOpenGuarded(dir);
+  try {
+    const r = compactMemory(store, { keepPerTopic: keep, sessionsOlderThanDays: days, dryRun });
+    const verb = r.dryRun ? "[dry-run] would remove" : "removed";
+    const sessionsNote = days !== undefined ? `, ${r.sessionsRemoved} session(s)` : "";
+    console.log(
+      `compact: ${verb} ${r.supersededRemoved} superseded snapshot(s), ` +
+        `${r.anchorsRemoved} anchor row(s)${sessionsNote}`,
+    );
+    console.log(
+      r.dryRun
+        ? `db size: ${fmtBytes(r.dbBytesBefore)} (unchanged — dry run)`
+        : `db size: ${fmtBytes(r.dbBytesBefore)} -> ${fmtBytes(r.dbBytesAfter)}`,
+    );
+  } finally {
+    close();
+  }
+}
+
 function memHelp(): void {
   console.log(
     `leina memory <dir> <sub-command>\n\n` +
@@ -382,6 +423,10 @@ function memHelp(): void {
       `  current-project <dir>              (show derived project key + detection method)\n` +
       `  merge-projects <dir> --from <key> --to <key> [--dry-run]  (rename/merge project keys)\n` +
       `  reanchor <dir> [--dry-run]         (retro-anchor observations to real graph nodes)\n` +
+      `  compact <dir> [--keep N] [--sessions-older-than DAYS] [--dry-run]\n` +
+      `                                     (GC superseded snapshots — live rows always kept;\n` +
+      `                                      --keep N retains N newest snapshots per topic, default 0;\n` +
+      `                                      sessions untouched unless --sessions-older-than; then VACUUM)\n` +
       `  export <dir> [--out file.jsonl]    (dump this project's observations+anchors as JSONL)\n` +
       `  import <dir> [--in file.jsonl]     (merge an export from stdin/file; newer revision wins)\n` +
       `  sync <dir>                         (two-way merge with committable .leina/memory-export.jsonl)\n`,
@@ -493,6 +538,7 @@ const MEM_HANDLERS: Record<string, MemSubHandler> = {
   "current-project": memCurrentProject,
   "merge-projects": memMergeProjects,
   reanchor: memReanchor,
+  compact: memCompact,
 };
 
 export async function handleMemory(rest: string[]): Promise<void> {
