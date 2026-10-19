@@ -6,7 +6,7 @@
 // Invariant: user-local layers may tune timeouts and disable *their own*
 // additions, but may NOT downgrade a project blocking rule to advisory —
 // enforceability is not defeatable by local config. resolver.ts enforces it
-// using the `localRuleOverrides` this loader reports.
+// using the project/local split of rule overrides this loader reports.
 //
 // Directory names are contract: `.harness/` and its file names never change,
 // so repos initialized by the original harness-framework keep working.
@@ -35,7 +35,13 @@ export function userHarnessDir(): string {
 
 export interface LoadedConfig {
   config: HarnessConfig;
-  /** Rule overrides that came from user-local layers (restricted by the resolver). */
+  /** Rule override fields decided by the project layer (.harness/config.json). */
+  projectRuleOverrides: Record<string, RuleOverride>;
+  /**
+   * Rule override fields decided by user-local layers — only those that WIN the
+   * merge (a user config.json field the project layer re-sets is not local).
+   * Restricted by the resolver. `config.rules` = project + local, field-level.
+   */
   localRuleOverrides: Record<string, RuleOverride>;
   errors: string[];
 }
@@ -63,12 +69,13 @@ export async function loadConfig(repoRoot: string): Promise<LoadedConfig> {
     if (parsed.value !== undefined) layers.push({ source: file, data: parsed.value, local });
   }
 
-  // Merge raw objects shallowly per top-level key; `rules` merges by rule id
-  // with field-level merge across layers (a local layer adding `enabled` must
-  // not wipe the project layer's `severity` for the same rule).
+  // Merge raw objects shallowly per top-level key. `rules` is validated per
+  // layer and merged by rule id with field-level precedence (a local layer
+  // adding `enabled` must not wipe the project layer's `severity`), keeping
+  // which fields the project decided and which a user-local layer did.
   const mergedRaw: Record<string, unknown> = {};
-  const mergedRules: Record<string, Record<string, unknown>> = {};
-  const localRuleOverridesRaw: Record<string, Record<string, unknown>> = {};
+  const ruleLayers: { local: boolean; rules: Record<string, RuleOverride> }[] = [];
+  const ruleErrors: string[] = [];
 
   for (const layer of layers) {
     const obj = layer.data;
@@ -78,45 +85,72 @@ export async function loadConfig(repoRoot: string): Promise<LoadedConfig> {
     }
     for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
       if (key === "$schema") continue;
-      if (key === "rules" && typeof value === "object" && value !== null) {
-        mergeRuleLayer(value as Record<string, unknown>, mergedRules, layer.local ? localRuleOverridesRaw : undefined);
-      } else {
-        mergedRaw[key] = value;
-      }
+      if (key === "rules") ruleLayers.push({ local: layer.local, rules: validateRuleLayer(value, ruleErrors) });
+      else mergedRaw[key] = value;
     }
   }
-  mergedRaw.rules = mergedRules;
 
   const result = validateConfig(mergedRaw);
-  if (!result.ok) {
-    errors.push(`invalid config: ${result.errors.join("; ")}`);
+  const invalid = [...(result.ok ? [] : result.errors), ...ruleErrors];
+  if (!result.ok || invalid.length > 0) {
+    errors.push(`invalid config: ${invalid.join("; ")}`);
     const fallback = validateConfig({});
     return {
       config: fallback.ok ? fallback.value : (undefined as never),
+      projectRuleOverrides: {},
       localRuleOverrides: {},
       errors,
     };
   }
 
-  const localRuleOverrides: Record<string, RuleOverride> = {};
-  for (const [id, raw] of Object.entries(localRuleOverridesRaw)) {
-    const parsed = validateRuleOverride(raw, `rules.${id}`);
-    if (parsed.ok) localRuleOverrides[id] = parsed.value;
-  }
-
-  return { config: result.value, localRuleOverrides, errors };
+  const { merged, project, local } = mergeRuleLayers(ruleLayers);
+  return {
+    config: { ...result.value, rules: merged },
+    projectRuleOverrides: project,
+    localRuleOverrides: local,
+    errors,
+  };
 }
 
-function mergeRuleLayer(
-  value: Record<string, unknown>,
-  mergedRules: Record<string, Record<string, unknown>>,
-  localSink: Record<string, Record<string, unknown>> | undefined,
-): void {
-  for (const [ruleId, override] of Object.entries(value)) {
-    if (typeof override !== "object" || override === null) continue;
-    mergedRules[ruleId] = { ...mergedRules[ruleId], ...(override as Record<string, unknown>) };
-    if (localSink) {
-      localSink[ruleId] = { ...localSink[ruleId], ...(override as Record<string, unknown>) };
+function validateRuleLayer(value: unknown, errors: string[]): Record<string, RuleOverride> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    errors.push("rules: must be an object keyed by rule id");
+    return {};
+  }
+  const overrides: Record<string, RuleOverride> = {};
+  for (const [ruleId, raw] of Object.entries(value as Record<string, unknown>)) {
+    const parsed = validateRuleOverride(raw, `rules.${ruleId}`);
+    if (parsed.ok) overrides[ruleId] = parsed.value;
+    else errors.push(...parsed.errors);
+  }
+  return overrides;
+}
+
+/** Field-level merge, lowest → highest precedence, tracking the deciding layer kind. */
+function mergeRuleLayers(layers: { local: boolean; rules: Record<string, RuleOverride> }[]): {
+  merged: Record<string, RuleOverride>;
+  project: Record<string, RuleOverride>;
+  local: Record<string, RuleOverride>;
+} {
+  const merged: Record<string, RuleOverride> = {};
+  const project: Record<string, RuleOverride> = {};
+  const local: Record<string, RuleOverride> = {};
+  for (const layer of layers) {
+    for (const [id, override] of Object.entries(layer.rules)) {
+      merged[id] = { ...merged[id], ...override };
+      if (layer.local) {
+        local[id] = { ...local[id], ...override };
+        continue;
+      }
+      project[id] = { ...project[id], ...override };
+      // A project field re-set over the user config.json is no longer local.
+      const lower = local[id];
+      if (lower) {
+        if (override.enabled !== undefined) delete lower.enabled;
+        if (override.severity !== undefined) delete lower.severity;
+        if (lower.enabled === undefined && lower.severity === undefined) delete local[id];
+      }
     }
   }
+  return { merged, project, local };
 }

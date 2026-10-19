@@ -2,19 +2,23 @@
 //   1. Rule files merge by id — a later layer (builtin < project < user)
 //      replaces the whole rule.
 //   2. config.json `rules.<id>` entries apply partial overrides (enabled /
-//      severity only — gates are declared in rule files).
+//      severity only — gates are declared in rule files). Field-level
+//      precedence: user config.json < project config.json < config.local.json.
 //   3. Enforceability invariant: user-local layers (user rule files, user/local
-//      config) may NOT weaken a project/builtin blocking rule — no disabling it
-//      and no downgrading severity. Attempts are ignored with a warning.
+//      config) may NOT weaken what the shared layers enforce — the BASELINE:
+//      the builtin/project rule file plus the project config. Against a
+//      baseline that is blocking and enabled, they may not disable it,
+//      downgrade it to advisory, or change its gate/phase/scope. Attempts are
+//      ignored with a warning.
 
+import { isDeepStrictEqual } from "node:util";
 import {
   type HarnessConfig,
   type Phase,
   type Rule,
+  type RuleLayer,
   type RuleOverride,
-  type Severity,
   gatesOf,
-  RULE_LAYERS,
 } from "../../domain/harness/model.ts";
 import { anyFileMatches } from "../../domain/harness/glob.ts";
 import { loadAllRules } from "./loader.ts";
@@ -27,12 +31,24 @@ export interface Resolution {
   warnings: string[];
 }
 
-function isWeakening(
-  base: { severity: Severity; enabled: boolean },
-  next: { severity?: Severity | undefined; enabled?: boolean | undefined },
-): boolean {
-  if (base.severity !== "blocking" || !base.enabled) return false;
-  return next.severity === "advisory" || next.enabled === false;
+/** How `next` weakens a blocking+enabled `base`, or undefined when it does not. */
+function weakening(base: Rule, next: Rule): string | undefined {
+  if (base.severity !== "blocking" || !base.enabled) return undefined;
+  if (!next.enabled) return "disables it";
+  if (next.severity !== "blocking") return "downgrades it to advisory";
+  if (!isDeepStrictEqual(gatesOf(base), gatesOf(next))) return "changes its gate";
+  if (base.phase !== next.phase) return "changes its phase";
+  if (!isDeepStrictEqual(base.scope, next.scope)) return "changes its scope";
+  return undefined;
+}
+
+function withOverride(rule: Rule, override: RuleOverride | undefined): Rule {
+  if (!override) return rule;
+  return {
+    ...rule,
+    ...(override.enabled !== undefined ? { enabled: override.enabled } : {}),
+    ...(override.severity !== undefined ? { severity: override.severity } : {}),
+  };
 }
 
 export async function loadResolvedRules(repoRoot: string): Promise<Resolution> {
@@ -42,51 +58,65 @@ export async function loadResolvedRules(repoRoot: string): Promise<Resolution> {
     loadConfig(repoRoot),
   ]);
   const errors = [...ruleErrors, ...loadedConfig.errors];
-  const { config, localRuleOverrides } = loadedConfig;
+  const { config, projectRuleOverrides, localRuleOverrides } = loadedConfig;
 
-  // 1. Replace-merge rule files by id, respecting the enforceability invariant.
-  const byId = new Map<string, Rule>();
-  for (const layer of RULE_LAYERS) {
-    for (const rule of rawRules.filter((r) => r.layer === layer)) {
-      const existing = byId.get(rule.id);
-      if (existing && layer === "user" && existing.layer === "project" && isWeakening(existing, rule)) {
-        warnings.push(
-          `${rule.sourcePath}: user rule would weaken project blocking rule "${rule.id}" — ignored`,
-        );
-        continue;
-      }
-      if (existing?.layer === layer) {
-        errors.push(
-          `duplicate rule id "${rule.id}" in ${layer} layer (${existing.sourcePath}, ${rule.sourcePath})`,
-        );
-        continue;
-      }
-      byId.set(rule.id, rule);
-    }
-  }
-
-  // 2. Config overrides (merged project+local values; local restrictions here).
-  const resolved: Rule[] = [];
-  for (const rule of byId.values()) {
-    const override: RuleOverride | undefined = config.rules[rule.id];
-    if (!override) {
-      resolved.push(rule);
+  // 1. Index rule files per layer (duplicate ids within a layer are errors).
+  const byLayer: Record<RuleLayer, Map<string, Rule>> = {
+    builtin: new Map(),
+    project: new Map(),
+    user: new Map(),
+  };
+  for (const rule of rawRules) {
+    const layer = byLayer[rule.layer];
+    const existing = layer.get(rule.id);
+    if (existing) {
+      errors.push(
+        `duplicate rule id "${rule.id}" in ${rule.layer} layer (${existing.sourcePath}, ${rule.sourcePath})`,
+      );
       continue;
     }
-    const fromLocal = localRuleOverrides[rule.id];
-    let effective = { ...override };
-    if (fromLocal && rule.layer !== "user" && isWeakening(rule, fromLocal)) {
-      warnings.push(
-        `config.local: override would weaken blocking rule "${rule.id}" — severity/enabled ignored`,
-      );
-      const { severity: _s, enabled: _e, ...rest } = effective;
-      effective = rest;
+    layer.set(rule.id, rule);
+  }
+
+  const ids = new Set([...byLayer.builtin.keys(), ...byLayer.project.keys(), ...byLayer.user.keys()]);
+  const resolved: Rule[] = [];
+  for (const id of ids) {
+    const projectOverride = projectRuleOverrides[id];
+    // The shared layers: project replaces builtin freely, and the project
+    // config may override anything. This is what local layers must not weaken.
+    const shared = byLayer.project.get(id) ?? byLayer.builtin.get(id);
+    const baseline = shared ? withOverride(shared, projectOverride) : undefined;
+
+    // 2. A user rule file replaces the shared rule unless that weakens the baseline.
+    let effective = baseline;
+    const userRule = byLayer.user.get(id);
+    if (userRule) {
+      const candidate = withOverride(userRule, projectOverride);
+      const how = baseline ? weakening(baseline, candidate) : undefined;
+      if (how !== undefined && baseline) {
+        warnings.push(
+          `${userRule.sourcePath}: user rule would weaken ${baseline.layer} blocking rule "${id}" (${how}) — ignored`,
+        );
+      } else {
+        effective = candidate;
+      }
     }
-    resolved.push({
-      ...rule,
-      ...(effective.enabled !== undefined ? { enabled: effective.enabled } : {}),
-      ...(effective.severity !== undefined ? { severity: effective.severity } : {}),
-    });
+    if (!effective) continue;
+
+    // 3. Local config fields (user config.json not re-set by the project,
+    //    config.local.json) — checked against the baseline, i.e. the rule
+    //    AFTER the project config. The user's own additions (no baseline) are free.
+    const localOverride = localRuleOverrides[id];
+    if (localOverride) {
+      const candidate = withOverride(effective, localOverride);
+      const how = baseline ? weakening(baseline, candidate) : undefined;
+      if (how !== undefined) {
+        warnings.push(`local config: override would weaken blocking rule "${id}" (${how}) — severity/enabled ignored`);
+      } else {
+        effective = candidate;
+      }
+    }
+    resolved.push(effective);
   }
 
   resolved.sort((a, b) => a.id.localeCompare(b.id));

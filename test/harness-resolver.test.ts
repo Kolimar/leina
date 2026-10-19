@@ -162,6 +162,135 @@ describe("enforceability invariant across layers", () => {
     });
   }
 
+  // A user rule file restating a builtin blocking rule. `over` is merged on top
+  // of the shipped frontmatter of harness/tests-pass.
+  const userTestsPass = (over: Record<string, unknown>): string =>
+    jsonFrontmatterDoc(
+      {
+        id: "harness/tests-pass",
+        phase: "verify",
+        severity: "blocking",
+        gate: { type: "command", run: "npm test", expectExitCode: 0 },
+        ...over,
+      },
+      "# User restatement",
+    );
+
+  const builtinTestsPassGate = async (): Promise<unknown> =>
+    (await loadResolvedRules(repo.root)).rules.find((r) => r.id === "harness/tests-pass" && r.layer === "builtin")
+      ?.gate;
+
+  for (const [what, over] of [
+    ["downgrade to advisory", { severity: "advisory" }],
+    ["disable", { enabled: false }],
+    ["gate change", { gate: { type: "command", run: "true", expectExitCode: 0 } }],
+    ["phase change", { phase: "deliver" }],
+    ["scope change", { scope: { paths: ["nothing/**"] } }],
+  ] as const) {
+    it(`(inv-1) user rule file vs a BUILTIN blocking rule — ${what}: ignored with a warning`, async () => {
+      const shipped = await builtinTestsPassGate();
+      await repo.write("leina-home/harness/rules/tests-pass.md", userTestsPass(over));
+      const res = await loadResolvedRules(repo.root);
+      const rule = res.rules.find((r) => r.id === "harness/tests-pass");
+      assert.equal(rule?.layer, "builtin", what);
+      assert.deepEqual(rule?.gate, shipped, what);
+      assert.ok(res.warnings.some((w) => w.includes("harness/tests-pass") && w.includes("weaken")), what);
+    });
+  }
+
+  it("(inv-2) a user rule file may restate a blocking rule without weakening it (same gate/phase/scope)", async () => {
+    const shipped = await builtinTestsPassGate();
+    await repo.write(
+      "leina-home/harness/rules/tests-pass.md",
+      jsonFrontmatterDoc(
+        { id: "harness/tests-pass", phase: "verify", severity: "blocking", gate: shipped, tags: ["mine"] },
+        "# Same wall, my words",
+      ),
+    );
+    const res = await loadResolvedRules(repo.root);
+    const rule = res.rules.find((r) => r.id === "harness/tests-pass");
+    assert.equal(rule?.layer, "user");
+    assert.deepEqual(rule?.tags, ["mine"]);
+    assert.deepEqual(res.warnings, []);
+  });
+
+  it("(inv-3) config.local cannot demote a rule the PROJECT config promoted to blocking", async () => {
+    await repo.write(
+      ".harness/config.json",
+      JSON.stringify({ rules: { "harness/lint-clean": { severity: "blocking" } } }),
+    );
+    await repo.write(
+      ".harness/config.local.json",
+      JSON.stringify({ rules: { "harness/lint-clean": { severity: "advisory" } } }),
+    );
+    const res = await loadResolvedRules(repo.root);
+    const rule = res.rules.find((r) => r.id === "harness/lint-clean");
+    assert.equal(rule?.severity, "blocking");
+    assert.ok(res.warnings.some((w) => w.includes("harness/lint-clean")));
+  });
+
+  it("(inv-4) a rejected local override keeps the project config's own fields", async () => {
+    await repo.write(
+      ".harness/config.json",
+      JSON.stringify({ rules: { "harness/lint-clean": { severity: "blocking" } } }),
+    );
+    await repo.write(
+      ".harness/config.local.json",
+      JSON.stringify({ rules: { "harness/lint-clean": { enabled: false } } }),
+    );
+    const res = await loadResolvedRules(repo.root);
+    const rule = res.rules.find((r) => r.id === "harness/lint-clean");
+    assert.equal(rule?.severity, "blocking", "project promotion survives");
+    assert.equal(rule?.enabled, true);
+  });
+
+  it("(inv-5) a user rule file cannot weaken a rule the project config promoted to blocking", async () => {
+    await repo.write(
+      ".harness/config.json",
+      JSON.stringify({ rules: { "harness/lint-clean": { severity: "blocking" } } }),
+    );
+    await repo.write(
+      "leina-home/harness/rules/lint-clean.md",
+      jsonFrontmatterDoc(
+        { id: "harness/lint-clean", phase: "verify", severity: "advisory", gate: { type: "command", run: "true", expectExitCode: 0 } },
+        "# Swap the gate",
+      ),
+    );
+    const res = await loadResolvedRules(repo.root);
+    const rule = res.rules.find((r) => r.id === "harness/lint-clean");
+    assert.equal(rule?.layer, "builtin");
+    assert.notEqual((rule?.gate as { run?: string }).run, "true");
+    assert.ok(res.warnings.some((w) => w.includes("harness/lint-clean")));
+  });
+
+  it("(inv-6) a project config field beats the user config without a spurious warning", async () => {
+    await repo.write(
+      "leina-home/harness/config.json",
+      JSON.stringify({ rules: { "harness/tests-pass": { enabled: false } } }),
+    );
+    await repo.write(
+      ".harness/config.json",
+      JSON.stringify({ rules: { "harness/tests-pass": { enabled: true } } }),
+    );
+    const res = await loadResolvedRules(repo.root);
+    assert.equal(res.rules.find((r) => r.id === "harness/tests-pass")?.enabled, true);
+    assert.deepEqual(res.warnings, []);
+  });
+
+  it("(inv-7) local layers may still disable the user's OWN additions", async () => {
+    await repo.write(
+      "leina-home/harness/rules/mine.md",
+      jsonFrontmatterDoc(
+        { id: "user/mine", phase: "verify", severity: "blocking", gate: { type: "file", path: "x", exists: true } },
+        "# Mine",
+      ),
+    );
+    await repo.write(".harness/config.local.json", JSON.stringify({ rules: { "user/mine": { enabled: false } } }));
+    const res = await loadResolvedRules(repo.root);
+    assert.equal(res.rules.find((r) => r.id === "user/mine")?.enabled, false);
+    assert.deepEqual(res.warnings, []);
+  });
+
   it("user-layer config.json is treated as local (cannot weaken)", async () => {
     await repo.write(
       "leina-home/harness/config.json",
