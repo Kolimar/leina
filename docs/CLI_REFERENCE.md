@@ -425,11 +425,17 @@ optionally carrying an executable **gate** (`command`, `file`, `diff`, `diff-con
 blocking project rule. See [concepts/07-harness.md](concepts/07-harness.md) for the model.
 
 All subcommands run against the repo root found upward from cwd (`.harness/` or `.git`).
+Usage errors — a flag without its value, an unknown sub-command — exit 2. Everything that
+runs unattended (the hooks, MCP `harness_verify`) and the `js`/`command` gates of
+project-layer rules only run in a workspace **trusted** on this machine by `leina init`
+(see [workspace trust](concepts/07-harness.md#workspace-trust--what-may-run-unattended)).
 
 ### `harness contract new --goal "<t>" [--type <t>] [--scope <glob>]... [--out-of-scope <glob>]... [--criterion <text>]... [--max-retries <n>]`
 Declare the task contract **before** starting a non-trivial task: goal, allowed scope
 globs, explicit out-of-scope globs, acceptance criteria, and the retry budget for the
-stop-hook loop (default 3). Records the current git HEAD as `baseRef` — the diff gates
+stop-hook loop — `--max-retries`, the blocks one stop chain may take before the stop gate
+yields: an integer 1–10, default 3 (anything else is rejected, as in MCP
+`harness_contract_new`). Records the current git HEAD as `baseRef` — the diff gates
 compare against it. Writes `.harness/state/current/contract.json` + `checklist.md`.
 Refuses to overwrite an active contract. Exit 2 on invalid usage.
 
@@ -446,31 +452,51 @@ Archive `state/current/` to `state/history/<timestamp>/` and close the contract.
 ### `harness verify [--json] [--phase p1,p2] [--rule <id>]`
 Run the gates (default phases: `verify,deliver`). **The exit code is the completion
 contract**: `0` = every blocking gate passed, `1` = blocking failure, `2` = engine/config
-error. Gates honor `onlyIfChanged` (skip when nothing relevant changed) and run in a
-bounded parallel pool. The report persists to `.harness/state/current/verify-report.json`;
-`--json` prints it to stdout.
+error or usage error (an unknown `--rule` id; MCP reports it as `isError`). A `--rule`
+that exists but does not apply to the run is a warning. Gates honor `onlyIfChanged` (skip
+when nothing relevant changed) and run in a bounded parallel pool. Changed files come from
+`git diff --relative`, so they are relative to the harness root (a monorepo package
+harness ignores changes outside its package). Outside a git repository verify warns and
+**fails closed**: `onlyIfChanged` gates run, path/language scoping is skipped, and blocking
+`diff-content` gates (and `diff` gates with a scope to check) report an error — a non-git
+directory must disable `harness/no-secrets`. Only a **full** run (no `--rule`, phases
+including `verify` and `deliver`) writes `.harness/state/current/verify-report.json`,
+with the `worktree` fingerprint the commit guard checks; a filtered run prints a stderr
+note and is not recorded. `--json` prints the report to stdout, `loadErrors` included.
 
 ### `harness sync [--check] [--force] [--platforms a,b]`  *(alias: `compile`)*
 Regenerate platform artifacts from the canonical rules: managed blocks in
 `AGENTS.md`/`CLAUDE.md`, Claude Code skills, Cursor `.mdc` rules + hooks, Windsurf/Devin
 rule mirrors, an OpenCode plugin. Detection is **evidence-based** (a platform is targeted
 only when `config.platforms` names it, `--platforms` selects it, or the repo already
-carries its files — leina never elects a host for you). A lockfile
-(`.harness/harness.lock.json`) hashes every artifact: hand-edited files **conflict**
-instead of being clobbered (`--force` overrides). `--check` computes drift without
-writing — exit 1 on drift (CI mode). A hand-edited **orphaned** artifact (its rule or
-platform was removed) keeps conflicting on every run, including `--check`, until a human
-resolves it: delete the file/markers to keep the edits, or `--force` to discard them.
+carries its files — leina never elects a host for you). `--platforms a,b` regenerates
+only the named platforms (`agentsmd`, `claude-code`, `cursor`, `windsurf`, `opencode`)
+and leaves the others' artifacts alone; an unknown id exits 2 listing the valid ones. Only
+the committed layers are compiled (builtin + project rules, `.harness/config.json`): user
+rules/config and `config.local.json` apply to verify and the hooks, never to synced files.
+A lockfile (`.harness/harness.lock.json`) hashes every artifact: hand-edited files
+**conflict** instead of being clobbered (`--force` overrides). Its paths must be
+repo-relative — an absolute, `..`, NUL or `.git` path invalidates the whole lockfile, and a
+path resolving outside the repo through a symlink is refused, never followed. `--check`
+computes drift without writing — exit 1 on drift (CI mode). Orphans (a rule or platform
+removed) are deleted or stripped and reported as `removed` — orphaned harness entries in
+shared JSON (Cursor hooks, OpenCode instructions) included. A hand-edited **orphaned**
+artifact keeps conflicting on every run, including `--check`, until a human resolves it:
+delete the file/markers to keep the edits, or `--force` to discard them.
 
 ### `harness list [--phase <p>] [--tag <t>] [--json]`
 Resolved rules with source layer, phase, severity, gate types and enabled state.
 
 ### `harness hook <event>`
 Platform hook entry point (reads the event JSON on stdin): `session-start` (context
-injection), `pre-edit` / `pre-bash` (hard blocks, exit 2), `stop` (completion gate with a
-retry loop that **yields honestly** at the cap), `cursor-shell` / `cursor-after-edit` /
-`cursor-stop` (Cursor protocol), `idle`. Wired automatically by `leina init` for the
-chosen hosts; you rarely run it by hand.
+injection), `pre-edit` / `pre-bash` (hard blocks, exit 2), `stop` (completion gate: a
+fresh verify on every stop, blocking up to `maxRetries` times per stop chain, then it
+**yields honestly**), `cursor-shell` / `cursor-after-edit` / `cursor-stop` (Cursor
+protocol), `idle`. In a workspace not trusted on this machine it is a silent no-op
+(`cursor-shell` answers `allow`). An unreadable config makes `pre-edit` and the commit/push
+guard fail closed. Wired by `harness sync` for Cursor and OpenCode — including the sync
+`leina init` runs, when the repo already targets them; Claude Code and Devin/Windsurf get
+no such wiring, their enforcement rides the `agent-hook` gate. You rarely run it by hand.
 
 ---
 
@@ -571,7 +597,7 @@ takes an explicit `--hosts` (`devin`, `claude`) — leina never picks a host on 
 |---|---|---|---|
 | **Machine** (one-shot) | `setup` | `disable` | machine-wide: global share + symlinks + user-global config + blanket sentinel |
 | **Global** (granular) | `activate` | `deactivate` | machine-wide: global share + symlinks + user-global `Exec` grant + hooks |
-| **Repo** (granular) | `init` | `deinit` | one repo: consent flag (+ `AGENTS.md`/`.devin/*` when standalone) |
+| **Repo** (granular) | `init` | `deinit` | one repo: consent flag + workspace trust record (+ `AGENTS.md`/`.devin/*` when standalone) |
 | **Repo** | `build` | — | one repo: `graph.db` (on-demand) |
 
 **Blanket + tri-state consent.** `setup` turns on a machine-wide **blanket sentinel**
@@ -580,12 +606,24 @@ takes an explicit `--hosts` (`devin`, `claude`) — leina never picks a host on 
 
 - `unknown` (no flag) — the agent gate stays **silent** (no injection, no advisories); the
   `leina-setup` skill prompts the user once ("leina available — use this workspace?").
-- `enabled` — leina acts: gate injects memory + graph stats, advisories fire, and (under
-  blanket) the graph self-heals on `SessionStart`. Written by `init`.
+- `enabled` — leina acts (once the workspace is also trusted, see below): gate injects
+  memory + graph stats, advisories fire, and (under blanket) the graph self-heals on
+  `SessionStart`. Written by `init`.
 - `disabled` — permanent silent no-op. Written by `deinit`.
 
 A repo that has only a `.devin/hooks.v1.json` but no consent flag resolves to `unknown`, so it
 is re-prompted once rather than silently silenced.
+
+**Workspace trust.** The consent flag lives in the repo, so a clone could ship it `enabled`.
+What actually lets anything run — the agent gate's injection, advisories and self-heal, the
+harness hooks and their enforcement, MCP `harness_verify`, project-layer `js`/`command`
+gates — is an **out-of-repo** record, `$LEINA_HOME/trust/<sha256 of the repo root's
+realpath>`. `init` (FULL and LIGHT) writes it once consent is `enabled`, `deinit` removes
+it, `repair` never grants it. A workspace is trusted when the record exists and consent is
+not `disabled`; anywhere else the automated paths are silent no-ops (never errors) and
+project-layer executable gates are skipped with a visible result. A committed
+`.leina/consent` grants nothing, and a moved or re-cloned repo must be initialized again on
+that machine. `leina doctor` reports it as **workspace trust**.
 
 ### `setup --hosts devin,claude [--no-user-hooks] [--preset minimal|sdd|full] [--skills a,b|all|none] [--agents a,b|all|none] [--mcp --mcp-hosts <...>]`
 The one-shot "magic" command (once per machine). Composes `activate` (share + symlinks +
@@ -602,7 +640,8 @@ symlinks/grants/hooks. Idempotent (a second `disable` exits 0).
 
 ### `init <dir> [--hosts devin,claude] [--profile devin|windsurf] [--freshness auto|refuse] [--build] [--name <project-name>] [--mcp] [--claude-hooks] [--harness-preset generic|leina-native]`
 Per-repo opt-in — **adaptive** on whether blanket is active. Always writes the consent flag
-`enabled` and ensures the `.gitignore` block. Then:
+`enabled`, ensures the `.gitignore` block, and records **workspace trust** for this machine
+(a `workspace trust (<record path>)` line in the report). Then:
 
 - **LIGHT** (blanket active): nothing else, and it needs neither `--hosts` nor `--profile`. The
   machine-wide share/grant/hooks from `setup` already cover this repo, so `AGENTS.md` and
@@ -622,6 +661,9 @@ four leina-coupled builtin rules (`leina-*`) so the harness works without adopti
 leina; `leina-native` (the default) keeps the full builtin suite. An existing
 `.harness/config.json` is never overwritten — the flag is then ignored with a note. See
 [concepts/07-harness.md](concepts/07-harness.md#rule-presets--generic-vs-leina-native).
+`init` then runs the harness sync. With `--hosts` (FULL) in a repo whose config has no
+`platforms`, it pins `platforms` to those hosts' platforms plus whatever the lockfile and
+auto-detection already govern, so previously synced or detected platforms are kept.
 
 Example (standalone full init):
 
@@ -629,12 +671,18 @@ Example (standalone full init):
 leina init <dir> --hosts claude --profile devin
 ```
 
-### `deinit [dir]`
-Inverse of `init` (per repo). Writes the consent flag `disabled` and strip-inverse removes the
+### `deinit [--project <dir>]`
+Inverse of `init` (per repo; defaults to the current directory). Writes the consent flag
+`disabled`, removes this machine's workspace trust record, and strip-inverse removes the
 repo's managed artifacts: the `AGENTS.md` protocol block, the `.gitignore` block, the local
 `Exec` grant, and `.devin/hooks.v1.json`. User content outside the managed markers is preserved.
-Idempotent — when there is nothing to revert (e.g. after a LIGHT init) it exits 0 with a
-"nothing to revert" note.
+Harness artifacts go through the lockfile (owned files and blocks only while untouched;
+harness entries stripped from shared JSON — a file without any stays byte-identical, an
+edited one keeps its formatting — and every rewrite is atomic). The `.harness/config.json`
+`init` wrote is removed only while unchanged (provenance sha256 in
+`.leina/harness-config.sha256`) or `{}`, and an emptied `.harness/` is pruned. Idempotent —
+when there is nothing to revert (e.g. a second `deinit`) it exits 0 with a "nothing to
+revert" note.
 
 ### `activate --hosts devin,claude [--no-user-hooks] [--preset minimal|sdd|full] [--skills a,b|all|none] [--agents a,b|all|none] [--mcp --mcp-hosts <...>]`
 The global half of `setup` (once per machine), without flipping the blanket sentinel. Populate
@@ -666,7 +714,10 @@ trailing **info** section, and a final summary line. With `--json` emits the ful
 including the `repoIdentity` aggregate (`{projectKey, strategy, confidence: "high"|"medium"|"low",
 pathHash, rootCommit?, normalizedRemote?}`). `pathHash` is a cross-OS-deterministic SHA-256 of the
 normalised absolute path; `normalizedRemote` is the `host/org/repo` canonical form. `doctor` never
-changes its exit code (it is informational).
+changes its exit code (it is informational). The project group includes a **workspace trust**
+check: ok when trusted on this machine; warn when consent is `enabled` but there is no trust
+record (hint: re-run `leina init <root>`); info when consent is `disabled` or the repo was
+never initialized.
 
 ### `verify [dir] [--json]`
 Re-run the same checks as `doctor` but with an **actionable exit code** — exit `1` if any check
@@ -685,8 +736,8 @@ never installs something the user never asked for:
   consent is not `disabled` — a `deinit` opt-out is always respected. The original profile
   (Devin/Windsurf) is preserved.
 
-Never touches `graph.db` / `memory.db`. Ends by re-running doctor; remaining failures drive a
-non-zero exit.
+Never touches `graph.db` / `memory.db`, and deliberately never grants workspace trust (only
+an explicit `init` does). Ends by re-running doctor; remaining failures drive a non-zero exit.
 
 ### `tui [dir]`
 Interactive console. Menus for: status (doctor summary), install/update with **asset-group
@@ -707,17 +758,29 @@ TUI, …) resolve the same use cases without duplicating logic.
 ### `agent-hook <Event>` (alias: `devin-hook`)
 Host-neutral agent hook gate; reads the payload JSON on stdin (`devin-hook` is a compatibility
 alias — existing `.devin/hooks.v1.json` installs invoke it). Events: `PreToolUse`, `PostToolUse`,
-`UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`. **Advisory only** — never blocks.
-**Scope-aware**: the gate is a silent no-op unless the repo's consent flag is `enabled`, so a
-user-global hook stays quiet in repos that haven't opted in (`unknown`/`disabled`).
+`UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`. The advisory gate never blocks.
+**Scope-aware**: the gate is a silent no-op unless the repo's consent flag is `enabled` **and**
+the workspace is trusted on this machine (see *Workspace trust* above), so a user-global hook
+stays quiet in repos that haven't opted in (`unknown`/`disabled`) or that only carry a
+committed consent flag.
 
-**Auto-build self-heal (SessionStart)**: on every `SessionStart` **for a consented (`enabled`)
-repo**, if `graph.db` is absent or the manifest is stale, a detached `leina build` is spawned
-in the background before context injection runs. It never fires in `unknown`/`disabled` repos,
-so leina never builds a graph in a workspace you haven't opted into. A freshness nudge remains the
-fallback for the current session; the background build materialises a fresh graph for the next
-session. This is advisory/fail-open — any spawn error is silently swallowed and context injection
-proceeds normally. Suppress with `LEINA_DISABLE_AUTOBUILD=1`.
+**Harness enforcement branch**: in a trusted workspace the same entry point relays the
+harness decisions (see [concepts/07-harness.md](concepts/07-harness.md)). Writes to the
+harness rules/config/lockfile, `$LEINA_HOME/harness/` or `$LEINA_HOME/trust/` are always
+refused (`PreToolUse` exit 2); with an active contract, strictness `strict`, or an
+unreadable config, out-of-scope edits and `git commit`/`git push` over a failing verify
+(in strict mode: any edit without a contract, any commit without a fresh report) are
+refused too, `Stop` may return `{"decision":"block"}`, and `SessionStart` also injects the
+contract status and intake rules. A `UserPromptSubmit` opens a new stop chain.
+
+**Auto-build self-heal (SessionStart)**: on every `SessionStart` **for a consented (`enabled`),
+trusted repo**, if `graph.db` is absent or the manifest is stale, a detached `leina build` is
+spawned in the background before context injection runs. It never fires in `unknown`/`disabled`
+or untrusted repos, so leina never builds a graph in a workspace you haven't opted into on this
+machine. A freshness nudge remains the fallback for the current session; the background build
+materialises a fresh graph for the next session. This is advisory/fail-open — any spawn error is
+silently swallowed and context injection proceeds normally. Suppress with
+`LEINA_DISABLE_AUTOBUILD=1`.
 
 **Lock file**: both `init` and `SessionStart` auto-build coordinate via
 `.leina/graph.build.lock` (JSON `{ pid, startedAt }`), written with `O_EXCL` to serialise
