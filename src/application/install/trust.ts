@@ -18,6 +18,8 @@ import { join } from "node:path";
 import { trustStoreDir } from "../../infrastructure/install/share-paths.ts";
 import { readConsentFlag } from "./consent.ts";
 
+export { trustStoreDir };
+
 /** Realpath of `root` plus its record file; throws when `root` does not exist. */
 function trustRecord(root: string): { real: string; file: string } {
   const real = realpathSync(root);

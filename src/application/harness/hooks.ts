@@ -15,7 +15,8 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { type HarnessPorts } from "../../domain/harness/ports.ts";
 import { matchesAny } from "../../domain/harness/glob.ts";
-import { loadConfig } from "./config-io.ts";
+import { trustStoreDir } from "../install/trust.ts";
+import { loadConfig, userHarnessDir } from "./config-io.ts";
 import { loadContract, stateDir } from "./contract-io.ts";
 import { filterRules, loadResolvedRules } from "./resolver.ts";
 import { readJsonIfExists } from "./io.ts";
@@ -166,8 +167,47 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
   return decision;
 }
 
+/**
+ * User-level enforcement state OUTSIDE the repo: $LEINA_HOME/harness (user rules
+ * + config — the user layers of every repo's resolution) and the workspace trust
+ * store (where the harness runs at all). Agent-read-only like .harness/rules.
+ */
+function userIntegrityDirs(): string[] {
+  return [userHarnessDir(), trustStoreDir()];
+}
+
+async function realpathOrSelf(p: string): Promise<string> {
+  try {
+    return await fs.realpath(p);
+  } catch {
+    return p;
+  }
+}
+
+/** The user integrity dir `abs` falls in, if any (lexical and symlink-resolved). */
+async function userIntegrityHit(abs: string): Promise<string | undefined> {
+  const candidates = [abs, await realpathOrSelf(abs)];
+  for (const dir of userIntegrityDirs()) {
+    for (const base of [path.resolve(dir), await realpathOrSelf(dir)]) {
+      if (candidates.some((c) => c === base || c.startsWith(`${base}${path.sep}`))) return dir;
+    }
+  }
+  return undefined;
+}
+
 async function decidePreEditInner(repoRoot: string, filePath: string | undefined): Promise<PreDecision> {
   if (filePath === undefined || filePath.length === 0) return ALLOW;
+
+  const userHit = await userIntegrityHit(path.resolve(repoRoot, filePath));
+  if (userHit !== undefined) {
+    return {
+      block: true,
+      message:
+        `BLOCKED: ${filePath} is under ${userHit} (user-level harness rules/config or workspace ` +
+        "trust) and is agent-read-only. Change it through `leina` commands driven by a human. " +
+        "Do not modify the harness to get past a gate.",
+    };
+  }
 
   const rel = repoRelative(repoRoot, filePath);
   if (rel.startsWith("..")) return ALLOW; // outside the repo — not ours to police
@@ -384,12 +424,18 @@ function gitCommitOrPush(command: string, depth = 0): "commit" | "push" | undefi
  * it does not make the files unwritable for a determined agent.
  */
 const INTEGRITY_PATH_RE = /\.harness(?!\/state\b)[\w./-]*/;
+// The user-level harness and trust store (see userIntegrityDirs) in the forms a
+// command usually spells them: ~/.leina/…, $LEINA_HOME/…, ${LEINA_HOME}/….
+const USER_INTEGRITY_PATH_RE = /(?:\.leina|\$\{?LEINA_HOME\}?)\/(?:harness|trust)\b[\w./-]*/;
 const WRITE_HINT_RE = /(?:>|\b(?:tee|sed|mv|cp|rm|dd|truncate|ln|install|rsync|chmod|chown|sponge)\b)/;
 
 function writesIntegrityPaths(command: string): string | undefined {
-  const match = INTEGRITY_PATH_RE.exec(command);
-  if (match === null) return undefined;
-  return WRITE_HINT_RE.test(command) ? match[0] : undefined;
+  const match =
+    INTEGRITY_PATH_RE.exec(command)?.[0] ??
+    USER_INTEGRITY_PATH_RE.exec(command)?.[0] ??
+    userIntegrityDirs().find((dir) => command.includes(dir));
+  if (match === undefined) return undefined;
+  return WRITE_HINT_RE.test(command) ? match : undefined;
 }
 
 interface PersistedSummary {

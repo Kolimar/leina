@@ -210,6 +210,43 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
     assert.match(run.stderr, /agent-read-only/);
   });
 
+  it("(integrity-user-1) pre-edit: the user-level harness and the trust store are agent-read-only", async () => {
+    // $LEINA_HOME/harness feeds the user rule/config layers of EVERY repo, and
+    // $LEINA_HOME/trust decides where the harness runs — outside the repo, but ours.
+    for (const target of [
+      path.join(leinaHome, "harness", "rules", "tests-pass.md"),
+      path.join(leinaHome, "harness", "config.json"),
+      path.join(leinaHome, "trust", "0123abcd"),
+    ]) {
+      const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Write", tool_input: { file_path: target } });
+      assert.deepEqual(run.result, { handled: true, exitCode: 2 }, target);
+      assert.match(run.stderr, /agent-read-only/, target);
+    }
+    const elsewhere = await gate({
+      hook_event_name: "PreToolUse",
+      tool_name: "Write",
+      tool_input: { file_path: path.join(os.tmpdir(), "unrelated-notes.md") },
+    });
+    assert.deepEqual(elsewhere.result, { handled: false, exitCode: 0 }, "other outside paths stay unpoliced");
+  });
+
+  it("(integrity-user-2) pre-bash: shell writes to the user-level harness are blocked, reads allowed", async () => {
+    for (const command of [
+      `echo weak > ${path.join(leinaHome, "harness", "rules", "x.md")}`,
+      "sed -i s/blocking/advisory/ ~/.leina/harness/config.json",
+      'rm -rf "$LEINA_HOME/harness"',
+    ]) {
+      const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+      assert.deepEqual(run.result, { handled: true, exitCode: 2 }, command);
+    }
+    const read = await gate({
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_input: { command: `cat ${path.join(leinaHome, "harness", "config.json")}` },
+    });
+    assert.deepEqual(read.result, { handled: false, exitCode: 0 });
+  });
+
   it("pre-bash: git commit with blocking failures in the report → BLOCK (exit 2)", async () => {
     await repo.write(
       ".harness/state/current/verify-report.json",
