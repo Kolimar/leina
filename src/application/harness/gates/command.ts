@@ -4,6 +4,7 @@
 // engine does not wrap it again.
 
 import { type CommandGate } from "../../../domain/harness/model.ts";
+import { matchLinesBounded } from "./engine.ts";
 import { type GateContext, type GateOutcome } from "./types.ts";
 
 const OUTPUT_LIMIT = 4000;
@@ -29,14 +30,17 @@ export async function runCommandGate(gate: CommandGate, ctx: GateContext): Promi
     };
   }
   if (gate.expectStdoutMatch !== undefined) {
-    let re: RegExp;
-    try {
-      // eslint-disable-next-line security/detect-non-literal-regexp -- pattern comes from trusted rule files (.harness/rules/, bundled assets), invalid patterns map to an error outcome
-      re = new RegExp(gate.expectStdoutMatch);
-    } catch (err) {
-      return { status: "error", detail: `invalid expectStdoutMatch regex: ${(err as Error).message}` };
+    // Rule-supplied regex, evaluated inside a vm hard timeout (matchLinesBounded):
+    // a catastrophic pattern blocks the event loop synchronously, past every
+    // cooperative timeout — the process runner's own timeout has already been
+    // consumed by the command by this point. Bounded by the gate's own timeout
+    // (capped at the helper's 5s default). Invalid pattern or a timed-out
+    // evaluation both map to an error outcome (fail-closed on blocking rules).
+    const evaluated = matchLinesBounded(gate.expectStdoutMatch, "", [result.stdout], Math.min(timeout, 5000));
+    if ("error" in evaluated) {
+      return { status: "error", detail: `invalid expectStdoutMatch regex: ${evaluated.error}` };
     }
-    if (!re.test(result.stdout)) {
+    if (evaluated.matches.length === 0) {
       return { status: "fail", detail: `stdout did not match /${gate.expectStdoutMatch}/`, output };
     }
   }

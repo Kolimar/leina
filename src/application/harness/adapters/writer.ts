@@ -11,6 +11,7 @@
 
 import path from "node:path";
 import fs from "node:fs/promises";
+import crypto from "node:crypto";
 import { harnessDir } from "../config-io.ts";
 import { readJsonIfExists, readTextIfExists } from "../io.ts";
 import { blockHandEdited, removeManagedBlock, sha256, upsertManagedBlock } from "./managed-block.ts";
@@ -76,17 +77,48 @@ export async function readLockfile(repoRoot: string): Promise<Lockfile | undefin
 }
 
 /**
+ * Atomic write for files the USER co-owns (CLAUDE.md, opencode.json,
+ * .cursor/hooks.json, the lockfile): write to a temp file in the SAME
+ * directory, then rename over the target — rename(2) is atomic on POSIX, so a
+ * crash mid-write can never leave a truncated half-file behind. Permissions:
+ * an explicit `mode` wins; otherwise an existing target's mode is preserved
+ * (rename would silently replace it with the temp file's default).
+ */
+export async function writeFileAtomic(absolute: string, content: string, mode?: number): Promise<void> {
+  let finalMode = mode;
+  if (finalMode === undefined) {
+    try {
+      finalMode = (await fs.stat(absolute)).mode & 0o7777;
+    } catch {
+      // new file — platform default (umask) applies
+    }
+  }
+  const tmp = path.join(
+    path.dirname(absolute),
+    `.${path.basename(absolute)}.harness-tmp-${crypto.randomBytes(6).toString("hex")}`,
+  );
+  try {
+    await fs.writeFile(tmp, content, "utf8");
+    if (finalMode !== undefined) await fs.chmod(tmp, finalMode);
+    await fs.rename(tmp, absolute);
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
+}
+
+/**
  * After a managed block is stripped: a file that held nothing but the harness
  * block is a husk once the block is gone — remove it (and prune now-empty
  * parents) rather than leaving a 1-byte shell; otherwise write the remaining
- * content back.
+ * content back atomically.
  */
 async function finalizeStrippedFile(repoRoot: string, absolute: string, content: string): Promise<void> {
   if (content.trim() === "") {
     await fs.rm(absolute);
     await pruneEmptyDirs(repoRoot, absolute);
   } else {
-    await fs.writeFile(absolute, content, "utf8");
+    await writeFileAtomic(absolute, content);
   }
 }
 
@@ -328,8 +360,7 @@ export async function applyFileSets(
 
       if (!options.check && finalContent !== undefined && item.action !== "unchanged") {
         await fs.mkdir(path.dirname(absolute), { recursive: true });
-        await fs.writeFile(absolute, finalContent, "utf8");
-        if (file.mode !== undefined) await fs.chmod(absolute, file.mode);
+        await writeFileAtomic(absolute, finalContent, file.mode);
       }
 
       if (finalContent !== undefined) {
@@ -362,7 +393,8 @@ export async function applyFileSets(
   if (!options.check) {
     const lockfile: Lockfile = { version: 1, sourceHash: options.sourceHash, artifacts: newArtifacts };
     await fs.mkdir(harnessDir(repoRoot), { recursive: true });
-    await fs.writeFile(lockfilePath(repoRoot), `${JSON.stringify(lockfile, null, 2)}\n`, "utf8");
+    // Atomic too: a truncated lockfile would orphan every managed artifact.
+    await writeFileAtomic(lockfilePath(repoRoot), `${JSON.stringify(lockfile, null, 2)}\n`);
   }
 
   return { items, driftCount, conflictCount };

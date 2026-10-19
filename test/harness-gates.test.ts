@@ -270,7 +270,11 @@ describe("diff-content gate", () => {
       ctx(),
     );
     assert.equal(hit.status, "fail");
-    assert.ok(hit.output?.includes("apiKey"));
+    // Location + masked prefix only — the offending line is never echoed
+    // (a matched secret must not flow into the report/model context).
+    assert.ok(hit.output?.includes("src/app.ts:2"), hit.output);
+    assert.ok(hit.output?.includes("api***"), hit.output);
+    assert.ok(!hit.output?.includes("sk_live_x"));
 
     await repo.write("src/app.ts", "export const app = 2;\n");
     const clean = await runDiffContentGate(
@@ -288,7 +292,9 @@ describe("diff-content gate", () => {
         ctx(),
       );
       assert.equal(hit.status, "fail");
-      assert.ok(hit.output?.includes("sk_live_untracked_secret_x"));
+      // The untracked file IS scanned, but its content is reported masked.
+      assert.ok(hit.output?.includes("src/fresh-file.ts:1"), hit.output);
+      assert.ok(!hit.output?.includes("sk_live_untracked_secret_x"));
     } finally {
       repo.git("clean", "-fq", "--", "src/fresh-file.ts");
     }

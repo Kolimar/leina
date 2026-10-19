@@ -427,6 +427,19 @@ export type StopDecision =
   | { kind: "yield"; message: string }
   | { kind: "block"; reason: string };
 
+/**
+ * Hard ceiling on contract.maxRetries. The contract file lives in gitignored
+ * state but can be force-committed, so a hostile/typo'd value must not be able
+ * to extend the Stop-block loop unboundedly. Floored at 0 (yield immediately),
+ * non-finite values fall back to the default of 3.
+ */
+const MAX_RETRIES_CAP = 10;
+
+function effectiveMaxRetries(declared: number | undefined): number {
+  if (typeof declared !== "number" || !Number.isFinite(declared)) return 3;
+  return Math.min(Math.max(Math.trunc(declared), 0), MAX_RETRIES_CAP);
+}
+
 export async function decideStop(
   repoRoot: string,
   ports: HarnessPorts,
@@ -435,7 +448,7 @@ export async function decideStop(
   if (stopHookActive) return { kind: "allow" }; // we are already the blocker — never loop
 
   const { contract } = await loadContract(repoRoot);
-  const maxRetries = contract?.maxRetries ?? 3;
+  const maxRetries = effectiveMaxRetries(contract?.maxRetries);
   const retries = await readRetries(repoRoot);
 
   if (retries >= maxRetries) {

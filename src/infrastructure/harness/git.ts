@@ -6,7 +6,7 @@
 // All methods are fail-soft: any git error maps to undefined/null/empty per
 // the port contract — the gates decide how to degrade (skip vs error).
 
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { safeGitOutput } from "../install/safe-exec.ts";
 import { type GitDiffOptions, type GitPort } from "../../domain/harness/ports.ts";
@@ -102,7 +102,15 @@ async function untrackedAsAddedLines(repoRoot: string, paths?: string[]): Promis
     let content: string;
     try {
       const absolute = join(repoRoot, rel);
-      const info = await stat(absolute);
+      // lstat, NOT stat: an untracked symlink pointing outside the repo
+      // (~/.ssh/id_rsa, ~/.leina/.env) must never have its TARGET read into
+      // the synthetic diff — that would dump the secret into
+      // verify-report.json and the model context. A tracked symlink is safe
+      // (git diff shows the target path, not the content); the untracked scan
+      // is the only place we read file bodies ourselves, so skip links here.
+      const info = await lstat(absolute);
+      if (info.isSymbolicLink()) continue;
+      if (!info.isFile()) continue; // FIFO/socket/device — readFile could block forever
       if (info.size > UNTRACKED_MAX_BYTES) {
         skipped.push(`${rel} (larger than ${UNTRACKED_MAX_BYTES} bytes)`);
         continue;

@@ -3,6 +3,7 @@
 // `serial` run one at a time afterwards. Fail-closed: an `error`/`timeout`
 // on a blocking rule counts as a blocking failure downstream.
 
+import vm from "node:vm";
 import { type Gate, type Rule, gatesOf } from "../../../domain/harness/model.ts";
 import { anyFileMatches } from "../../../domain/harness/glob.ts";
 import { runCommandGate } from "./command.ts";
@@ -35,6 +36,10 @@ async function dispatch(gate: Gate, ctx: GateContext): Promise<GateOutcome> {
   }
 }
 
+// TODO: withTimeout is cooperative — it resolves the race but cannot cancel
+// the underlying gate work (a stuck fs call or js gate keeps running until the
+// process exits). Acceptable for verify's process lifetime; revisit if gates
+// ever run inside a long-lived daemon.
 function withTimeout(promise: Promise<GateOutcome>, ms: number): Promise<GateOutcome> {
   let timer: NodeJS.Timeout;
   return Promise.race([
@@ -44,6 +49,56 @@ function withTimeout(promise: Promise<GateOutcome>, ms: number): Promise<GateOut
       timer.unref?.();
     }),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// Bounded regex evaluation — rule-supplied patterns are attacker-influenced
+// (they travel with the repo). Catastrophic backtracking (ReDoS) blocks the
+// event loop SYNCHRONOUSLY, so a Promise.race timeout like withTimeout above
+// can never fire against it; a vm script timeout interrupts V8 execution and
+// can. The pattern is passed as DATA (a context binding), never concatenated
+// into the script source.
+// ---------------------------------------------------------------------------
+
+const REGEX_EVAL_TIMEOUT_MS = 5000;
+
+export interface BoundedRegexMatch {
+  /** Index into the `lines` argument. */
+  index: number;
+  /** First 3 chars of the match + "***" — never the full matched text. */
+  masked: string;
+}
+
+/**
+ * Compile `pattern` and exec it against every line, all inside a vm script
+ * with a hard timeout. Returns per-line matches with a MASKED excerpt only —
+ * callers surfacing gate output must never re-emit the matched text (the
+ * no-secrets gate would echo the very secret it caught). Invalid patterns and
+ * timeouts map to `{ error }` — the caller decides the gate outcome.
+ */
+export function matchLinesBounded(
+  pattern: string,
+  flags: string,
+  lines: readonly string[],
+  timeoutMs = REGEX_EVAL_TIMEOUT_MS,
+): { matches: BoundedRegexMatch[] } | { error: string } {
+  const sandbox = { pattern, flags, lines, out: [] as BoundedRegexMatch[] };
+  try {
+    vm.runInNewContext(
+      "const re = new RegExp(pattern, flags);" +
+        "for (let i = 0; i < lines.length; i += 1) {" +
+        "  const m = re.exec(lines[i]);" +
+        "  if (m !== null) out.push({ index: i, masked: m[0].slice(0, 3) + '***' });" +
+        "}",
+      sandbox,
+      { timeout: Math.max(1, Math.round(timeoutMs)) },
+    );
+    // Re-create the result objects in THIS realm — vm-born objects carry the
+    // sandbox's prototypes, which trips deep-equality and instanceof checks.
+    return { matches: sandbox.out.map((m) => ({ index: m.index, masked: m.masked })) };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
 }
 
 export function plannedRuns(rules: Rule[]): GateRun[] {
