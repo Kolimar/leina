@@ -149,6 +149,8 @@ test("(bg-6) spawner receives correct cmd, args [...cliBase.args,'build',root], 
     assert.deepEqual(capturedArgs, [...FAKE_CLI_BASE.args, "build", absRoot]);
     assert.equal(capturedOpts.detached, true, "detached:true");
     assert.equal(capturedOpts.stdio, "ignore", "stdio:ignore");
+    assert.equal(capturedOpts.cwd, absRoot, "runs in the project, not the hook's directory");
+    assert.equal(capturedOpts.windowsHide, true, "no console window on Windows");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

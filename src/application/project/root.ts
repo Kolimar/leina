@@ -30,7 +30,9 @@ function ancestors(start: string): string[] {
 
 function realOrSelf(p: string): string {
   try {
-    return realpathSync(p);
+    // Windows: the native call expands 8.3 short names (RUNNER~1) and fixes the case, so a
+    // path git wrote (long names, `C:/…`) and one from the temp dir or cwd compare equal.
+    return process.platform === "win32" ? realpathSync.native(p) : realpathSync(p);
   } catch {
     return resolve(p);
   }

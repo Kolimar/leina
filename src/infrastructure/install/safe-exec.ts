@@ -30,6 +30,22 @@ const SAFE_PATH_DIRS: readonly string[] = (() => {
   return ["/usr/bin", "/bin", "/usr/local/bin", "/usr/sbin", "/sbin"];
 })();
 
+/**
+ * The variables a Windows process needs to start at all (SYSTEMROOT, WINDIR) and git needs to
+ * find the user's config and temp dir there (no HOME by default). Passed through as-is; only
+ * PATH is the CWE-426 concern, and it stays pinned to SAFE_PATH.
+ */
+const WIN_BASE_ENV_KEYS = ["SYSTEMROOT", "WINDIR", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "TEMP", "TMP"] as const;
+
+function baseEnv(): NodeJS.ProcessEnv {
+  if (process.platform !== "win32") return {};
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of WIN_BASE_ENV_KEYS) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  return env;
+}
+
 /** Joined PATH string using the platform separator. */
 export const SAFE_PATH: string = SAFE_PATH_DIRS.join(
   process.platform === "win32" ? ";" : ":",
@@ -87,7 +103,7 @@ export function safeGitRawOutput(
       timeout: 2000,
       ...opts,
       encoding: "utf8",
-      env: { ...opts?.env, PATH: SAFE_PATH },
+      env: { ...baseEnv(), ...opts?.env, PATH: SAFE_PATH },
     });
   } catch {
     return null;

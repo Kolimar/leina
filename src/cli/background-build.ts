@@ -51,6 +51,7 @@ const POLL_INTERVAL_MS = 500;
 const MAX_IMMEDIATE_RETRIES = 8;
 
 const CREATE_FLAGS = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL;
+const WIN_BUSY_CODES: ReadonlySet<string> = new Set(["EPERM", "EACCES", "EBUSY"]);
 
 export function buildLockPath(root: string): string {
   return join(resolvePath(root), ".leina", "graph.build.lock");
@@ -109,6 +110,9 @@ function createExclusive(lockPath: string, content: string): boolean {
     fd = openSync(lockPath, CREATE_FLAGS);
   } catch (err) {
     if (errCode(err) === "EEXIST") return false;
+    // Windows refuses to create a file another process is renaming or deleting (a reclaim or
+    // release in flight) with EPERM/EACCES/EBUSY instead of EEXIST: also "held", retried.
+    if (process.platform === "win32" && WIN_BUSY_CODES.has(errCode(err) ?? "")) return false;
     throw err;
   }
   try {
@@ -351,7 +355,9 @@ export function spawnDetachedBuild(root: string, opts?: SpawnDetachedOpts): Back
 
     let child: { pid?: number; unref(): void };
     try {
-      child = spawner(cliBase.command, args, { detached: true, stdio: "ignore" });
+      // cwd: the project, not the hook's directory, which a running child would pin (Windows
+      // cannot delete a live process's cwd); windowsHide: no console window per session start.
+      child = spawner(cliBase.command, args, { detached: true, stdio: "ignore", cwd: resolvePath(root), windowsHide: true });
     } catch {
       releaseBuildLock(root); // nothing will build — free the lock for the next run
       return "failed";
