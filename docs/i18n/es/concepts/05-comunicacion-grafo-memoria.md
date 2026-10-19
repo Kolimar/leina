@@ -110,7 +110,7 @@ archivo no es drift para la nota. (Un node que desapareció sí cuenta.)
 ### Actualizar anchors previos a 3.0: `memory reanchor`
 
 Antes de 3.0 cada anchor guardaba el hash del archivo entero, así que cualquier edición en
-cualquier parte del archivo marcaba la nota. `leina memory reanchor <dir>` actualiza esos anchors
+cualquier parte del archivo marcaba la nota. `leina memory reanchor [<dir>]` actualiza esos anchors
 en el lugar a huellas de símbolo **sin mover su línea base**: el hash guardado identifica una
 versión exacta del archivo — el working tree si no cambió, si no un commit encontrado recorriendo
 la historia de ese archivo en cualquier ref (de más nuevo a más viejo, últimos 300 commits) — y

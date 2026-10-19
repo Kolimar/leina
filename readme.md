@@ -198,10 +198,10 @@ leina activate --hosts devin,claude
 
 ```bash
 # build the graph for a project (writes <dir>/.leina/graph.db + manifest)
-leina build <dir> [--json]          # --json also writes a portable graph.json
-leina build <dir> --profile         # stage timings (tree-sitter files reuse the per-file
+leina build [<dir>] [--json]        # --json also writes a portable graph.json
+leina build [<dir>] --profile       # stage timings (tree-sitter files reuse the per-file
                                     # cache; ts-morph always re-runs whole-program)
-leina refresh <dir>                 # force a full rebuild
+leina refresh [<dir>]               # force a full rebuild
 
 # diagnose health: node version, parser wasm assets, global share freshness, host symlinks,
 # and the project (graph freshness, AGENTS.md/.gitignore/.devin wiring). Exits non-zero if
@@ -213,11 +213,11 @@ leina doctor [<dir>]
 leina repair [<dir>]
 
 # inspect — query/affected/path auto-rebuild a stale graph before answering
-leina stats <dir>                    # node/edge counts + confidence breakdown
-leina status <dir>                   # freshness: is the graph stale vs the code?
-leina affected <dir> "<symbol>"     # blast radius: who depends on it
-leina path <dir> "<a>" "<b>"        # shortest path between two symbols
-leina query <dir> "a question"      # term-scored subgraph
+leina stats [<dir>]                  # node/edge counts + confidence breakdown
+leina status [<dir>]                 # freshness: is the graph stale vs the code?
+leina affected [<dir>] "<symbol>"   # blast radius: who depends on it
+leina path [<dir>] "<a>" "<b>"      # shortest path between two symbols
+leina query [<dir>] "a question"    # relevance-ranked subgraph
 ```
 
 ### Memory
@@ -226,21 +226,21 @@ Global DB: `~/.leina/memory.db` (honoring `$LEINA_HOME`), keyed by project. Alwa
 no init required — any directory works, even ones without a git repo.
 
 ```bash
-leina memory save <dir> --title "..." --content "..." [--type decision] [--topic key] [--anchors a,b]
-leina memory update <dir> <id> [--title ..] [--content ..] [--type ..]
-leina memory search <dir> "a question" [--type ..] [--limit N]
-leina memory verified <dir> "a question"   # drift-classified: USABLE / WARNING / DO-NOT-USE
-leina memory get <dir> <id>
-leina memory context <dir>
-leina memory session <dir> --content "..." [--title "..."]
-leina memory session-start <dir> [--title "..."]
-leina memory suggest-topic <dir> --title "..." [--type ..]
-leina memory current-project <dir>         # show derived project key + detection method
-leina memory merge-projects <dir> --from <old-key> --to <new-key> [--dry-run]
+leina memory save [<dir>] --title "..." --content "..." [--type decision] [--topic key] [--anchors a,b]
+leina memory update [<dir>] <id> [--title ..] [--content ..] [--type ..]
+leina memory search [<dir>] "a question" [--type ..] [--limit N]
+leina memory verified [<dir>] "a question"   # drift-classified: USABLE / WARNING / DO-NOT-USE
+leina memory get [<dir>] <id>
+leina memory context [<dir>]
+leina memory session [<dir>] --content "..." [--title "..."]
+leina memory session-start [<dir>] [--title "..."]
+leina memory suggest-topic [<dir>] --title "..." [--type ..]
+leina memory current-project [<dir>]       # show derived project key + detection method
+leina memory merge-projects [<dir>] --from <old-key> --to <new-key> [--dry-run]
 # Portable memory: decisions travel WITH the repo (no server). `sync` merges the committable
 # snapshot .leina/memory-export.jsonl both ways; export/import move JSONL between machines.
-leina memory sync <dir>                    # absorb + rewrite the snapshot; commit it
-leina memory export <dir> --out mem.jsonl / memory import <dir> --in mem.jsonl
+leina memory sync [<dir>]                  # absorb + rewrite the snapshot; commit it
+leina memory export [<dir>] --out mem.jsonl / memory import [<dir>] --in mem.jsonl
 # memory scopes: --scope project (default) | personal | workspace | path | skill | process |
 #                technology | security | infra   (search defaults to project; pass --scope to widen)
 ```
@@ -345,19 +345,19 @@ leina capabilities list [--json]    # the 22 transport-agnostic capabilities + s
 ### Impact / audit / events
 
 ```bash
-leina impact analyze <dir> "<symbol>" [--json]   # code→test→config→service blast radius
-leina audit <dir> [--format md|json|html]        # source→sink candidate paths + findings[]
-leina events tail <dir> [--json]                 # local event outbox (off by default)
+leina impact analyze [<dir>] "<symbol>" [--json]   # code→test→config→service blast radius
+leina audit [<dir>] [--format md|json|html]      # source→sink candidate paths + findings[]
+leina events tail [<dir>] [--json]               # local event outbox (off by default)
 ```
 
 ### Visualize / multi-repo workspaces
 
 ```bash
-leina visualize <dir> [--out <path>]             # interactive offline HTML graph viewer
-leina workspace build <dir>                      # merged graph across member repos
-leina workspace status|detect <dir>              # per-member freshness / detection JSON
-leina workspace memory context|search <dir>      # federated memory across members
-leina workspace visualize <dir> [--drilldown]    # constellation (repos as super-nodes)
+leina visualize [<dir>] [--out <path>]           # interactive offline HTML graph viewer
+leina workspace build [<dir>]                    # merged graph across member repos
+leina workspace status|detect [<dir>]            # per-member freshness / detection JSON
+leina workspace memory context|search [<dir>]    # federated memory across members
+leina workspace visualize [<dir>] [--drilldown]  # constellation (repos as super-nodes)
 ```
 
 > `visualize` writes a **static, shareable `.html` file** for one project. For a **live local
@@ -417,8 +417,8 @@ all-or-nothing transaction.
 
 ```bash
 echo '[{"title":"a","content":"x"},{"title":"b","content":"y"}]' \
-  | leina memory save <dir> --batch --atomic
-echo '["id1","id2"]' | leina memory get <dir> --batch
+  | leina memory save [<dir>] --batch --atomic
+echo '["id1","id2"]' | leina memory get [<dir>] --batch
 ```
 
 ### Freshness
@@ -463,7 +463,7 @@ freshness without rebuilding; `refresh` forces a rebuild.
 `memory save` resolves `--anchors a,b` to real graph nodes so `memory verified` can later
 re-check each saved observation against the live graph (drift detection). Pass `--topic <key>`
 to evolve an existing entry in place instead of creating a duplicate. Already have
-observations saved without `--anchors`? `memory reanchor <dir> [--dry-run]` retro-anchors
+observations saved without `--anchors`? `memory reanchor [<dir>] [--dry-run]` retro-anchors
 them by extracting only *explicit* path/symbol references from their text and verifying each
 candidate against the live graph — ambiguous or unresolved mentions are discarded, never
 guessed. It also upgrades whole-file anchors saved before 3.0 to symbol fingerprints (from
@@ -473,7 +473,7 @@ safe.
 ### Graph explorer server (`graph serve`)
 
 ```bash
-leina graph serve <dir> [--port 7423] [--host 127.0.0.1]
+leina graph serve [<dir>] [--port 7423] [--host 127.0.0.1]
 ```
 
 A read-only, foreground `node:http` server (zero new dependencies) over the same graph +
@@ -498,7 +498,7 @@ layer does — decisions, bug root-causes and discoveries persist across session
 `~/.leina/memory.db` (or `$LEINA_HOME/memory.db`), keyed by a
 **stable project key** derived automatically from the git remote URL, repo root
 basename, or directory name. No `init` is required — `memory save` works in any
-directory. Use `memory current-project <dir>` to inspect the derived key. Lock it
+directory. Use `memory current-project [<dir>]` to inspect the derived key. Lock it
 permanently with `init --name <name>` (writes `.leina/config.json`,
 committable, takes priority over all detection steps).
 
@@ -515,7 +515,7 @@ detection is what keeps recalled context trustworthy.
 
 **Migrating from the old per-repo layout.** Memory now lives only in the global DB;
 a `<dir>/.leina/memory.db` from an earlier version is simply ignored (never read),
-and `leina doctor <dir>` warns when it finds one so you can remove it. The file is
+and `leina doctor [<dir>]` warns when it finds one so you can remove it. The file is
 left untouched.
 
 ## Languages

@@ -26,7 +26,7 @@ or renaming anything, map the blast radius:
 
 - `leina affected . <symbol|file>` — everything that transitively depends on it.
 - `leina impact analyze . <symbol>` — impact classified into files, tests, services, configs.
-- `leina query . "<question>"` — term-scored subgraph when you don't know where to look.
+- `leina query . "<question>"` — relevance-ranked subgraph when you don't know where to look.
 
 Reflect what you find in your plan (files to touch and files at risk). The
 graph is kept trustworthy by the `leina-graph-fresh` verify gate — use it

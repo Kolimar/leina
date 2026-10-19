@@ -110,7 +110,7 @@ not count as `stale`. The symbols decide; an edit elsewhere in that file is not 
 ### Upgrading pre-3.0 anchors: `memory reanchor`
 
 Before 3.0 every anchor stored the whole file's hash, so any edit anywhere in the file flagged
-the note. `leina memory reanchor <dir>` upgrades those anchors in place to symbol fingerprints
+the note. `leina memory reanchor [<dir>]` upgrades those anchors in place to symbol fingerprints
 **without moving their baseline**: the saved hash identifies one exact version of the file — the
 working tree when it is unchanged, otherwise a commit found by walking that file's history on
 any ref (newest first, last 300 commits) — and the symbol is fingerprinted *in that version*.

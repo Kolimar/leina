@@ -341,7 +341,7 @@ export const capabilities: readonly CommandContract[] = [
   {
     capability: {
       id: "graph.query",
-      description: "Query the code knowledge graph by natural-language question. Returns a term-scored subgraph (seeds, nodes, edges).",
+      description: "Query the code knowledge graph by natural-language question. Returns a relevance-ranked subgraph (seeds, nodes, edges); test/mock/fixture nodes only with includeTests.",
       inputSchema: graphQueryInputSchema,
       outputSchema: graphQueryOutputSchema,
       transports: ["cli", "mcp"],
@@ -349,7 +349,7 @@ export const capabilities: readonly CommandContract[] = [
     },
     cli: {
       command: "query",
-      flags: ["--json"],
+      flags: ["--json", "--include-tests"],
     },
     mcp: { tool: "graph_query" },
   },
@@ -436,7 +436,7 @@ export const capabilities: readonly CommandContract[] = [
       transports: ["cli", "mcp"],
       schemaVersion: 1,
     },
-    cli: { command: "affected" },
+    cli: { command: "affected", flags: ["--depth"] },
     mcp: { tool: "graph_affected" },
   },
   {
@@ -484,7 +484,7 @@ export const capabilities: readonly CommandContract[] = [
       transports: ["cli", "mcp"],
       schemaVersion: 1,
     },
-    cli: { command: "impact analyze", flags: ["--json"] },
+    cli: { command: "impact analyze", flags: ["--json", "--depth"] },
     mcp: { tool: "impact_analyze" },
   },
   {

@@ -9,9 +9,12 @@ This repo ships a leina knowledge graph (what the code IS) and project memory
 TRANSPORT (pick once, at session start)
 - If tools named `mcp__leina__*` are in your tool list, PREFER them: same capabilities,
   structured JSON, no shell round-trip. Every tool takes an optional `root` — it is the
-  `<dir>` argument of the CLI forms below (default: the workspace the server was launched in;
-  roots that resolve outside it are rejected).
-- Otherwise run the `leina` CLI exactly as written below.
+  `[<dir>]` argument of the CLI forms below (default: the workspace the server was launched
+  in; roots that resolve outside it are rejected).
+- Otherwise run the `leina` CLI as written below. `[<dir>]` is optional everywhere: it
+  defaults to the current directory and resolves to the project root, so commands work the
+  same from any subdirectory. `leina <command> --help` prints a command's arguments and
+  flags; a usage error (unknown flag, missing argument) exits 2 with a one-line hint.
 - Mapping (CLI → tool): query→graph_query · affected→graph_affected · path→graph_path ·
   stats→graph_stats · status→graph_status · build/refresh→graph_build · impact→impact_analyze ·
   visualize→graph_visualize · audit→audit_run · doctor→doctor_run · memory save→memory_add ·
@@ -23,26 +26,32 @@ TRANSPORT (pick once, at session start)
 
 LEINA-FIRST (startup rules — via MCP tool or CLI, per TRANSPORT; trigger these BEFORE grep, glob or read)
 - **Structural or multi-hop question** ("what calls X?", "what imports Y?", "where is pattern Z?"):
-  run `leina query <dir> "<question>"` BEFORE grepping or reading files. The graph
+  run `leina query [<dir>] "<question>"` BEFORE grepping or reading files. The graph
   answers structural questions without spending read-tool budget.
 - **Before renaming or migrating** any symbol, function, type or file: run
-  `leina affected <dir> <symbol>` first — know the blast radius before touching anything.
+  `leina affected [<dir>] <symbol>` first — know the blast radius before touching anything.
 - **Before re-deriving context** that may already be in memory (decisions, conventions, SDD
-  artifacts): run `leina memory search <dir> "<query>"` first. Re-deriving saved
+  artifacts): run `leina memory search [<dir>] "<query>"` first. Re-deriving saved
   knowledge wastes turns and risks contradicting what's already there.
 
 GRAPH
 - For structural / dependency / "what depends on or relates to X" questions, query the graph
-  instead of reading or grepping files: `leina query <dir> "<question>"`, and
-  `leina affected <dir> <symbol>` BEFORE renaming or migrating a symbol (blast radius).
+  instead of reading or grepping files: `leina query [<dir>] "<question>"` (test/mock/fixture
+  nodes are left out unless `--include-tests` or the question is about tests), and
+  `leina affected [<dir>] <symbol> [--depth <n>]` BEFORE renaming or migrating a symbol.
+- Symbol arguments (`affected`, `path`, `impact analyze`) match EXACTLY, never by
+  substring: a name, `path/to/file.ts:name`, `Class.method`, a raw node id or a file path.
+  Several matches → the best one is used and a note on stderr lists the others with the
+  selector that picks each; no match → "did you mean" candidates and exit 1.
 - The graph keeps itself fresh: `query`/`affected`/`path` auto-rebuild when sources changed
-  before answering (`leina status <dir>` to check, `leina refresh <dir>` to force).
-  Under the "refuse" posture a stale query asks you to run `refresh` first.
-- Other reads: `leina path <dir> <a> <b>` (shortest path), `leina stats <dir>`.
-- To SEE the graph: `leina visualize <dir> [--out <path>]` exports an offline HTML viewer
+  before answering (`leina status [<dir>]` to check, `leina refresh [<dir>]` to force a
+  full re-extraction). Under the "refuse" posture a stale query asks you to run `refresh` first.
+- Other reads: `leina path [<dir>] <a> <b>` (shortest path), `leina stats [<dir>]`,
+  `leina impact analyze [<dir>] <symbol>` (files, tests, services, configs it reaches).
+- To SEE the graph: `leina visualize [<dir>] [--out <path>]` exports an offline HTML viewer
   (folder colours, degree sizing, god nodes, click-through detail drawer).
 - If anything looks broken (stale graph, missing hooks, install drift): run
-  `leina doctor <dir>` to diagnose install + project health before guessing.
+  `leina doctor [<dir>]` to diagnose install + project health before guessing.
 - C#/Java repos: by default these extract with tree-sitter (SYNTACTIC — call edges are
   best-effort). For compiler-grade precision run `leina sidecar status` then
   `leina sidecar build <csharp|java>` once (needs the local toolchain: dotnet SDK for
@@ -50,32 +59,40 @@ GRAPH
   Without a sidecar the graph still builds — just don't trust Java/C# call edges as exhaustive.
 
 MEMORY (always-on injection + global DB, keyed by project — advisory, never blocks)
-- **Automatic injection**: the `SessionStart` hook injects the top-10 project memory
-  observations + graph stats directly into the agent's system context before the first turn —
-  no manual `memory context` call required. The `PostCompaction` hook re-injects the same
-  context after a compaction event so the agent never starts a compacted session cold.
-- Memory is always-on: no project init required. All observations land in a single global DB
+- **Automatic injection**: in a repo initialized with `leina init` and trusted on this machine,
+  the `SessionStart` hook injects the top-10 project memory observations + graph stats into
+  the agent's context before the first turn — no manual `memory context` call required. The
+  `PostCompaction` hook re-injects the same context after a compaction event.
+- Memory itself needs no init: all observations land in a single global DB
   (`~/.leina/memory.db`), scoped by a stable project key derived from the git remote /
-  repo root / dir name. Use `leina memory current-project <dir>` to see your key.
-- Run `leina memory context <dir>` (or `memory search` / `memory verified`) for a
+  repo root / dir name. Use `leina memory current-project [<dir>]` to see your key.
+- Run `leina memory context [<dir>]` (or `memory search` / `memory verified`) for a
   supplementary mid-session reload or when you want to search / verify specific observations.
-  The hooks DO NOT block prompts, edits, writes or `git commit`.
-- Run `leina memory search <dir> "<query>"` (or `memory verified` for context checked
+  The memory hooks DO NOT block prompts, edits, writes or `git commit`.
+- Run `leina memory search [<dir>] "<query>"` (or `memory verified` for context checked
   against the live graph) BEFORE re-deriving something that may already be saved.
-- Run `leina memory save <dir> --title "..." --content "..."` PROACTIVELY right after a
+- Run `leina memory save [<dir>] --title "..." --content "..."` PROACTIVELY right after a
   decision, bug fix or non-obvious discovery — don't wait to be asked. Pass `--topic <key>` to
   evolve an existing entry in place.
-- Run `leina memory get <dir> <id>` to read a single observation in full, and
-  `leina memory update <dir> <id> [--title] [--content] [--type]` to correct one in place.
+- Run `leina memory get [<dir>] <id>` to read a single observation in full, and
+  `leina memory update [<dir>] <id> [--title] [--content] [--type]` to correct one in place.
 - When a saved note is done or no longer true (a shipped backlog item, a landed fix), run
-  `leina memory resolve <dir> <id> [--note "..."]` (`--obsolete` when it no longer applies;
-  `memory reopen` undoes it). Resolved notes leave the injection; search still finds them.
-- Run `leina memory session-start <dir>` to open a fresh session id, and
-  `leina memory suggest-topic <dir> --title "..."` to get a normalized topic_key.
-- Run `leina memory session <dir> --content "<summary>"` at the END of a session.
+  `leina memory resolve [<dir>] <id> [--note "..."]` (`--obsolete` when it no longer applies;
+  `leina memory reopen [<dir>] <id>` undoes it). Resolved notes leave the injection; search
+  still finds them.
+- Run `leina memory session-start [<dir>]` to open a fresh session id, and
+  `leina memory suggest-topic [<dir>] --title "..."` to get a normalized topic_key.
+- Run `leina memory session [<dir>] --content "<summary>"` at the END of a session.
 - To lock a project name permanently: `leina init --name <name>` (writes
   `.leina/config.json`, committable, takes priority over all other detection steps).
-- To move memories under a new key: `leina memory merge-projects <dir> --from <old> --to <new>`.
+- To move memories under a new key: `leina memory merge-projects [<dir>] --from <old> --to <new>`.
+
+HARNESS (opt-in)
+- Opt in per repo with `leina init --harness`: it seeds `.harness/` (rules + executable
+  gates, synced to the host hooks); a plain `leina init` leaves it alone. In a repo that uses
+  it, declare the task with `leina harness contract new --goal "..."` and finish with
+  `leina harness verify` (exit 0 = complete, 1 = a blocking gate failed — fix it, never
+  weaken the gate).
 
 SHELL
 - Prefer `bash` for any command execution when the host offers a choice (`interactive_shell`,
@@ -95,7 +112,7 @@ SDD (spec-driven changes)
 - Conduct SDD in the user's language: phase prose and artifact CONTENT follow the user's
   language; `topic_key`s and slugs (`sdd/{change}/…`) stay in English.
 - At DESIGN and TASKS, scope the change against the graph before you decide: run
-  `leina affected <dir> <symbol>` on every symbol the change touches to get the real
+  `leina affected [<dir>] <symbol>` on every symbol the change touches to get the real
   blast radius. Let it drive the file-change list, the task ordering, and the size estimate —
   don't guess what depends on what.
 - Persist each artifact in project memory under a stable topic_key `sdd/{change}/{artifact}`
@@ -105,17 +122,17 @@ SDD (spec-driven changes)
 
 <!-- leina:capabilities:start -->
 ## Capabilities (leina)
-- `graph.query` — leina query [--json]: Query the code knowledge graph by natural-language question. Returns a term-scored subgraph (seeds, nodes, edges).
+- `graph.query` — leina query [--json --include-tests]: Query the code knowledge graph by natural-language question. Returns a relevance-ranked subgraph (seeds, nodes, edges); test/mock/fixture nodes only with includeTests.
 - `graph.status` — leina status: Return the freshness status of the code graph (stale/fresh, last build metadata).
 - `memory.add` — leina memory save [--title --content --type --topic]: Save or upsert a memory observation to the project knowledge base. Batch form: pass an `items` array (optionally `atomic`) instead of title/content.
 - `memory.search` — leina memory search [--type --limit]: Full-text search over project memory observations. Returns ranked search hits.
 - `context.build` — leina agent-hook SessionStart: Build the active context payload for a project directory (memory observations + graph stats).
 - `audit.run` — leina audit [--from --max-pack-kb --json]: Run the full security audit pipeline: source/sink detection, M:N reachability, AuditPack serialisation.
-- `graph.affected` — leina affected: Blast radius: everything that transitively depends on a symbol. THE check to run before renaming or refactoring.
+- `graph.affected` — leina affected [--depth]: Blast radius: everything that transitively depends on a symbol. THE check to run before renaming or refactoring.
 - `graph.path` — leina path: Shortest dependency path between two symbols in the code graph.
 - `graph.stats` — leina stats: Node/edge counts and confidence breakdown of the code graph.
 - `graph.build` — leina build [--json]: Build (or rebuild) the code knowledge graph for a project directory.
-- `impact.analyze` — leina impact analyze [--json]: Bidirectional impact BFS classifying blast radius into files, tests, services and configs.
+- `impact.analyze` — leina impact analyze [--json --depth]: Bidirectional impact BFS classifying blast radius into files, tests, services and configs.
 - `memory.verified` — leina memory verified: Memory search with drift verdicts: each hit re-checked against the live graph (USABLE / WARNING / DO-NOT-USE).
 - `memory.context` — leina memory context [--limit]: Recent sessions and the most relevant active observations for a project — the session-start context payload (the same ranking the SessionStart injection uses: type weight × recency, at most 2 per topic prefix; resolved/obsolete notes are left out). Over MCP, bodies are clipped to previews (full content via memory.get, or full:true to opt out).
 - `memory.get` — leina memory get: Fetch a single memory observation by id, full content included. Batch form: pass an `ids` array instead of `id`.

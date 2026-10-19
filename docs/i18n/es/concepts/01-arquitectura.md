@@ -78,7 +78,7 @@ motor de almacenamiento no toca ni una línea de la lógica de negocio.
 
 ## El recorrido de un comando
 
-Cuando ejecutás `leina query <dir> "quién usa TokenFactory"`, esto es lo que pasa:
+Cuando ejecutás `leina query [<dir>] "quién usa TokenFactory"`, esto es lo que pasa:
 
 ```mermaid
 sequenceDiagram

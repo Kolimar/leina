@@ -258,14 +258,14 @@ full contract, including POST requests with a token in the header and the strict
 
 ### Visual tools for you (not for the AI)
 
-- `leina visualize <dir>` — exports a static, offline, self-contained **HTML file** of the graph
+- `leina visualize [<dir>]` — exports a static, offline, self-contained **HTML file** of the graph
   (search, filters, communities). Being a file, you can share/commit it and open it whenever. Ideal
   for onboarding: _seeing_ the real architecture, not the old wiki diagram.
-- `leina graph serve <dir>` — **not the same thing**: it starts a **live local server** (read-only,
+- `leina graph serve [<dir>]` — **not the same thing**: it starts a **live local server** (read-only,
   `:7423`, Ctrl+C to stop) with what a static file can't have — a **multi-project selector** and each
   node's **anchored memory** (drift-badged). Use it to browse live or inspect memory; use `visualize`
   to share a snapshot.
-- `leina audit <dir> --format html` — candidate source→sink paths for security
+- `leina audit [<dir>] --format html` — candidate source→sink paths for security
   triage.
 - In monorepos / folders with several repos: `leina workspace visualize` shows the
   constellation of repos and their cross-dependencies.
@@ -285,15 +285,15 @@ full contract, including POST requests with a token in the header and the strict
 | `leina activate` / `deactivate` | Global piece of `setup` (share/symlinks/user-global config, `--hosts` required) and its inverse. |
 | `leina init <dir>` | Onboards the repo (consent `enabled`). Adaptive: LIGHT with blanket, FULL standalone (`--hosts` + `--profile <devin\|windsurf>`). `--build` builds the graph now. |
 | `leina deinit <dir>` | Removes the repo (consent `disabled`) and reverts the wiring (reverse-strip). |
-| `leina build <dir>` | Builds / rebuilds the project's graph. |
-| `leina refresh <dir>` | Forces a full rebuild of the graph. |
-| `leina status <dir>` | Indicates whether the graph is up to date. |
-| `leina stats <dir>` | Counts nodes and edges of the graph. |
-| `leina affected <dir> <symbol>` | Blast radius of a symbol (auto-rebuild if stale). |
-| `leina path <dir> <from> <to>` | Shortest path between two symbols. |
-| `leina query <dir> "<question>"` | Relevant subgraph for a question. |
-| `leina impact analyze <dir> <symbol>` | Impact crossing code→tests→configs→services. |
-| `leina visualize <dir>` | Exports an interactive, offline HTML viewer of the graph. |
+| `leina build [<dir>]` | Builds / rebuilds the project's graph. |
+| `leina refresh [<dir>]` | Forces a full rebuild of the graph. |
+| `leina status [<dir>]` | Indicates whether the graph is up to date. |
+| `leina stats [<dir>]` | Counts nodes and edges of the graph. |
+| `leina affected [<dir>] <symbol>` | Blast radius of a symbol (auto-rebuild if stale). |
+| `leina path [<dir>] <from> <to>` | Shortest path between two symbols. |
+| `leina query [<dir>] "<question>"` | Relevant subgraph for a question. |
+| `leina impact analyze [<dir>] <symbol>` | Impact crossing code→tests→configs→services. |
+| `leina visualize [<dir>]` | Exports an interactive, offline HTML viewer of the graph. |
 | `leina memory <sub> <dir>` | Local memory (`save`/`update`/`search`/`verified`/`get`/`context`/`session`/`session-start`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`/`compact`/`export`/`import`/`sync`). |
 | `leina workspace <sub> [dir]` | Multi-repo: `build`/`status`/`detect`/`memory context\|search`/`visualize`. |
 | `leina audit [dir]` | Candidate source→sink paths + findings (`--format md\|json\|html`). |
@@ -320,8 +320,8 @@ With the tool pointed at its own repo, the AI has the code, the skills and the p
 Quick fixes at hand:
 
 - `command not found: leina` → not on the PATH; reinstall with `npm install -g @kolimar/leina` or use `npm run cli -- <cmd>` from the clone.
-- `No graph at <...>` → you haven't run `leina build <dir>` for that project.
-- `Graph is stale (...) posture "refuse"` → run `leina refresh <dir>`.
+- `No graph at <...>` → you haven't run `leina build [<dir>]` for that project.
+- `Graph is stale (...) posture "refuse"` → run `leina refresh [<dir>]`.
 
 #### Windows + Git Bash — `Cannot find module '...\dist\cli\index.js'`
 

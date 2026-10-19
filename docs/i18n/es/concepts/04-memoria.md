@@ -148,7 +148,7 @@ que el agente actúe sobre ellas. Por eso cada observación lleva un **status**:
 | `resolved` | hecho / arreglado — se conserva como historia | **no** | sí, etiquetada y más abajo |
 | `obsolete` | ya no es cierta o ya no importa | **no** | sí, etiquetada y más abajo |
 
-`leina memory resolve <dir> <id> [--note "..."] [--obsolete]` cierra una entrada (la forma
+`leina memory resolve [<dir>] <id> [--note "..."] [--obsolete]` cierra una entrada (la forma
 `--batch` cierra varias de una vez), `memory reopen` la reabre, y `memory update --status` /
 `memory_update {status, resolution}` por MCP lo fijan directamente. Un cambio de estado guarda
 su fecha (`statusChangedAt`) y la nota opcional (`resolution`) pero **no toca `updatedAt`**:
@@ -162,7 +162,7 @@ veredicto respeta los dos — una nota resuelta es como mucho `WARNING`, una obs
 ### La `session` (un turno de trabajo)
 
 Agrupa observaciones de una misma sesión de trabajo (`startedAt`/`endedAt`). Al final de una
-sesión, `leina memory session <dir> --content "..."` guarda un resumen.
+sesión, `leina memory session [<dir>] --content "..."` guarda un resumen.
 
 ---
 
@@ -235,9 +235,9 @@ Toda comparación es **insensible a acentos y mayúsculas** en ambos modos (`pub
 
 Comandos de lectura:
 
-- `leina memory search <dir> "<query>"` — búsqueda cruda (lo de arriba).
-- `leina memory context <dir>` — sesiones recientes + últimas observaciones **activas**.
-- `leina memory verified <dir> "<query>"` — búsqueda **+ chequeo de drift** contra el
+- `leina memory search [<dir>] "<query>"` — búsqueda cruda (lo de arriba).
+- `leina memory context [<dir>]` — sesiones recientes + últimas observaciones **activas**.
+- `leina memory verified [<dir>] "<query>"` — búsqueda **+ chequeo de drift** contra el
   grafo. Eso es justo el tema del próximo capítulo.
 
 ---

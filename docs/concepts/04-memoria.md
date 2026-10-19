@@ -145,7 +145,7 @@ on them. Each observation therefore carries a **status**:
 | `resolved` | done / fixed — kept for history | **no** | yes, labelled and ranked lower |
 | `obsolete` | no longer true or no longer relevant | **no** | yes, labelled and ranked lower |
 
-`leina memory resolve <dir> <id> [--note "..."] [--obsolete]` closes an entry (a `--batch`
+`leina memory resolve [<dir>] <id> [--note "..."] [--obsolete]` closes an entry (a `--batch`
 form closes many at once), `memory reopen` brings it back, and `memory update --status` /
 MCP `memory_update {status, resolution}` set it directly. A status change records its date
 (`statusChangedAt`) and the optional note (`resolution`) but **does not touch `updatedAt`**:
@@ -159,7 +159,7 @@ both — a resolved note is at best `WARNING`, an obsolete one `DO NOT USE`.
 ### The `session` (a work shift)
 
 Groups observations from a single work session (`startedAt`/`endedAt`). At the end of a
-session, `leina memory session <dir> --content "..."` saves a summary.
+session, `leina memory session [<dir>] --content "..."` saves a summary.
 
 ---
 
@@ -232,9 +232,9 @@ is better) and `updatedAt`.
 
 Read commands:
 
-- `leina memory search <dir> "<query>"` — raw search (the above).
-- `leina memory context <dir>` — recent sessions + latest **active** observations.
-- `leina memory verified <dir> "<query>"` — search **+ drift check** against the graph.
+- `leina memory search [<dir>] "<query>"` — raw search (the above).
+- `leina memory context [<dir>]` — recent sessions + latest **active** observations.
+- `leina memory verified [<dir>] "<query>"` — search **+ drift check** against the graph.
   That's exactly the subject of the next chapter.
 
 ---

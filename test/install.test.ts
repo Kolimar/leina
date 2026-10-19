@@ -33,6 +33,21 @@ test("protocol carries graph, memory, SDD guidance and the dual-transport preamb
   assert.doesNotMatch(PROTOCOL_BODY, /query_graph|graph_refresh|mem_context|mem_save/);
 });
 
+test("protocol shows the 3.0 CLI surface: optional <dir>, query filters, selectors, lifecycle, harness opt-in", () => {
+  // <dir> is optional everywhere — no example may present it as required.
+  assert.doesNotMatch(PROTOCOL_BODY, /leina [a-z -]+ <dir>/, "every <dir> is written [<dir>]");
+  assert.match(PROTOCOL_BODY, /leina query \[<dir>\] "<question>"/);
+  assert.match(PROTOCOL_BODY, /--help/);
+  assert.match(PROTOCOL_BODY, /--include-tests/);
+  assert.match(PROTOCOL_BODY, /affected \[<dir>\] <symbol> \[--depth <n>\]/);
+  assert.match(PROTOCOL_BODY, /match EXACTLY, never by\s+substring/);
+  assert.match(PROTOCOL_BODY, /Class\.method/);
+  assert.match(PROTOCOL_BODY, /did you mean/);
+  assert.match(PROTOCOL_BODY, /leina memory resolve \[<dir>\] <id>/);
+  assert.match(PROTOCOL_BODY, /leina memory reopen \[<dir>\] <id>/);
+  assert.match(PROTOCOL_BODY, /leina init --harness/);
+});
+
 test("AGENTS.md merge is idempotent and preserves user content", () => {
   const user = "# Project\n\nKeep me.\n";
   const once = mergeAgentsMd(user);

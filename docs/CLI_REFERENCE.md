@@ -207,7 +207,7 @@ button. The Louvain community is computed and persisted during build and surface
 
 Routes through the **freshness gate** (same as `query`/`affected`):
 - stale + posture `auto` → rebuilds automatically before exporting;
-- stale + posture `refuse` → fails with instruction to run `leina refresh <dir>`.
+- stale + posture `refuse` → fails with instruction to run `leina refresh [<dir>]`.
 
 On success prints: `Exported graph.html ({N} nodes, {E} edges) -> {outPath}`.
 
@@ -320,7 +320,7 @@ topic in place (prints `evolved rev N`); otherwise creates a new one. `--anchors
 comma-separated list of graph symbols the observation is about (resolved against the live
 graph on save).
 
-**Batch:** `memory save <dir> --batch [--atomic]` reads a JSON array of
+**Batch:** `memory save [<dir>] --batch [--atomic]` reads a JSON array of
 `{title, content, type?, topicKey?, scope?, anchors?}` from stdin.
 
 ### `memory update [<dir>] <id> [--title ..] [--content ..] [--type ..] [--anchors a,b] [--status s] [--resolution "..."]`
@@ -337,7 +337,7 @@ Close an observation without deleting it: status `resolved` (or `obsolete` with
 the SessionStart injection and `memory context`; `search`, `verified` and `get` still return
 it, labelled (`(resolved)`, `status: resolved 2026-07-19 — note`) and ranked below active
 notes. The drift verdict stays independent of the status. Re-saving the same `--topic` brings
-the note back as active. **Batch:** `memory resolve <dir> --batch [--atomic]` reads a JSON
+the note back as active. **Batch:** `memory resolve [<dir>] --batch [--atomic]` reads a JSON
 array of id strings or `{id, note?, obsolete?}` objects (`--note` / `--obsolete` set the
 default for every item).
 
@@ -375,7 +375,7 @@ scoped to the current project: another project's id reads as not found (same for
 `memory_get` / `memory_update`) also accepts the **short id** `memory context` prints — the
 first 8 hex chars of the id's uuid tail, or any unique prefix of at least 4; a prefix shared by
 several observations is an error asking for more characters.
-**Batch:** `memory get <dir> --batch` reads a JSON array of id strings from stdin.
+**Batch:** `memory get [<dir>] --batch` reads a JSON array of id strings from stdin.
 
 ### `memory context [<dir>] [--limit N]`
 Recent sessions + the most relevant **active** observations for the project (resolved/obsolete

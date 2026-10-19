@@ -224,7 +224,7 @@ dato en el drawer.
 
 Pasa por la **freshness gate** (igual que `query`/`affected`):
 - stale + posture `auto` → reconstruye automáticamente antes de exportar;
-- stale + posture `refuse` → falla con la instrucción de correr `leina refresh <dir>`.
+- stale + posture `refuse` → falla con la instrucción de correr `leina refresh [<dir>]`.
 
 Al tener éxito imprime: `Exported graph.html ({N} nodes, {E} edges) -> {outPath}`.
 
@@ -347,7 +347,7 @@ existente con ese topic en su lugar (imprime `evolved rev N`); en caso contrario
 nueva. `--anchors` es una lista separada por comas de símbolos del grafo sobre los que trata
 la observación (se resuelven contra el grafo vivo al guardar).
 
-**Batch:** `memory save <dir> --batch [--atomic]` lee desde stdin un array JSON de
+**Batch:** `memory save [<dir>] --batch [--atomic]` lee desde stdin un array JSON de
 `{title, content, type?, topicKey?, scope?, anchors?}`.
 
 ### `memory update [<dir>] <id> [--title ..] [--content ..] [--type ..] [--anchors a,b] [--status s] [--resolution "..."]`
@@ -364,7 +364,7 @@ la fecha de hoy y la `--note` opcional. Una nota no activa sale de la inyección
 SessionStart y de `memory context`; `search`, `verified` y `get` la siguen devolviendo,
 etiquetada (`(resolved)`, `status: resolved 2026-07-19 — nota`) y por debajo de las notas
 activas. El veredicto de drift es independiente del estado. Volver a guardar el mismo
-`--topic` la reactiva. **Batch:** `memory resolve <dir> --batch [--atomic]` lee desde stdin un
+`--topic` la reactiva. **Batch:** `memory resolve [<dir>] --batch [--atomic]` lee desde stdin un
 array JSON de strings de id u objetos `{id, note?, obsolete?}` (`--note` / `--obsolete` fijan
 el valor por defecto de cada ítem).
 
@@ -405,7 +405,7 @@ ids están acotados al proyecto actual: el id de otro proyecto se lee como inexi
 `memory context`: los primeros 8 caracteres hex de la cola uuid del id, o cualquier prefijo
 único de al menos 4; un prefijo compartido por varias observaciones es un error que pide más
 caracteres.
-**Batch:** `memory get <dir> --batch` lee desde stdin un array JSON de strings de id.
+**Batch:** `memory get [<dir>] --batch` lee desde stdin un array JSON de strings de id.
 
 ### `memory context [<dir>] [--limit N]`
 Sesiones recientes + las observaciones **activas** más relevantes del proyecto (las

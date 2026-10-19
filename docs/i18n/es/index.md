@@ -208,10 +208,10 @@ leina activate --hosts devin,claude
 
 ```bash
 # build the graph for a project (writes <dir>/.leina/graph.db + manifest)
-leina build <dir> [--json]          # --json also writes a portable graph.json
-leina build <dir> --profile         # stage timings (tree-sitter files reuse the per-file
+leina build [<dir>] [--json]        # --json also writes a portable graph.json
+leina build [<dir>] --profile       # stage timings (tree-sitter files reuse the per-file
                                     # cache; ts-morph always re-runs whole-program)
-leina refresh <dir>                 # force a full rebuild
+leina refresh [<dir>]               # force a full rebuild
 
 # diagnose health: node version, parser wasm assets, global share freshness, host symlinks,
 # and the project (graph freshness, AGENTS.md/.gitignore/.devin wiring). Reports each check as
@@ -223,11 +223,11 @@ leina doctor [<dir>]
 leina repair [<dir>]
 
 # inspect — query/affected/path auto-rebuild a stale graph before answering
-leina stats <dir>                    # node/edge counts + confidence breakdown
-leina status <dir>                   # freshness: is the graph stale vs the code?
-leina affected <dir> "<symbol>"     # blast radius: who depends on it
-leina path <dir> "<a>" "<b>"        # shortest path between two symbols
-leina query <dir> "a question"      # term-scored subgraph
+leina stats [<dir>]                  # node/edge counts + confidence breakdown
+leina status [<dir>]                 # freshness: is the graph stale vs the code?
+leina affected [<dir>] "<symbol>"   # blast radius: who depends on it
+leina path [<dir>] "<a>" "<b>"      # shortest path between two symbols
+leina query [<dir>] "a question"    # relevance-ranked subgraph
 ```
 
 ### Memory
@@ -237,21 +237,21 @@ proyecto. Siempre activa: no requiere init — cualquier directorio funciona, in
 repo de git.
 
 ```bash
-leina memory save <dir> --title "..." --content "..." [--type decision] [--topic key] [--anchors a,b]
-leina memory update <dir> <id> [--title ..] [--content ..] [--type ..]
-leina memory search <dir> "a question" [--type ..] [--limit N]
-leina memory verified <dir> "a question"   # drift-classified: USABLE / WARNING / DO-NOT-USE
-leina memory get <dir> <id>
-leina memory context <dir>
-leina memory session <dir> --content "..." [--title "..."]
-leina memory session-start <dir> [--title "..."]   # open a session at session start
-leina memory suggest-topic <dir> --title "..." [--type ..]
-leina memory current-project <dir>         # show derived project key + detection method
-leina memory merge-projects <dir> --from <old-key> --to <new-key> [--dry-run]
-leina memory reanchor <dir> [--dry-run]    # anclar referencias `código` de las notas; pasar anchors de archivo a símbolo
-leina memory export <dir> [--out file.jsonl]       # dump observations + anchors as JSONL
-leina memory import <dir> [--in file.jsonl]        # merge an export; newer revision wins
-leina memory sync <dir>                            # two-way merge with .leina/memory-export.jsonl
+leina memory save [<dir>] --title "..." --content "..." [--type decision] [--topic key] [--anchors a,b]
+leina memory update [<dir>] <id> [--title ..] [--content ..] [--type ..]
+leina memory search [<dir>] "a question" [--type ..] [--limit N]
+leina memory verified [<dir>] "a question"   # drift-classified: USABLE / WARNING / DO-NOT-USE
+leina memory get [<dir>] <id>
+leina memory context [<dir>]
+leina memory session [<dir>] --content "..." [--title "..."]
+leina memory session-start [<dir>] [--title "..."]   # open a session at session start
+leina memory suggest-topic [<dir>] --title "..." [--type ..]
+leina memory current-project [<dir>]       # show derived project key + detection method
+leina memory merge-projects [<dir>] --from <old-key> --to <new-key> [--dry-run]
+leina memory reanchor [<dir>] [--dry-run]  # anclar referencias `código` de las notas; pasar anchors de archivo a símbolo
+leina memory export [<dir>] [--out file.jsonl]     # dump observations + anchors as JSONL
+leina memory import [<dir>] [--in file.jsonl]      # merge an export; newer revision wins
+leina memory sync [<dir>]                          # two-way merge with .leina/memory-export.jsonl
 # memory scopes: --scope project (default) | personal | workspace | path | skill | process |
 #                technology | security | infra   (search defaults to project; pass --scope to widen)
 ```
@@ -331,20 +331,20 @@ leina capabilities list [--json]    # the 17 transport-agnostic capabilities + s
 ### Impact / audit / events
 
 ```bash
-leina impact analyze <dir> "<symbol>" [--json]   # code→test→config→service blast radius
-leina audit <dir> [--format md|json|html]        # source→sink candidate paths + findings[]
-leina events tail <dir> [--json]                 # local event outbox (off by default)
+leina impact analyze [<dir>] "<symbol>" [--json]   # code→test→config→service blast radius
+leina audit [<dir>] [--format md|json|html]      # source→sink candidate paths + findings[]
+leina events tail [<dir>] [--json]               # local event outbox (off by default)
 ```
 
 ### Visualización / workspaces multi-repo
 
 ```bash
-leina visualize <dir> [--out <path>]             # interactive offline HTML graph viewer
-leina graph serve <dir> [--port 7423]            # live local server (multi-project + memory)
-leina workspace build <dir>                      # merged graph across member repos
-leina workspace status|detect <dir>              # per-member freshness / detection JSON
-leina workspace memory context|search <dir>      # federated memory across members
-leina workspace visualize <dir> [--drilldown]    # constellation (repos as super-nodes)
+leina visualize [<dir>] [--out <path>]           # interactive offline HTML graph viewer
+leina graph serve [<dir>] [--port 7423]          # live local server (multi-project + memory)
+leina workspace build [<dir>]                    # merged graph across member repos
+leina workspace status|detect [<dir>]            # per-member freshness / detection JSON
+leina workspace memory context|search [<dir>]    # federated memory across members
+leina workspace visualize [<dir>] [--drilldown]  # constellation (repos as super-nodes)
 ```
 
 > `visualize` escribe un **archivo `.html` estático y compartible** de un proyecto. `graph serve`
@@ -404,8 +404,8 @@ para una transacción de todo o nada.
 
 ```bash
 echo '[{"title":"a","content":"x"},{"title":"b","content":"y"}]' \
-  | leina memory save <dir> --batch --atomic
-echo '["id1","id2"]' | leina memory get <dir> --batch
+  | leina memory save [<dir>] --batch --atomic
+echo '["id1","id2"]' | leina memory get [<dir>] --batch
 ```
 
 ### Freshness
@@ -460,7 +460,7 @@ crear un duplicado.
 ### Servidor explorador del grafo (`graph serve`)
 
 ```bash
-leina graph serve <dir> [--port 7423] [--host 127.0.0.1]
+leina graph serve [<dir>] [--port 7423] [--host 127.0.0.1]
 ```
 
 Un servidor `node:http` read-only y en foreground (sin dependencias nuevas) sobre el mismo grafo +
@@ -485,7 +485,7 @@ sesiones.
 `~/.leina/memory.db` (o `$LEINA_HOME/memory.db`), indexada por una **project key estable**
 derivada automáticamente de la URL del remoto de git, el nombre base de la raíz del repo, o
 el nombre del directorio. No se requiere `init` — `memory save` funciona en cualquier
-directorio. Usá `memory current-project <dir>` para inspeccionar la key derivada. Fijala de
+directorio. Usá `memory current-project [<dir>]` para inspeccionar la key derivada. Fijala de
 forma permanente con `init --name <name>` (escribe `.leina/config.json`, committable, tiene
 prioridad sobre todos los pasos de detección).
 

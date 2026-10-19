@@ -94,7 +94,7 @@ depends on SQLite.
 
 ## The journey of a command
 
-When you run `leina query <dir> "who uses TokenFactory"`, here's what happens:
+When you run `leina query [<dir>] "who uses TokenFactory"`, here's what happens:
 
 ```mermaid
 sequenceDiagram
