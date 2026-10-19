@@ -634,7 +634,6 @@ test("(mig-c) ensureMemorySchema switches obs_fts to the porter tokenizer on v3�
 
     const version = (db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version;
     assert.equal(version, MEMORY_SCHEMA_VERSION, "must reach current schema version");
-    assert.equal(MEMORY_SCHEMA_VERSION, 5);
 
     // Porter stemming now matches the stem against the inflected form.
     const stemHits = db.prepare("SELECT rowid FROM obs_fts WHERE obs_fts MATCH 'search'").all();
@@ -686,7 +685,6 @@ test("(mig-a) ensureMemorySchema migrates a v1 db to v2 without data loss", () =
 
     const version = (db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version;
     assert.equal(version, MEMORY_SCHEMA_VERSION, "user_version must reach the current schema version");
-    assert.equal(MEMORY_SCHEMA_VERSION, 5);
 
     const cols = (db.prepare("PRAGMA table_info(memory_anchors)").all() as unknown as { name: string }[])
       .map((c) => c.name);
@@ -696,7 +694,6 @@ test("(mig-a) ensureMemorySchema migrates a v1 db to v2 without data loss", () =
       .get() as unknown as { anchor_label: string; anchor_hash: string | null };
     assert.equal(row.anchor_label, "Label1", "pre-existing data must survive the migration");
     assert.equal(row.anchor_hash, null, "back-filled column is null for old rows");
-    assert.equal(MEMORY_SCHEMA_VERSION, 5);
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });
@@ -752,10 +749,10 @@ test("(mig-d) ensureMemorySchema migrates a legacy unversioned db (user_version=
   }
 });
 
-// ---- (mig-e) v4 → v5 migration: datos preservados, user_version=5 ----------
+// ---- (mig-e) v4 → actual: datos preservados, user_version=MEMORY_SCHEMA_VERSION ----
 // Cubre: REQ-MM-2 (T10 etapa-3-identity-scopes)
 
-test("(mig-e) ensureMemorySchema migra una DB v4 a v5 preservando datos", () => {
+test("(mig-e) ensureMemorySchema migra una DB v4 a la versión actual preservando datos", () => {
   const dir = tmpDir();
   const dbPath = join(dir, "memory.db");
 
@@ -775,8 +772,7 @@ test("(mig-e) ensureMemorySchema migra una DB v4 a v5 preservando datos", () => 
     ensureMemorySchema(db);
 
     const version = (db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version;
-    assert.equal(version, 5, "DB v4 debe migrarse a v5");
-    assert.equal(MEMORY_SCHEMA_VERSION, 5, "MEMORY_SCHEMA_VERSION debe ser 5");
+    assert.equal(version, MEMORY_SCHEMA_VERSION, "DB v4 debe migrarse a la versión actual");
 
     // Datos preservados
     const obs = db.prepare("SELECT id, scope FROM observations WHERE id='e-obs-1'")
@@ -789,36 +785,36 @@ test("(mig-e) ensureMemorySchema migra una DB v4 a v5 preservando datos", () => 
   }
 });
 
-// ---- (mig-f) v5 → v5 idempotente -------------------------------------------
+// ---- (mig-f) versión actual → actual, idempotente --------------------------
 // Cubre: REQ-MM-2 (idempotencia)
 
-test("(mig-f) abrir dos veces una DB en v5 es idempotente (no sube a v6)", () => {
+test("(mig-f) abrir dos veces una DB en la versión actual es idempotente (no sube)", () => {
   const dir = tmpDir();
   const dbPath = join(dir, "memory.db");
 
-  // Crear DB en v5 directamente
+  // Crear DB en la versión actual directamente
   {
     const db = new DatabaseSync(dbPath);
     db.exec(LIKE_DDL);
-    db.exec("PRAGMA user_version = 5");
+    db.exec(`PRAGMA user_version = ${MEMORY_SCHEMA_VERSION}`);
     db.close();
   }
 
-  // Primera apertura: v5 → sigue en v5
+  // Primera apertura: sigue en la versión actual
   {
     const db = new DatabaseSync(dbPath);
     ensureMemorySchema(db);
     const v = (db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version;
-    assert.equal(v, 5, "primera apertura: debe permanecer en v5");
+    assert.equal(v, MEMORY_SCHEMA_VERSION, "primera apertura: debe permanecer en la versión actual");
     db.close();
   }
 
-  // Segunda apertura: sigue en v5 (no se incrementa)
+  // Segunda apertura: sigue igual (no se incrementa)
   {
     const db = new DatabaseSync(dbPath);
     ensureMemorySchema(db);
     const v = (db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version;
-    assert.equal(v, 5, "segunda apertura: sigue en v5 (idempotente)");
+    assert.equal(v, MEMORY_SCHEMA_VERSION, "segunda apertura: sigue igual (idempotente)");
     db.close();
   }
   rmSync(dir, { recursive: true, force: true });
