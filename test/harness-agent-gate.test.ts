@@ -78,6 +78,31 @@ async function setConsent(state: "enabled" | "disabled"): Promise<void> {
   if (state === "enabled") trustWorkspace(repo.root);
 }
 
+async function writeFailingRule(): Promise<void> {
+  await repo.write(
+    ".harness/rules/fail.md",
+    jsonFrontmatterDoc(
+      {
+        id: "project/always-fail",
+        phase: "verify",
+        severity: "blocking",
+        gate: { type: "command", run: "exit 1", failureMessage: "told you so" },
+      },
+      "# Always fails",
+    ),
+  );
+}
+
+/** The persisted stop-chain counter (0 when absent). */
+async function retries(): Promise<number> {
+  try {
+    const raw = await fs.readFile(path.join(repo.root, ".harness", "state", "current", "retries.json"), "utf8");
+    return (JSON.parse(raw) as { count: number }).count;
+  } catch {
+    return 0;
+  }
+}
+
 async function newContract(overrides: Partial<TaskContract> = {}): Promise<void> {
   const contract: TaskContract = {
     goal: "matrix goal",
@@ -369,30 +394,17 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
   });
 
   it("stop: failing gates → {decision:block} on stdout + retry counter", async () => {
-    await repo.write(
-      ".harness/rules/fail.md",
-      jsonFrontmatterDoc(
-        {
-          id: "project/always-fail",
-          phase: "verify",
-          severity: "blocking",
-          gate: { type: "command", run: "exit 1", failureMessage: "told you so" },
-        },
-        "# Always fails",
-      ),
-    );
+    await writeFailingRule();
     const run = await gate(STOP);
     assert.deepEqual(run.result, { handled: true, exitCode: 0 });
     const decision = JSON.parse(run.stdout);
     assert.equal(decision.decision, "block");
     assert.match(decision.reason, /told you so|blocking gate/);
-    const retries = JSON.parse(
-      await fs.readFile(path.join(repo.root, ".harness", "state", "current", "retries.json"), "utf8"),
-    );
-    assert.equal(retries.count, 1);
+    assert.equal(await retries(), 1);
   });
 
   it("stop: retry cap exhausted → yields with an honest summary, never claims success", async () => {
+    await writeFailingRule();
     await newContract({ maxRetries: 1 }); // overwrite the beforeEach contract
     await repo.write(".harness/state/current/retries.json", JSON.stringify({ count: 1 }));
     const run = await gate(STOP);
@@ -412,9 +424,58 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
     assert.equal(run.stdout, "");
   });
 
-  it("stop: stop_hook_active=true never loops", async () => {
-    const run = await gate({ hook_event_name: "Stop", stop_hook_active: true });
+  // Stop chains (Claude Code): maxRetries = blocks per chain; stop_hook_active
+  // false opens a chain, true continues it; every stop runs a fresh verify.
+  const chainStop = (active: boolean) => gate({ hook_event_name: "Stop", stop_hook_active: active });
+
+  it("(stop-chain-1) a chain is blocked up to maxRetries times, then yields with the fresh failure", async () => {
+    await writeFailingRule();
+    await newContract({ maxRetries: 2 });
+    for (const [active, count] of [[false, 1], [true, 2]] as const) {
+      const run = await chainStop(active);
+      assert.equal(JSON.parse(run.stdout).decision, "block", `stop_hook_active=${active}`);
+      assert.equal(await retries(), count);
+    }
+    const third = await chainStop(true);
+    assert.deepEqual(third.result, { handled: true, exitCode: 0 });
+    assert.equal(third.stdout, "", "no block — the chain yields");
+    assert.match(third.stderr, /after 2 attempts — allowing stop so a human can look/);
+    assert.match(third.stderr, /1 blocking gate\(s\) failing in the verify just run \(project\/always-fail\)/);
+    assert.equal(await retries(), 0, "the next chain starts from zero");
+  });
+
+  it("(stop-chain-2) a new chain resets blocks carried over from an earlier turn", async () => {
+    await writeFailingRule();
+    await newContract({ maxRetries: 2 });
+    await repo.write(".harness/state/current/retries.json", JSON.stringify({ count: 2 }));
+    const run = await chainStop(false);
+    assert.equal(JSON.parse(run.stdout).decision, "block", "first stop of a turn blocks, it does not yield");
+    assert.equal(await retries(), 1);
+  });
+
+  it("(stop-chain-3) at the cap but gates fixed meanwhile → allow (verify re-ran), never a failure claim", async () => {
+    repo.git("add", ".leina");
+    repo.git("commit", "-m", "consent");
+    await newContract({ maxRetries: 1 });
+    await repo.write(".harness/state/current/retries.json", JSON.stringify({ count: 1 }));
+    const run = await chainStop(true);
     assert.deepEqual(run.result, { handled: false, exitCode: 0 });
+    assert.equal(run.stderr, "");
+    assert.equal(await retries(), 0, "a passing verify resets the counter");
+  });
+
+  it("(stop-chain-4) a stop_hook_active continuation with green gates is allowed", async () => {
+    repo.git("add", ".leina");
+    repo.git("commit", "-m", "consent");
+    const run = await chainStop(true);
+    assert.deepEqual(run.result, { handled: false, exitCode: 0 });
+  });
+
+  it("(stop-chain-5) UserPromptSubmit opens a new chain for hosts without stop_hook_active", async () => {
+    await repo.write(".harness/state/current/retries.json", JSON.stringify({ count: 2 }));
+    const run = await gate({ hook_event_name: "UserPromptSubmit", prompt: "next task" });
+    assert.deepEqual(run.result, { handled: false, exitCode: 0 });
+    assert.equal(await retries(), 0);
   });
 
   it("session-start: handled:false + sessionContext carries the contract", async () => {

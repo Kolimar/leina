@@ -61,6 +61,11 @@ export function payloadFilePath(payload: HookPayload): string | undefined {
   return typeof flat === "string" && flat.length > 0 ? flat : undefined;
 }
 
+/** Claude Code's Stop chain marker; undefined when the host does not send one (see decideStop). */
+export function payloadStopHookActive(payload: HookPayload): boolean | undefined {
+  return typeof payload.stop_hook_active === "boolean" ? payload.stop_hook_active : undefined;
+}
+
 export function payloadCommand(payload: HookPayload): string | undefined {
   const fromTool = toolInput(payload).command;
   if (typeof fromTool === "string" && fromTool.length > 0) return fromTool;
@@ -69,8 +74,9 @@ export function payloadCommand(payload: HookPayload): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Retry counter — persisted under .harness/state/current/ so the stop gate's
-// cap survives across hook invocations of the same task.
+// Retry counter — how many times the CURRENT stop chain was blocked (see the
+// stop section below), persisted under .harness/state/current/ because every
+// Stop is a separate hook process.
 // ---------------------------------------------------------------------------
 
 function retriesPath(repoRoot: string): string {
@@ -78,14 +84,33 @@ function retriesPath(repoRoot: string): string {
 }
 
 async function readRetries(repoRoot: string): Promise<number> {
-  const raw = await readJsonIfExists(retriesPath(repoRoot));
-  const count = (raw.value as { count?: unknown } | undefined)?.count;
-  return typeof count === "number" && Number.isFinite(count) ? count : 0;
+  try {
+    const raw = await readJsonIfExists(retriesPath(repoRoot));
+    const count = (raw.value as { count?: unknown } | undefined)?.count;
+    return typeof count === "number" && Number.isFinite(count) && count > 0 ? Math.trunc(count) : 0;
+  } catch {
+    return 0;
+  }
 }
 
-async function writeRetries(repoRoot: string, count: number): Promise<void> {
-  await ensureStateDir(repoRoot);
-  await fs.writeFile(retriesPath(repoRoot), `${JSON.stringify({ count })}\n`, "utf8");
+/** Persist the counter; false when it could not be written. */
+async function writeRetries(repoRoot: string, count: number): Promise<boolean> {
+  try {
+    await ensureStateDir(repoRoot);
+    await fs.writeFile(retriesPath(repoRoot), `${JSON.stringify({ count })}\n`, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A new user turn opens a new stop chain: called on UserPromptSubmit so hosts
+ * whose Stop payload carries no `stop_hook_active` do not carry blocks over
+ * from an interrupted turn. No-op (no file created) when nothing is counted.
+ */
+export async function resetStopRetries(repoRoot: string): Promise<void> {
+  if ((await readRetries(repoRoot)) > 0) await writeRetries(repoRoot, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -403,6 +428,20 @@ export async function decidePreBash(
 // stop — the completion gate. Failing blocking gates → block with the gate
 // report as the model's next instruction; a retry cap keeps the loop honest
 // instead of infinite (when exhausted, it YIELDS with an honest summary).
+//
+// Semantics of the cap — `maxRetries` = how many times ONE stop chain may be
+// blocked. A chain is the run of Stop events from the agent's first attempt
+// to end its turn until a stop is allowed:
+//   - Claude Code marks a continuation with `stop_hook_active: true`, so
+//     `false` opens a new chain and resets the counter (a red verify from the
+//     previous turn never eats into this one); hosts that send no flag keep
+//     counting across stops, and their UserPromptSubmit (resetStopRetries)
+//     opens the new turn instead.
+//   - EVERY stop runs a fresh verify: a pass allows and resets; a failure
+//     blocks while the chain is under the cap, and at the cap yields — with
+//     the failure just observed, never a stale claim — and resets.
+//   - If the counter cannot be persisted the loop could not be bounded, so
+//     the stop yields instead of blocking.
 // ---------------------------------------------------------------------------
 
 export type StopDecision =
@@ -416,38 +455,32 @@ export type StopDecision =
  * to extend the Stop-block loop unboundedly. Floored at 0 (yield immediately),
  * non-finite values fall back to the default of 3.
  */
-const MAX_RETRIES_CAP = 10;
+export const MAX_RETRIES_CAP = 10;
 
 function effectiveMaxRetries(declared: number | undefined): number {
   if (typeof declared !== "number" || !Number.isFinite(declared)) return 3;
   return Math.min(Math.max(Math.trunc(declared), 0), MAX_RETRIES_CAP);
 }
 
+/**
+ * @param stopHookActive the host's chain marker: `false` = first stop of a new
+ *   chain, `true` = a continuation after a block, `undefined` = the host does
+ *   not say (the persisted counter carries the chain).
+ */
 export async function decideStop(
   repoRoot: string,
   ports: HarnessPorts,
-  stopHookActive: boolean,
+  stopHookActive: boolean | undefined,
 ): Promise<StopDecision> {
-  if (stopHookActive) return { kind: "allow" }; // we are already the blocker — never loop
-
   const { contract } = await loadContract(repoRoot);
   const maxRetries = effectiveMaxRetries(contract?.maxRetries);
-  const retries = await readRetries(repoRoot);
-
-  if (retries >= maxRetries) {
-    await writeRetries(repoRoot, 0);
-    return {
-      kind: "yield",
-      message:
-        `[harness] Gates still failing after ${maxRetries} attempts — allowing stop so a human can look. ` +
-        "The last report is in .harness/state/current/verify-report.json. Do NOT treat this task as complete.",
-    };
-  }
+  const blocked = stopHookActive === false ? 0 : await readRetries(repoRoot);
 
   const outcome = await runVerify(repoRoot, { ports });
 
   if (outcome.exitCode === 2) {
     // Broken config must not trap the user in an unstoppable session.
+    await writeRetries(repoRoot, 0);
     return { kind: "yield", message: `[harness] verify could not run: ${outcome.loadErrors.join("; ")}` };
   }
 
@@ -456,7 +489,32 @@ export async function decideStop(
     return { kind: "allow" };
   }
 
-  await writeRetries(repoRoot, retries + 1);
+  const failing = outcome.report.results
+    .filter((r) => r.severity === "blocking" && (r.status === "fail" || r.status === "error" || r.status === "timeout"))
+    .map((r) => r.ruleId);
+  const failingNow =
+    `${outcome.report.summary.blockingFailures} blocking gate(s) failing in the verify just run ` +
+    `(${[...new Set(failing)].join(", ")}).`;
+
+  if (blocked >= maxRetries) {
+    await writeRetries(repoRoot, 0);
+    return {
+      kind: "yield",
+      message:
+        `[harness] Gates still failing after ${maxRetries} attempts — allowing stop so a human can look. ` +
+        `${failingNow} The report is in .harness/state/current/verify-report.json. ` +
+        "Do NOT treat this task as complete.",
+    };
+  }
+
+  if (!(await writeRetries(repoRoot, blocked + 1))) {
+    return {
+      kind: "yield",
+      message:
+        `[harness] ${failingNow} The retry counter could not be saved, so the stop is not blocked again ` +
+        "(an unbounded loop is worse) — allowing stop so a human can look. Do NOT treat this task as complete.",
+    };
+  }
   return { kind: "block", reason: renderFeedback(outcome.report) };
 }
 

@@ -32,8 +32,7 @@ import { gatesOf, type DiffContentGate } from "../src/domain/harness/model.ts";
 import type { GitPort } from "../src/domain/harness/ports.ts";
 import type { GateContext } from "../src/application/harness/gates/types.ts";
 import { ShellProcessRunner } from "../src/infrastructure/harness/exec.ts";
-import { HarnessGit } from "../src/infrastructure/harness/git.ts";
-import { makeTmpRepo } from "./helpers/harness-tmprepo.ts";
+import { isolateLeinaHome, makeTmpRepo } from "./helpers/harness-tmprepo.ts";
 
 const proc = new ShellProcessRunner();
 
@@ -240,6 +239,7 @@ describe("L2: writeFileAtomic", () => {
 describe("L3: maxRetries cap in the stop gate", () => {
   it("a huge contract maxRetries is capped — the loop yields at the ceiling, not at 9999", async () => {
     const repo = await makeTmpRepo(false);
+    const restoreHome = isolateLeinaHome(path.join(repo.root, "no-user-config"));
     try {
       await saveContract(repo.root, {
         goal: "cap me",
@@ -250,13 +250,17 @@ describe("L3: maxRetries cap in the stop gate", () => {
       });
       await repo.write(".harness/state/current/retries.json", JSON.stringify({ count: 10 }));
 
-      const ports = { proc, git: new HarnessGit() }; // unused on the yield path
-      const decision = await decideStop(repo.root, ports, false);
+      // Every stop runs a fresh verify: commands "fail" instantly and, outside
+      // git, the builtin no-secrets gate errors — the chain is still red.
+      const failingProc = { runShell: async () => ({ exitCode: 1, stdout: "", all: "", timedOut: false }) };
+      const ports = { proc: failingProc, git: { ...stubGit(""), isRepo: async () => false, changedFiles: async () => null } };
+      const decision = await decideStop(repo.root, ports, true);
       assert.equal(decision.kind, "yield");
       const message = decision.kind === "yield" ? decision.message : "";
       assert.match(message, /after 10 attempts/);
       assert.ok(!message.includes("9999"), "the declared (uncapped) value must not drive the loop");
     } finally {
+      restoreHome();
       await repo.cleanup();
     }
   });

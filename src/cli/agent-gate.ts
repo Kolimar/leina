@@ -591,7 +591,11 @@ async function harnessStop(
   payload: AgentHookPayload,
   hooks: HooksModule,
 ): Promise<HarnessAgentGateResult> {
-  const decision = await hooks.decideStop(cwd, await harnessPorts(), payload.stop_hook_active === true);
+  const decision = await hooks.decideStop(
+    cwd,
+    await harnessPorts(),
+    hooks.payloadStopHookActive(payload as unknown as Record<string, unknown>),
+  );
   if (decision.kind === "block") {
     // Claude Code Stop protocol: {"decision":"block","reason":...} on stdout,
     // exit 0 — the reason becomes the model's next instruction.
@@ -628,6 +632,12 @@ export async function runHarnessAgentGate(
     const event = payload.hook_event_name;
     if (event === "PreToolUse") return await harnessPreToolUse(cwd, payload, hooks);
     if (event === "Stop") return await harnessStop(cwd, payload, hooks);
+    if (event === "UserPromptSubmit") {
+      // A new turn opens a new stop chain (see decideStop); the advisory
+      // injection still owns the event.
+      await hooks.resetStopRetries(cwd);
+      return HARNESS_NOT_HANDLED;
+    }
     if (event === "SessionStart") {
       return { handled: false, exitCode: 0, sessionContext: await hooks.sessionStartContext(cwd) };
     }

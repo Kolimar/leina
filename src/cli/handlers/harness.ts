@@ -31,6 +31,7 @@ import {
   isHookEvent,
   payloadCommand,
   payloadFilePath,
+  payloadStopHookActive,
   recordCursorEdit,
   sessionStartContext,
   type HookPayload,
@@ -444,7 +445,7 @@ export async function runHarnessHookEvent(event: string, rawPayload: string, rep
       return;
     }
     case "stop": {
-      const decision = await decideStop(repoRoot, makeHarnessPorts(), payload.stop_hook_active === true);
+      const decision = await decideStop(repoRoot, makeHarnessPorts(), payloadStopHookActive(payload));
       if (decision.kind === "block") out(JSON.stringify({ decision: "block", reason: decision.reason }));
       else if (decision.kind === "yield") err(decision.message);
       return;
