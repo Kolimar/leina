@@ -290,11 +290,18 @@ test("(mcps-5) graph_visualize returns the path of a generated HTML file", async
   try {
     writeFileSync(join(dir, "a.ts"), "export function one(): number { return 1; }\n");
 
+    // Build and visualize are a DEPENDENT sequence, but the server processes tool calls
+    // concurrently — batching them into one driveMcp would race (visualize's existsSync
+    // fires while the build's replaceGraph is still in flight). Drive them as two separate
+    // sessions: the graph.db persisted by the first is on disk before the second opens it.
+    await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "graph_build", arguments: { root: dir } } },
+    ]);
     const responses = await driveMcp(dir, env, [
       { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
       { jsonrpc: "2.0", method: "notifications/initialized" },
-      // Build first (visualize itself does not buildIfMissing — it requires a graph).
-      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "graph_build", arguments: { root: dir } } },
       { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "graph_visualize", arguments: { root: dir } } },
     ]);
     const byId = new Map(responses.map((r) => [r.id, r]));
