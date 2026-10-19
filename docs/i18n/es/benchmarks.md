@@ -16,9 +16,12 @@ borrados) y una vez en caliente.
 
 - **build (en frío)** — primer build: parseo completo de todos los archivos.
 - **rebuild (en caliente)** — el mismo build con la caché de extracción por archivo ya
-  poblada: solo los archivos modificados se vuelven a parsear (TypeScript igual ejecuta
-  su chequeo de tipos de programa completo — eso es lo que hace sus edges de calidad de
-  compilador).
+  poblada. La caché es por archivo **solo para los lenguajes de tree-sitter**: los
+  archivos tree-sitter sin cambios se saltean el re-parseo. TypeScript pasa por el parseo
+  y chequeo de tipos de **programa completo** de ts-morph en cada build — eso es lo que
+  hace sus edges de calidad de compilador, y significa que el build *no* es incremental
+  en la etapa de ts-morph (en este repo dominado por TS la caché caliente ahorra ~4%,
+  ver abajo).
 - **ruta de lectura** — `stats / affected / query / impact / audit / memory / context`:
   los comandos que un agente realmente invoca a mitad de sesión.
 
@@ -80,7 +83,7 @@ en caliente ahorra poco aquí — se amortiza en repos políglotas donde predomi
 archivos de tree-sitter. `leina build <dir> --profile` muestra exactamente en qué se va
 el tiempo en tu repo.
 
-### Cross-corpus — el read path es plano sin importar el tamaño del repo
+### Cross-corpus — cómo escala el read path
 
 El mismo arnés, corrido contra [`zod`](https://github.com/colinhacks/zod) (un repo externo
 de TypeScript no relacionado, 418 archivos). Crudo: [`zod-speed.json`](../../../bench/results/zod-speed.json),
@@ -91,12 +94,25 @@ de TypeScript no relacionado, 418 archivos). Crudo: [`zod-speed.json`](../../../
 | leina (propio) | 316 | 2.93 s | 123–191 ms | 504 tok vs 123k (**244×**) |
 | zod (externo) | 418 | 5.07 s | 122–188 ms | 651 tok vs 100k (**154×**) |
 
-El build escala con la cantidad de archivos (repo más grande → parseo más largo), pero **el
-read path casi no se mueve** — las lecturas pegan a índices SQLite, no al extractor, así que
-`affected`/`impact`/`query` quedan cerca del mismo piso de ~130 ms tenga el grafo 2k o 6k
-edges. zod además invierte el modo de fallo de grep de la Fase 2: ahí un grep textual de
-`ZodType` matchea **38** archivos pero solo **27** son dependientes reales — grep sobre-matchea
-(comentarios, strings) donde en leina sub-matcheaba. leina devuelve los 27 exactos igual.
+El build escala con la cantidad de archivos (repo más grande → parseo más largo). En el
+read path la historia de escalado es **por operación**, no uniforme:
+
+- **`affected` / `impact` / `path` se mantienen casi planos** — pegan a lookups indexados
+  de edges más un recorrido acotado en SQLite, así que su costo sigue el tamaño de la
+  *respuesta*, no el tamaño del repo (piso de ~130 ms en ambos corpus de arriba).
+- **`query` crece con el grafo** — carga el set completo de nodes/edges en cada llamada
+  para puntuarlo. A estos tamaños (2k–6k edges) sigue siendo ~150 ms, pero es el primer
+  comando que deberías esperar que se mueva en un grafo mucho más grande.
+- **Toda lectura paga además el freshness gate** — un walk+stat sobre el árbol de fuentes
+  para detectar staleness antes de responder, que escala con la cantidad de archivos del
+  repo sin importar la consulta.
+
+Los dos corpus medidos son repos chicos-a-medianos (316 y 418 archivos): leé la tabla como
+"el read path es barato y está atado a índices a esta escala", no como prueba de planitud a
+cualquier tamaño. zod además invierte el modo de fallo de grep de la Fase 2: ahí un grep
+textual de `ZodType` matchea **38** archivos pero solo **27** son dependientes reales — grep
+sobre-matchea (comentarios, strings) donde en leina sub-matcheaba. leina devuelve los 27
+exactos igual.
 
 ## Ejecútalo en tu propio repo
 

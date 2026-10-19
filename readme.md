@@ -197,7 +197,8 @@ leina activate --hosts devin,claude
 ```bash
 # build the graph for a project (writes <dir>/.leina/graph.db + manifest)
 leina build <dir> [--json]          # --json also writes a portable graph.json
-leina build <dir> --profile         # stage timings (unchanged files reuse the extract cache)
+leina build <dir> --profile         # stage timings (tree-sitter files reuse the per-file
+                                    # cache; ts-morph always re-runs whole-program)
 leina refresh <dir>                 # force a full rebuild
 
 # diagnose health: node version, parser wasm assets, global share freshness, host symlinks,
