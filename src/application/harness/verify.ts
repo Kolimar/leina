@@ -20,6 +20,7 @@ import { loadResolvedRules, filterRules } from "./resolver.ts";
 import { ensureStateDir, loadContract } from "./contract-io.ts";
 import { harnessDir } from "./config-io.ts";
 import { readJsonIfExists } from "./io.ts";
+import { fingerprintWorktree, type WorktreeFingerprint } from "./freshness.ts";
 import { runGates } from "./gates/engine.ts";
 import { buildReport, type VerifyReport } from "./gates/report.ts";
 import { type GateContext } from "./gates/types.ts";
@@ -159,7 +160,13 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
   const report = buildReport(phases, startedAt, results);
 
   const persisted = isFullRun(phases, options.ruleId);
-  if (persisted) await persistReport(repoRoot, report, changed);
+  if (persisted) {
+    // Fingerprint the tree AFTER the gates ran: the report covers the tree as
+    // verify leaves it (gate outputs included). No diff → no fingerprint →
+    // the commit guard treats the report as stale.
+    const worktree = changedUnknown ? undefined : await fingerprintWorktree(repoRoot, git, baseRef);
+    await persistReport(repoRoot, report, changed, worktree);
+  }
 
   return {
     report,
@@ -206,13 +213,19 @@ async function readGeneratedPaths(repoRoot: string): Promise<string[]> {
   return paths;
 }
 
-async function persistReport(repoRoot: string, report: VerifyReport, changedFiles: string[]): Promise<void> {
+async function persistReport(
+  repoRoot: string,
+  report: VerifyReport,
+  changedFiles: string[],
+  worktree: WorktreeFingerprint | undefined,
+): Promise<void> {
   try {
     const dir = await ensureStateDir(repoRoot);
-    // The persisted document carries `changedFiles` on top of the report so
-    // the commit guard (hooks.ts readVerifySummary) can stat those files and
-    // detect a report gone STALE — edited working tree after a green verify.
-    const persisted = { ...report, changedFiles };
+    // The persisted document carries, on top of the report, the changed files
+    // the run judged and the working-tree fingerprint the commit guard
+    // (hooks.ts readVerifySummary) recomputes to detect a report gone STALE —
+    // working tree changed after verify (freshness.ts).
+    const persisted = { ...report, changedFiles, ...(worktree !== undefined ? { worktree } : {}) };
     await fs.writeFile(path.join(dir, "verify-report.json"), `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
   } catch {
     // Persisting the report is best-effort; the exit code is the contract.

@@ -7,6 +7,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fingerprintWorktree } from "../../src/application/harness/freshness.ts";
+import { HarnessGit } from "../../src/infrastructure/harness/git.ts";
 
 export interface TmpRepo {
   root: string;
@@ -52,6 +54,18 @@ export function isolateLeinaHome(dir: string): () => void {
     if (saved === undefined) delete process.env.LEINA_HOME;
     else process.env.LEINA_HOME = saved;
   };
+}
+
+/**
+ * Persist a verify report with `blockingFailures`, fingerprinted against the
+ * CURRENT working tree (what runVerify records) so the commit guard treats it
+ * as fresh until the tree changes. A report without a fingerprint is stale.
+ */
+export async function writeFreshVerifyReport(root: string, blockingFailures: number): Promise<void> {
+  const worktree = await fingerprintWorktree(root, new HarnessGit(), undefined);
+  const file = path.join(root, ".harness", "state", "current", "verify-report.json");
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify({ summary: { blockingFailures }, worktree }), "utf8");
 }
 
 /** Serialize an object as the JSON-frontmatter rule/recipe document format. */

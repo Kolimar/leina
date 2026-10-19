@@ -573,7 +573,11 @@ async function harnessPreToolUse(
     return HARNESS_NOT_HANDLED;
   }
   if (tool !== undefined && HARNESS_BASH_TOOLS.has(tool)) {
-    const decision = await hooks.decidePreBash(cwd, hooks.payloadCommand(payload as unknown as Record<string, unknown>));
+    const decision = await hooks.decidePreBash(
+      cwd,
+      hooks.payloadCommand(payload as unknown as Record<string, unknown>),
+      (await harnessPorts()).git,
+    );
     if (decision.block) {
       process.stderr.write(`${decision.message}\n`);
       return { handled: true, exitCode: 2 };

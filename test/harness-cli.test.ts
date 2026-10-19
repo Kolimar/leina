@@ -16,6 +16,7 @@ import {
   jsonFrontmatterDoc,
   makeTmpRepo,
   type TmpRepo,
+  writeFreshVerifyReport,
 } from "./helpers/harness-tmprepo.ts";
 
 // Builtin rules whose gates need the project toolchain (npm, leina, git
@@ -378,10 +379,7 @@ describe("leina harness hook (transport)", () => {
   });
 
   it("pre-bash blocks git commit while the persisted report has blocking failures", async () => {
-    await repo.write(
-      ".harness/state/current/verify-report.json",
-      JSON.stringify({ summary: { blockingFailures: 2 } }),
-    );
+    await writeFreshVerifyReport(repo.root, 2);
     const blocked = await runHook("pre-bash", { tool_input: { command: "git commit -m done" } });
     assert.equal(blocked.code, 2);
     assert.match(blocked.stderr, /2 blocking gate\(s\) are failing/);
@@ -392,10 +390,7 @@ describe("leina harness hook (transport)", () => {
   });
 
   it("cursor-shell answers the Cursor permission protocol on stdout", async () => {
-    await repo.write(
-      ".harness/state/current/verify-report.json",
-      JSON.stringify({ summary: { blockingFailures: 1 } }),
-    );
+    await writeFreshVerifyReport(repo.root, 1);
     const deny = await runHook("cursor-shell", { command: "git push origin main" });
     assert.equal(JSON.parse(deny.stdout).permission, "deny");
 

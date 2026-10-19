@@ -30,6 +30,7 @@ import {
   jsonFrontmatterDoc,
   makeTmpRepo,
   type TmpRepo,
+  writeFreshVerifyReport,
 } from "./helpers/harness-tmprepo.ts";
 
 // Never spawn detached graph builds from in-process gate tests.
@@ -248,10 +249,7 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
   });
 
   it("pre-bash: git commit with blocking failures in the report → BLOCK (exit 2)", async () => {
-    await repo.write(
-      ".harness/state/current/verify-report.json",
-      JSON.stringify({ summary: { blockingFailures: 3 } }),
-    );
+    await writeFreshVerifyReport(repo.root, 3);
     const run = await gate(BASH_COMMIT);
     assert.deepEqual(run.result, { handled: true, exitCode: 2 });
     assert.match(run.stderr, /3 blocking gate\(s\) are failing/);
@@ -268,10 +266,7 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
   });
 
   it("pre-bash: commit-lookalikes are NOT treated as git commit", async () => {
-    await repo.write(
-      ".harness/state/current/verify-report.json",
-      JSON.stringify({ summary: { blockingFailures: 3 } }),
-    );
+    await writeFreshVerifyReport(repo.root, 3);
     for (const command of [
       "git log --grep commit",
       'echo "git commit"',
@@ -286,10 +281,7 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
   });
 
   it("pre-bash: real commit/push forms ARE caught — chains, global flags, quoting, sh -c", async () => {
-    await repo.write(
-      ".harness/state/current/verify-report.json",
-      JSON.stringify({ summary: { blockingFailures: 1 } }),
-    );
+    await writeFreshVerifyReport(repo.root, 1);
     for (const command of [
       "git add -A && git commit -m done",
       "git push origin main",
@@ -464,10 +456,7 @@ describe("harness agent gate — WITHOUT active contract", () => {
   }
 
   it("pre-bash with a failing report still does not block without a contract", async () => {
-    await repo.write(
-      ".harness/state/current/verify-report.json",
-      JSON.stringify({ summary: { blockingFailures: 9 } }),
-    );
+    await writeFreshVerifyReport(repo.root, 9);
     const run = await gate(BASH_COMMIT);
     assert.equal(run.result.handled, false);
     assert.equal(run.stderr, "");

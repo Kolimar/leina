@@ -436,7 +436,7 @@ export async function runHarnessHookEvent(event: string, rawPayload: string, rep
       return;
     }
     case "pre-bash": {
-      const decision = await decidePreBash(repoRoot, payloadCommand(payload));
+      const decision = await decidePreBash(repoRoot, payloadCommand(payload), makeHarnessPorts().git);
       if (decision.block) {
         err(decision.message);
         process.exitCode = 2;
@@ -450,7 +450,7 @@ export async function runHarnessHookEvent(event: string, rawPayload: string, rep
       return;
     }
     case "cursor-shell":
-      out(JSON.stringify(await decideCursorShell(repoRoot, payloadCommand(payload))));
+      out(JSON.stringify(await decideCursorShell(repoRoot, payloadCommand(payload), makeHarnessPorts().git)));
       return;
     case "cursor-after-edit":
       await recordCursorEdit(repoRoot, payloadFilePath(payload));
