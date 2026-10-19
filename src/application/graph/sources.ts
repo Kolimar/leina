@@ -3,7 +3,8 @@
 // without pulling in the heavy extractor stack (tree-sitter, ts-morph, sidecars).
 
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { join, resolve } from "node:path";
 import { detectLang } from "./detect.ts";
 
 const IGNORE_DIRS = new Set([
@@ -46,7 +47,49 @@ export function detectIsConfig(path: string): boolean {
   return ext === ".yml" || ext === ".yaml";
 }
 
+// ---------------------------------------------------------------------------
+// Intra-operation memoization of the source walk.
+//
+// The freshness gate (manifest.ts isStale) and a stale-triggered rebuild
+// (build.ts buildGraph / workspace/build.ts per member) each call
+// listSourceFiles — on the stale→auto-rebuild path that meant walking the whole
+// tree twice within ONE logical operation. The memo below deduplicates those
+// walks WITHOUT any cross-operation caching:
+//
+//   · Scope: AsyncLocalStorage. Only calls within the dynamic extent of one
+//     withSourceListMemo(fn) share a memo. Concurrent operations in the same
+//     process (e.g. two MCP tool calls in flight) never see each other's memo,
+//     and every NEW operation re-walks from scratch. This is deliberate — the
+//     freshness gate is correctness-critical: any cache that survives an
+//     operation could report 'fresh' for a repo whose sources changed between
+//     operations, which must never happen. Long-lived processes (MCP server,
+//     TUI, serve) therefore still pay one walk per gate, by design.
+//   · Why not key a persistent cache on the root dir's mtime: a directory's
+//     mtime only changes when a DIRECT child is added/removed/renamed — edits
+//     and additions in nested subdirectories leave it untouched, so an
+//     mtime-keyed cache would yield false 'fresh' verdicts. No correct cheap
+//     invalidation signal exists, so we stop at intra-operation memoization.
+// ---------------------------------------------------------------------------
+
+const sourceListMemo = new AsyncLocalStorage<Map<string, string[]>>();
+
+/**
+ * Run `fn` with source-walk memoization enabled for its dynamic extent: every
+ * listSourceFiles(root) call inside shares one walk per root. Re-entrant —
+ * nested scopes join the outer memo (same logical operation). The memo is
+ * dropped when `fn` settles; nothing persists across operations.
+ */
+export async function withSourceListMemo<T>(fn: () => Promise<T>): Promise<T> {
+  if (sourceListMemo.getStore() !== undefined) return fn();
+  return sourceListMemo.run(new Map(), fn);
+}
+
 export function listSourceFiles(root: string): string[] {
+  const memo = sourceListMemo.getStore();
+  const memoKey = resolve(root);
+  const cached = memo?.get(memoKey);
+  // Defensive copy — callers may sort/mutate their listing without corrupting the memo.
+  if (cached) return [...cached];
   const found: string[] = [];
   function walk(dir: string): void {
     let entries;
@@ -70,5 +113,7 @@ export function listSourceFiles(root: string): string[] {
     }
   }
   walk(root);
+  // Store a pristine copy so a caller mutating `found` cannot poison later hits.
+  memo?.set(memoKey, [...found]);
   return found;
 }

@@ -16,6 +16,7 @@ import { makeResolveAnchor, makeVerifyNode } from "../application/memory/anchor-
 import { AmbiguousProjectError, deriveProjectKey, deriveWorkspaceRootKey, detectWorkspaceMode } from "../application/project/detect-key.ts";
 import { globalMemoryPath, leinaHome } from "../infrastructure/install/share-paths.ts";
 import { isStale } from "../application/graph/manifest.ts";
+import { withSourceListMemo } from "../application/graph/sources.ts";
 import { loadFreshnessConfig } from "../infrastructure/config/freshness.ts";
 import { WorkspaceMemoryFederator } from "../application/workspace/federation.ts";
 import { LocalEventStore } from "../infrastructure/events/local-event-store.ts";
@@ -140,26 +141,33 @@ export async function openFreshStoreOrThrow(
   if (missing && !opts.buildIfMissing) {
     throw new Error(`No graph at ${p}. Run: leina build ${root}`);
   }
-  const s = missing ? { stale: true, reason: "no graph yet" } : isStale(root);
-  if (!s.stale) return openGraphRepo(root);
-  const posture = loadFreshnessConfig(root);
-  if (!missing && posture === "refuse") {
-    throw new Error(
-      `Graph is stale (${s.reason}) but freshness posture is "refuse". ` +
-        `Run: leina refresh ${root}`,
-    );
-  }
-  // auto: rebuild then serve. Writer and reader never coexist (build, close, reopen).
-  process.stderr.write(`leina: graph stale (${s.reason}); rebuilding ...\n`);
-  const { buildGraph } = await import("../application/graph/build.ts");
-  const registry = await buildDefaultRegistry();
-  const w = openGraphRepo(root);
-  try {
-    await buildGraph(root, w, registry);
-  } finally {
-    w.close();
-  }
-  return openGraphRepo(root);
+  // One source-walk memo for the whole gate+rebuild operation: the staleness
+  // check and a stale-triggered rebuild share a single source listing instead of
+  // walking the tree twice. The memo lives ONLY for this call's dynamic extent
+  // (see sources.ts) — the next gate re-walks, so a long-lived process (MCP
+  // server) can never see a stale 'fresh' verdict because of this.
+  return withSourceListMemo(async () => {
+    const s = missing ? { stale: true, reason: "no graph yet" } : isStale(root);
+    if (!s.stale) return openGraphRepo(root);
+    const posture = loadFreshnessConfig(root);
+    if (!missing && posture === "refuse") {
+      throw new Error(
+        `Graph is stale (${s.reason}) but freshness posture is "refuse". ` +
+          `Run: leina refresh ${root}`,
+      );
+    }
+    // auto: rebuild then serve. Writer and reader never coexist (build, close, reopen).
+    process.stderr.write(`leina: graph stale (${s.reason}); rebuilding ...\n`);
+    const { buildGraph } = await import("../application/graph/build.ts");
+    const registry = await buildDefaultRegistry();
+    const w = openGraphRepo(root);
+    try {
+      await buildGraph(root, w, registry);
+    } finally {
+      w.close();
+    }
+    return openGraphRepo(root);
+  });
 }
 
 export async function openFreshStore(root: string): Promise<GraphRepository> {
@@ -200,7 +208,12 @@ export async function openWorkspaceFreshStore(
 
   const { buildWorkspace } = await import("../application/workspace/build.ts");
   const registry = await buildDefaultRegistry();
-  const report = await buildWorkspace(resolved, detection.members, mergedStore, registry);
+  // Same intra-operation walk memo as openFreshStoreOrThrow: buildWorkspace runs
+  // isStale(member) and, for stale members, buildGraph(member) — each pair shares
+  // one walk per member root. Dropped when this call settles.
+  const report = await withSourceListMemo(() =>
+    buildWorkspace(resolved, detection.members, mergedStore, registry),
+  );
 
   if (Object.keys(report.errors).length > 0) {
     process.stderr.write(
