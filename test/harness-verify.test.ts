@@ -14,6 +14,7 @@ import path from "node:path";
 import { runVerify } from "../src/application/harness/verify.ts";
 import { saveContract } from "../src/application/harness/contract-io.ts";
 import { loadRecipes } from "../src/application/harness/recipes.ts";
+import { trustWorkspace } from "../src/application/install/trust.ts";
 import { ShellProcessRunner } from "../src/infrastructure/harness/exec.ts";
 import { HarnessGit } from "../src/infrastructure/harness/git.ts";
 import {
@@ -69,9 +70,10 @@ beforeEach(async () => {
     }),
   );
   await repo.write("src/app.ts", "export const app = 1;\n");
-  // Workspace trust: project-layer js/command gates only execute in repos with
-  // explicit consent (see test/harness-workspace-trust.test.ts for the matrix).
+  // Workspace trust: project-layer js/command gates only execute in workspaces
+  // the user trusted with `leina init` (see test/harness-workspace-trust.test.ts).
   await repo.write(".leina/consent", "enabled");
+  trustWorkspace(repo.root);
   repo.git("add", ".");
   repo.git("commit", "-m", "init");
 });

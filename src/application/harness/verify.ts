@@ -15,7 +15,7 @@ import {
   isPhase,
 } from "../../domain/harness/model.ts";
 import { type HarnessPorts } from "../../domain/harness/ports.ts";
-import { readConsentFlag } from "../install/consent.ts";
+import { isWorkspaceTrusted } from "../install/trust.ts";
 import { loadResolvedRules, filterRules } from "./resolver.ts";
 import { loadContract, stateDir } from "./contract-io.ts";
 import { harnessDir } from "./config-io.ts";
@@ -95,13 +95,13 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
   };
 
   // WORKSPACE TRUST: js/command gates from PROJECT-layer rules execute
-  // repo-supplied code, and verify runs unattended from the Stop hook — a
-  // cloned hostile repo (force-committed contract + project rule) must not
-  // reach code execution just by being opened. Only a repo the user
-  // explicitly initialized (`leina init` → consent "enabled") may run them;
-  // otherwise the engine skips them with a visible result. Builtin/user
-  // rules and non-executable gate types are unaffected.
-  const policy = { allowProjectExecutableGates: readConsentFlag(repoRoot) === "enabled" };
+  // repo-supplied code — a cloned hostile repo (force-committed contract +
+  // project rule) must not reach code execution just by being opened. Only a
+  // workspace the user explicitly trusted (`leina init` → record in the
+  // out-of-repo trust store; a committed .leina/consent grants nothing) may
+  // run them; otherwise the engine skips them with a visible result.
+  // Builtin/user rules and non-executable gate types are unaffected.
+  const policy = { allowProjectExecutableGates: isWorkspaceTrusted(repoRoot) };
   const results = await runGates(rules, ctx, resolution.config.verify.parallelism, policy);
   const report = buildReport(phases, startedAt, results);
 

@@ -107,8 +107,8 @@ export function matchLinesBounded(
 // with the repo, so a cloned hostile repo could otherwise reach silent code
 // execution through the Stop hook's verify run (a force-committed
 // .harness/state/current/contract.json plus a project rule is all it takes).
-// The policy below lets the composition point (runVerify) gate those on the
-// repo's explicit consent. Builtin/user rules are trusted (they come from the
+// The policy below lets the composition point (runVerify) gate those on
+// explicit workspace trust. Builtin/user rules are trusted (they come from the
 // installed package or the user's own home); non-executable gate types
 // (file/diff/diff-content/checklist) only inspect state and always run.
 // ---------------------------------------------------------------------------
@@ -118,7 +118,8 @@ const EXECUTABLE_GATE_TYPES: ReadonlySet<Gate["type"]> = new Set(["js", "command
 export interface GateExecutionPolicy {
   /**
    * Whether js/command gates declared by 'project'-layer rules may execute.
-   * Derived from the repo's explicit trust (`leina init` → consent enabled).
+   * Derived from explicit workspace trust (`leina init` → out-of-repo trust
+   * record, see application/install/trust.ts).
    * When false those gates are SKIPPED with a visible result — they neither
    * run nor fail verify on their own. Omitting the policy entirely (unit
    * tests, direct engine callers) keeps the historical run-everything shape.

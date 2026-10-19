@@ -26,6 +26,7 @@ import { mergeGitignore, removeGitignoreBlock } from "../../application/install/
 import { devinHooksJson } from "../../application/install/devin-hooks.ts";
 import { grantCliExecPermission, grantMcpPermission, revokeCliExecPermission, revokeMcpPermission } from "../../application/install/permissions.ts";
 import { readConsentFlag, writeConsentFlag } from "../../application/install/consent.ts";
+import { trustRecordPath, trustWorkspace, untrustWorkspace } from "../../application/install/trust.ts";
 import { runActivate, runDeactivate } from "../../application/activate.ts";
 import {
   deriveProjectKey,
@@ -411,6 +412,20 @@ function writeConsentStep(project: string, written: string[], failures: string[]
   }
 }
 
+// Workspace trust — the OUT-OF-REPO record (application/install/trust.ts) that lets the
+// harness hooks, automated verify and project-layer executable gates run here. Written
+// only once consent is actually enabled (FULL and LIGHT alike), and only by `init`: an
+// explicit human command on this machine, never something a cloned repo can carry.
+function writeTrustStep(project: string, written: string[], failures: string[]): void {
+  if (readConsentFlag(project) !== "enabled") return; // consent step failed — already reported
+  try {
+    trustWorkspace(project);
+    written.push(`workspace trust (${trustRecordPath(project)})`);
+  } catch (err) {
+    failures.push(`workspace trust: ${errMsg(err)}`);
+  }
+}
+
 // Advisory nudge when global activation has never been run AND blanket is not active.
 // Shown in both LIGHT and FULL, but only when activation is genuinely absent (not when
 // blanket covers it — under blanket, setup already ran activate). Never blocks; advisory only.
@@ -545,6 +560,7 @@ export async function handleInit(rest: string[]): Promise<void> {
   //   FULL  (blanket=off): AGENTS.md protocol block + .gitignore + writeConsentFlag, plus
   //                        per selected host: devin → .devin/hooks.v1.json + LOCAL Exec
   //                        grant in .devin/config.json; claude → .claude/settings.json hooks.
+  //   Both branches then record the out-of-repo workspace trust (writeTrustStep).
   //
   // Neither branch touches ~/.config/devin/config.json (I3).
   // No auto-build in either branch; use --build for an on-demand foreground build (I2).
@@ -590,6 +606,7 @@ export async function handleInit(rest: string[]): Promise<void> {
   lockProjectName(project, nameArg, written, failures);
 
   const mode = writeInitArtifacts(project, profile, cliBase, hosts, written, failures);
+  writeTrustStep(project, written, failures);
 
   if (doMcp) writeMcpRegistrationStep(project, written, failures);
   // --claude-hooks forces the Claude wiring when the claude host was not selected
@@ -860,7 +877,8 @@ export function handleDeactivate(_rest: string[]): void {
  * Per-repo inverse of `init`. Idempotent. [T3, D3]
  *
  * Operations (strip-inverso by marker, never by .bak):
- *   1. Set consent flag to "disabled" (only if currently "enabled").
+ *   1. Set consent flag to "disabled" (only if currently "enabled") and drop the
+ *      workspace trust record ($LEINA_HOME/trust/).
  *   2. `removeAgentsMdBlock` — strip the managed protocol block from AGENTS.md (if present).
  *   3. `removeGitignoreBlock` — strip the managed ignore block from .gitignore (if present).
  *   4. `revokeCliExecPermission` — strip the local Exec grant from .devin/config.json (if any).
@@ -870,12 +888,14 @@ export function handleDeactivate(_rest: string[]): void {
  * Does NOT touch `~/.config/devin/config.json` (user-global) — that is `deactivate`'s scope.
  */
 // 1. Consent flag → disabled (only if currently "enabled"; "unknown" = never init'd → skip).
-function deinitConsent(project: string, written: string[]): void {
+//    The out-of-repo workspace trust record goes too, whatever the flag says.
+function deinitConsent(project: string, written: string[], removed: string[]): void {
   const prevConsent = readConsentFlag(project);
   if (prevConsent === "enabled") {
     writeConsentFlag(project, "disabled");
     written.push(".leina/consent (enabled → disabled)");
   }
+  if (untrustWorkspace(project)) removed.push("workspace trust (record removed from $LEINA_HOME/trust)");
 }
 
 // 2. AGENTS.md: strip managed protocol block (if any). User content is preserved. [T3, D3]
@@ -946,7 +966,7 @@ export function handleDeinit(rest: string[]): void {
   const removed: string[] = [];
   const failures: string[] = [];
 
-  deinitConsent(project, written);
+  deinitConsent(project, written, removed);
   // Harness first: stripping its AGENTS.md managed block before the leina
   // protocol strip lets deinitAgentsMd see whether only our content remains.
   const harness = deinitHarness(project);

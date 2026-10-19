@@ -15,6 +15,7 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import {
   hasActiveHarnessContract,
@@ -22,6 +23,7 @@ import {
   type HarnessAgentGateResult,
 } from "../src/cli/agent-gate.ts";
 import { saveContract, writeChecklist } from "../src/application/harness/contract-io.ts";
+import { trustWorkspace } from "../src/application/install/trust.ts";
 import { type TaskContract } from "../src/domain/harness/model.ts";
 import {
   isolateLeinaHome,
@@ -48,11 +50,15 @@ const FIXTURE_CONFIG = JSON.stringify({
 });
 
 let repo: TmpRepo;
+let leinaHome: string;
 let restoreHome: () => void;
 
 beforeEach(async () => {
   repo = await makeTmpRepo();
-  restoreHome = isolateLeinaHome(path.join(repo.root, "no-user-config"));
+  // Outside the repo: the trust store lives under $LEINA_HOME and must not
+  // show up as untracked files to the diff-scope gate.
+  leinaHome = await fs.mkdtemp(path.join(os.tmpdir(), "leina-agent-gate-home-"));
+  restoreHome = isolateLeinaHome(leinaHome);
   await repo.write(".harness/config.json", FIXTURE_CONFIG);
   await repo.write("src/app.ts", "export const app = 1;\n");
   repo.git("add", ".");
@@ -62,10 +68,13 @@ beforeEach(async () => {
 afterEach(async () => {
   restoreHome();
   await repo.cleanup();
+  await fs.rm(leinaHome, { recursive: true, force: true });
 });
 
+/** What `leina init` / `leina deinit` leave behind: the consent flag, plus trust on init. */
 async function setConsent(state: "enabled" | "disabled"): Promise<void> {
   await repo.write(".leina/consent", state);
+  if (state === "enabled") trustWorkspace(repo.root);
 }
 
 async function newContract(overrides: Partial<TaskContract> = {}): Promise<void> {

@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { handleHarness, runHarnessHookEvent } from "../src/cli/handlers/harness.ts";
+import { trustWorkspace } from "../src/application/install/trust.ts";
 import {
   isolateLeinaHome,
   jsonFrontmatterDoc,
@@ -39,9 +40,10 @@ beforeEach(async () => {
   restoreHome = isolateLeinaHome(path.join(repo.root, "no-user-config"));
   await repo.write(".harness/config.json", FIXTURE_CONFIG);
   await repo.write("src/app.ts", "export const app = 1;\n");
-  // Workspace trust: project-layer js/command gates only execute in repos with
-  // explicit consent (see test/harness-workspace-trust.test.ts for the matrix).
+  // Workspace trust: project-layer js/command gates only execute in workspaces
+  // the user trusted with `leina init` (see test/harness-workspace-trust.test.ts).
   await repo.write(".leina/consent", "enabled");
+  trustWorkspace(repo.root);
   repo.git("add", ".");
   repo.git("commit", "-m", "init");
 });

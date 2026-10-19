@@ -2,8 +2,9 @@
 // Rules of layer 'project' travel with the repo (.harness/rules/), so their
 // js/command gates would hand a cloned hostile repo silent code execution
 // through the Stop hook's verify run. The engine therefore only executes them
-// when the repo holds explicit trust (`leina init` → .leina/consent enabled);
-// otherwise they are SKIPPED with a visible result and never fail verify on
+// when the user trusted the workspace (`leina init` → a record in the
+// out-of-repo trust store under $LEINA_HOME; a committed .leina/consent grants
+// nothing); otherwise they are SKIPPED with a visible result and never fail verify on
 // their own. Builtin/user rules (installed package / user's home) and
 // non-executable gate types (file/diff/diff-content/checklist) always run.
 //
@@ -15,6 +16,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { runVerify } from "../src/application/harness/verify.ts";
 import { runGates } from "../src/application/harness/gates/engine.ts";
+import { trustWorkspace } from "../src/application/install/trust.ts";
 import type { GateContext } from "../src/application/harness/gates/types.ts";
 import type { Gate, Rule, RuleLayer } from "../src/domain/harness/model.ts";
 import { ShellProcessRunner } from "../src/infrastructure/harness/exec.ts";
@@ -52,7 +54,7 @@ beforeEach(async () => {
   await repo.write("src/app.ts", "export const app = 1;\n");
   repo.git("add", ".");
   repo.git("commit", "-m", "init");
-  // NO .leina/consent file — the repo starts UNTRUSTED (consent "unknown").
+  // No trust record (and no .leina/consent) — the repo starts UNTRUSTED.
 });
 
 afterEach(async () => {
@@ -122,7 +124,8 @@ describe("workspace trust — runVerify end-to-end", () => {
     assert.equal(fileRes?.status, "pass");
   });
 
-  it("consent disabled: project executable gates stay skipped too", async () => {
+  it("consent disabled: project executable gates stay skipped too (even with a trust record)", async () => {
+    trustWorkspace(repo.root);
     await repo.write(".leina/consent", "disabled");
     await repo.write(".harness/rules/marker.md", CMD_MARKER_RULE);
 
@@ -132,8 +135,19 @@ describe("workspace trust — runVerify end-to-end", () => {
     assert.equal(await exists("project-gate-ran.txt"), false);
   });
 
-  it("consent enabled (explicit `leina init` trust): the same project gates execute", async () => {
+  it("(trust-store-v1) a committed .leina/consent = enabled does not unlock project executable gates", async () => {
     await repo.write(".leina/consent", "enabled");
+    await repo.write(".harness/rules/marker.md", CMD_MARKER_RULE);
+
+    const outcome = await runVerify(repo.root, { ports });
+    const markerRes = outcome.report.results.find((r) => r.ruleId === "project/cmd-marker");
+    assert.equal(markerRes?.status, "skip");
+    assert.match(markerRes?.detail ?? "", UNTRUSTED_DETAIL);
+    assert.equal(await exists("project-gate-ran.txt"), false, "self-granted consent must not execute");
+  });
+
+  it("trusted workspace (explicit `leina init`): the same project gates execute", async () => {
+    trustWorkspace(repo.root);
     await repo.write(".harness/rules/marker.md", CMD_MARKER_RULE);
     await repo.write(".harness/rules/fail.md", CMD_FAIL_RULE);
 
@@ -173,7 +187,7 @@ describe("workspace trust — runVerify end-to-end", () => {
     assert.match(skipped?.detail ?? "", UNTRUSTED_DETAIL);
     assert.equal(await exists("js-gate-loaded.txt"), false, "untrusted js module must not be imported");
 
-    await repo.write(".leina/consent", "enabled");
+    trustWorkspace(repo.root);
     const trusted = await runVerify(repo.root, { ports });
     const ran = trusted.report.results.find((r) => r.ruleId === "project/js-gate");
     assert.equal(ran?.status, "pass");

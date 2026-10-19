@@ -206,3 +206,12 @@ export function globalMemoryPath(): string {
 export function blanketFile(): string {
   return join(leinaHome(), ".blanket");
 }
+
+/**
+ * Out-of-repo workspace trust store: one record per repo the user trusted with
+ * `leina init` on this machine. Lives inside $LEINA_HOME — never in the repo,
+ * where a clone could ship it (see application/install/trust.ts).
+ */
+export function trustStoreDir(): string {
+  return join(leinaHome(), "trust");
+}
