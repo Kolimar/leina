@@ -36,17 +36,23 @@ Before getting into the flows, these three invariants explain *all* of the behav
 flowchart LR
     a["1. ADVISORY<br/>never blocks<br/>(never exit 2 / block)"]
     b["2. FAIL-OPEN<br/>any error → exit 0<br/>silently"]
-    c["3. SCOPE-AWARE<br/>if consent != enabled<br/>→ silent no-op"]
+    c["3. SCOPE-AWARE<br/>if consent != enabled<br/>or untrusted → silent no-op"]
 ```
 
 1. **Advisory only.** The gate never returns `block`. At most it writes a `reason` to `stderr` as
-   a one-time nudge; the agent **always** proceeds.
+   a one-time nudge; the agent **always** proceeds. (The harness enforcement branch that shares
+   the `agent-hook` entry point *can* block, in a trusted workspace — that is the inspector's
+   job, see [the harness](./07-harness.md).)
 2. **Fail-open.** Empty/invalid stdin, missing fields, fs errors, graph unavailable →
    `exit 0` silently. The system never crashes the agent.
 3. **Scope-aware no-op.** A user-global hook fires in *every* repo on the machine. The gate only
-   acts when the repo's consent flag is `enabled` (stored in `.leina/consent`). If it's
-   `unknown` or `disabled`, the gate returns silently. This way the global hook doesn't bother
-   other repos, and the `leina-setup` skill asks only once in `unknown` repos.
+   acts when the repo's consent flag is `enabled` (stored in `.leina/consent`) **and** the
+   workspace is trusted on this machine — the out-of-repo record `leina init` writes under
+   `$LEINA_HOME/trust/`; a committed consent flag alone grants nothing (see
+   [workspace trust](./07-harness.md#workspace-trust--what-may-run-unattended)). Otherwise
+   the gate returns silently: no context injection, no advisories, no background graph
+   build. This way the global hook doesn't bother other repos, and the `leina-setup` skill
+   asks only once in `unknown` repos.
 
 ---
 
@@ -154,7 +160,7 @@ Details per event:
   emits a tip to use `leina query`/`affected`. If the load marker exists, it stays quiet.
 - **PostToolUse**: writes the load or save marker depending on the `exec` command; on
   `edit`/`write` it triggers `leina refresh` to keep the graph up to date (see
-  [Search and queries](./03-busqueda-y-consultas.md#el-freshness-gate)).
+  [Search and queries](./03-busqueda-y-consultas.md#the-freshness-gate)).
 - **Stop**: if the save marker is missing, it emits the nudge via `stderr`. **stdout is always
   empty.** It never blocks (exit 0 on every branch).
 
@@ -165,7 +171,9 @@ Details per event:
 `leina doctor` checks *injection-readiness*: that the global memory database and the `graph.db`
 exist, in order to detect a degraded state where active injection would only work halfway. One
 key invariant: **doctor never opens SQLite** — all checks are filesystem-only (stat, reading
-text/JSON). This avoids side effects (WAL/SHM) and keeps it fast and safe.
+text/JSON). This avoids side effects (WAL/SHM) and keeps it fast and safe. Its
+**workspace trust** check says whether the gate may act here at all: a warning when consent
+is `enabled` but this machine holds no trust record (re-run `leina init <root>`).
 
 ---
 

@@ -163,8 +163,10 @@ leina disable
 Por proyecto: no hay nada que recordar. Bajo blanket mode, la skill leina-setup pregunta
 una vez por repo ("¿usar leina acá?") y corre init/deinit por vos. Cada repo tiene un flag
 de consentimiento local, git-ignored: unknown -> pregunta una vez, enabled -> activo,
-disabled -> silencioso. El grafo se construye bajo demanda la primera vez que se consulta.
-También podés cablear un repo a mano:
+disabled -> silencioso. Lo que deja actuar a los hooks es la confianza del workspace que
+`init` registra **fuera** del repo (`~/.leina/trust/`), así que el flag commiteado de un
+repo clonado no otorga nada. El grafo se construye bajo demanda la primera vez que se
+consulta. También podés cablear un repo a mano:
 
 Un `init` standalone es **FULL** y exige `--hosts` y `--profile devin|windsurf`; bajo blanket
 un `init` es **LIGHT** y no necesita ninguno.
@@ -175,7 +177,7 @@ leina init <dir> --hosts devin --profile devin --build  # also build the graph s
 leina init <dir> --hosts devin --profile devin --mcp    # also add a project-level .mcp.json
 leina init <dir> --hosts claude --profile devin         # wire Claude Code hooks
 leina init <dir> --hosts devin --profile devin --claude-hooks  # force Claude Code hooks even without the claude host
-leina deinit <dir>                                       # opt this repo out (consent=disabled) + strip wiring
+leina deinit --project <dir>                             # opt this repo out (consent=disabled) + strip wiring
 ```
 
 ¿Preferís las piezas granulares? Componen lo que hace `setup` y cada una tiene un
@@ -431,7 +433,11 @@ fuerza una reconstrucción.
 > `unknown` (sin flag) → el gate de Devin permanece en silencio y la skill `leina-setup`
 > pregunta una vez ("¿usar leina acá?"); `enabled` → leina actúa (inyección de memoria +
 > grafo, advisories, auto-reparación de grafo bajo demanda en `SessionStart`); `disabled` →
-> no-op silencioso permanente.
+> no-op silencioso permanente. El flag vive en el repo, así que por sí solo no otorga nada:
+> `init` también registra la **confianza del workspace** fuera de él (`~/.leina/trust/`,
+> indexada por el path real del repo), y los hooks, la exigencia del harness y el verify
+> automático solo corren donde existe ese registro — un repo movido o vuelto a clonar
+> necesita `init` de nuevo, y `leina doctor` lo reporta.
 >
 > **`init` es adaptativo**: siempre escribe el flag de consentimiento `enabled` + `.gitignore`.
 > Bajo blanket, eso es todo (**LIGHT** — el share/grant/hooks a nivel de máquina ya cubren el
@@ -441,8 +447,8 @@ fuerza una reconstrucción.
 > — nunca el config user-global.
 > `init --name <project-name>` fija la project key en un `.leina/config.json` committable;
 > `init --build` construye el grafo de forma sincrónica ahora mismo (de lo contrario, el grafo
-> se construye bajo demanda). `deinit` escribe `disabled` y el strip-inverse elimina los
-> bloques/grant/hooks gestionados del repo.
+> se construye bajo demanda). `deinit` escribe `disabled`, borra el registro de confianza y
+> el strip-inverse elimina los bloques/grant/hooks gestionados del repo.
 
 ### memory CLI: batch + anchors
 

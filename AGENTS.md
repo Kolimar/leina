@@ -187,13 +187,22 @@ because a user-global hook fires in every Devin project on the machine.
   (`MEMORY_SAVE_CMD_RE` in `src/cli/agent-gate.ts`; lookahead excludes `session-start`). Deleted at
   SessionStart alongside the load marker (per-session semantics). Only the Stop branch reads it.
 
-**Advisory only.** The gate **never** returns `exit 2` / `{"decision":"block"}` — a non-empty
-`reason` is emitted on stderr as a one-time nudge, and the agent always proceeds. Honest
-scope: this is a workflow nudge, not a security control, and never an obstacle to the user.
+**Advisory only.** The advisory gate (`runAgentGate`) **never** returns `exit 2` /
+`{"decision":"block"}` — a non-empty `reason` is emitted on stderr as a one-time nudge, and
+the agent always proceeds. Honest scope: this is a workflow nudge, not a security control,
+and never an obstacle to the user. The harness enforcement branch that runs first on the
+same entry point (`runHarnessAgentGate`) is the exception, and only in a trusted workspace:
+it always refuses writes to the harness rules/config/lockfile and to `$LEINA_HOME/harness`
+/ `$LEINA_HOME/trust`, and with an active contract, strictness `strict` or an unreadable
+config it applies the contract scope, the commit guard and the Stop gate
+(docs/concepts/07-harness.md).
 
-**Scope-aware silent no-op.** If `<cwd>/.devin/hooks.v1.json` does not exist (the project
-is not leina-initialized), `runAgentGate` returns 0 silently — no stderr nudge, no
-`SessionStart`/`PostCompaction` additionalContext. This is what lets the opt-in user-global
+**Scope-aware silent no-op.** Unless `.leina/consent` is `enabled` (`isLeinaProject`) **and**
+the workspace is trusted on this machine (`isWorkspaceTrusted`,
+`src/application/install/trust.ts`: the out-of-repo record `leina init` writes under
+`$LEINA_HOME/trust/`, consent not `disabled`), `runAgentGate` returns 0 silently — no stderr
+nudge, no `SessionStart`/`PostCompaction` additionalContext, no background self-heal build.
+A committed consent flag alone grants nothing. This is what lets the opt-in user-global
 hook stay quiet in unrelated repos.
 
 **Fail OPEN** on every error path (empty/invalid stdin, missing fields, fs errors) → exit 0.
@@ -215,9 +224,9 @@ via `resolveHookProjectRoot(process.env, process.cwd())` (`src/cli/agent-gate.ts
 Devin's documented `DEVIN_PROJECT_DIR` env var — the contract for telling a hook its workspace
 root; no hook stdin payload carries a `cwd` — and falls back to `process.cwd()` when the var is
 absent/blank. Everything downstream of the hook keys off this root: the scope guard
-(`isLeinaProject`), the session markers, and `buildActiveContext` (project key + graph.db +
-freshness). The PostToolUse `refresh` hook is the exception — it carries the project dir baked
-at init time, so it is unaffected by the runtime root resolution.
+(`isLeinaProject` + `isWorkspaceTrusted`), the session markers, and `buildActiveContext`
+(project key + graph.db + freshness). The PostToolUse `refresh` hook is the exception — it
+carries the project dir baked at init time, so it is unaffected by the runtime root resolution.
 
 <!-- leina:protocol:start -->
 ## leina — code graph + project memory (use the CLI)

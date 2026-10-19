@@ -35,17 +35,23 @@ Antes de los flujos, estas tres invariantes explican *todo* el comportamiento:
 flowchart LR
     a["1. ADVISORY<br/>nunca bloquea<br/>(jamás exit 2 / block)"]
     b["2. FAIL-OPEN<br/>cualquier error → exit 0<br/>en silencio"]
-    c["3. SCOPE-AWARE<br/>si consent != enabled<br/>→ no-op silencioso"]
+    c["3. SCOPE-AWARE<br/>si consent != enabled<br/>o sin confianza → no-op silencioso"]
 ```
 
 1. **Advisory only.** El gate nunca devuelve `block`. Como mucho escribe una `reason` en
-   `stderr` como empujón de una sola vez; el agente **siempre** procede.
+   `stderr` como empujón de una sola vez; el agente **siempre** procede. (La rama de exigencia
+   del harness que comparte el punto de entrada `agent-hook` *sí* puede bloquear, en un
+   workspace de confianza — ese es el trabajo del inspector, ver [el harness](./07-harness.md).)
 2. **Fail-open.** stdin vacío/inválido, campos faltantes, errores de fs, grafo no disponible →
    `exit 0` en silencio. El sistema nunca crashea al agente.
 3. **Scope-aware no-op.** Un hook user-global dispara en *todos* los repos de la máquina. El gate
-   solo actúa cuando el flag de consentimiento del repo es `enabled` (archivo `.leina/consent`).
-   Si está `unknown` o `disabled`, el gate retorna en silencio. Así el hook global no molesta en
-   repos ajenos, y el skill `leina-setup` pregunta una sola vez en los repos `unknown`.
+   solo actúa cuando el flag de consentimiento del repo es `enabled` (archivo `.leina/consent`)
+   **y** el workspace es de confianza en esta máquina — el registro fuera del repo que escribe
+   `leina init` bajo `$LEINA_HOME/trust/`; un flag de consentimiento commiteado no otorga nada
+   (ver [confianza del workspace](./07-harness.md#confianza-del-workspace--qué-puede-correr-sin-supervisión)).
+   Si no, el gate retorna en silencio: sin inyección de contexto, sin advisories, sin build del
+   grafo en segundo plano. Así el hook global no molesta en repos ajenos, y el skill
+   `leina-setup` pregunta una sola vez en los repos `unknown`.
 
 ---
 
@@ -165,7 +171,9 @@ Detalles por evento:
 `graph.db`, para detectar un estado degradado donde la inyección
 activa funcionaría a medias. Una invariante clave: **doctor nunca abre SQLite** — todos los
 chequeos son solo de filesystem (stat, leer texto/JSON). Eso evita efectos colaterales (WAL/SHM)
-y lo mantiene rápido y seguro.
+y lo mantiene rápido y seguro. Su chequeo **workspace trust** dice si el gate puede actuar acá
+siquiera: un warning cuando el consent es `enabled` pero esta máquina no tiene el registro de
+confianza (volvé a correr `leina init <root>`).
 
 ---
 

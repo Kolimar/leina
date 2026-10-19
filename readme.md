@@ -158,15 +158,17 @@ leina disable
 
 Per project: nothing to remember. Under blanket mode the leina-setup skill asks once per
 repo ("use leina here?") and runs init/deinit for you. Each repo has a local, git-ignored
-consent flag: unknown -> ask once, enabled -> on, disabled -> silent. The graph builds on
-demand the first time it's queried. You can also wire a repo by hand:
+consent flag: unknown -> ask once, enabled -> on, disabled -> silent. What lets the hooks
+act is the workspace trust `init` records **outside** the repo (`~/.leina/trust/`), so a
+cloned repo's committed flag grants nothing. The graph builds on demand the first time it's
+queried. You can also wire a repo by hand:
 
 ```bash
 leina init <dir>                     # adaptive: LIGHT under blanket, FULL standalone
 leina init <dir> --build             # also build the graph synchronously now
 leina init <dir> --mcp               # register the MCP server in .mcp.json
 leina init <dir> --claude-hooks      # Claude Code hooks (same gate Devin gets)
-leina deinit <dir>                   # opt this repo out (consent=disabled) + strip wiring
+leina deinit --project <dir>         # opt this repo out (consent=disabled) + strip wiring
 ```
 
 Prefer the granular pieces? They compose what `setup` does and each has an inverse:
@@ -313,12 +315,14 @@ converges to the same "done" on any host. Markdown rules persuade; gates block �
 complete only when `leina harness verify` exits 0. Rules resolve across three layers
 (builtin < project `.harness/rules/` < user `~/.leina/harness/rules/`); the four leina
 rules (memory-first, graph-consult, graph-fresh, session-summary) ship **enabled by
-default**, so `leina init` leaves the repo governed out of the box. With an active
-contract, the agent-gate turns blocking (out-of-scope edits, commits with a red verify,
-stop with failing gates); without one, it stays advisory — nothing changes for repos that
-don't declare contracts. The `leina tui` harness flow builds a contract interactively
-(goal / scope / criteria interview, recipes, rule selection) for the feature you're
-about to start.
+default**, so `leina init` leaves the repo governed out of the box. In a workspace
+`leina init` trusted on this machine, the agent-gate always keeps harness rules/config
+agent-read-only; with an active contract (or strictness `strict`) it turns blocking
+(out-of-scope edits, commits with a red verify, stop with failing gates); in guided mode
+without one, nothing else changes. The `leina tui` harness flow builds a contract
+interactively (goal / scope / criteria interview, recipes, rule selection) for the feature
+you're about to start — its rule choices are written to `.harness/config.json` only once
+you confirm the contract.
 
 ```bash
 leina harness contract new --goal "..." --type feature --scope "src/auth/**" \
@@ -438,7 +442,11 @@ freshness without rebuilding; `refresh` forces a rebuild.
 > **Tri-state consent (per repo, local & git-ignored — `.leina/consent`):** `unknown`
 > (no flag) → the Devin gate stays silent and the `leina-setup` skill asks once
 > ("use leina here?"); `enabled` → leina acts (memory + graph injection, advisories,
-> on-demand `SessionStart` graph self-heal); `disabled` → permanent silent no-op.
+> on-demand `SessionStart` graph self-heal); `disabled` → permanent silent no-op. The flag
+> lives in the repo, so it grants nothing on its own: `init` also records **workspace
+> trust** outside it (`~/.leina/trust/`, keyed by the repo's real path), and hooks, harness
+> enforcement and automated verify only run where that record exists — a moved or
+> re-cloned repo needs `init` again, and `leina doctor` reports it.
 >
 > **`init` is adaptive** (`isBlanketActive()`): it always writes the `enabled` consent flag +
 > `.gitignore`. Under blanket that's all (**LIGHT** — the machine-wide share/grant/hooks already
@@ -446,8 +454,8 @@ freshness without rebuilding; `refresh` forces a rebuild.
 > `.devin/hooks.v1.json`, and a **repo-local** `Exec` grant in `.devin/config.json` (**FULL**) —
 > never the user-global config. `init --name <project-name>` locks the project key in a committable
 > `.leina/config.json`; `init --build` builds the graph synchronously now (otherwise the
-> graph builds on demand). `deinit` writes `disabled` and strip-inverse removes the repo's managed
-> blocks/grant/hooks.
+> graph builds on demand). `deinit` writes `disabled`, drops the trust record and
+> strip-inverse removes the repo's managed blocks/grant/hooks.
 
 ### Memory CLI batch + anchors
 
