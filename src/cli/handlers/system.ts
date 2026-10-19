@@ -379,7 +379,8 @@ export function printRootHelp(): void {
       `                          register with your host: command "leina", args ["mcp"]\n` +
       `  mcp <register|unregister|status> [--hosts claude,cursor,windsurf]\n` +
       `                          user-global registration: one server entry per host covers\n` +
-      `                          every project (tools take root; default = workspace cwd)\n` +
+      `                          every project (tools take root; default = and confined to the\n` +
+      `                          workspace cwd, LEINA_MCP_ALLOW_ROOTS allow-lists others)\n` +
       `  tui [dir]               interactive console: install/update (asset groups), init/deinit,\n` +
       `                          status, repair, env vars, uninstall — same logic as the commands\n` +
       `  env <sub>               variables for skills that call services (names-not-values:\n` +

@@ -147,7 +147,8 @@ export function hostSpec(id: string): HostSpec | undefined {
 // USER (global) scope. Deliberately separate from HOSTS: that table drives
 // skills/agents symlinking, and Cursor/Windsurf consume the MCP server without
 // consuming the share. One server entry covers all projects (each tool takes
-// `root`, defaulting to the cwd the host launches the server in).
+// `root`, defaulting to — and confined to — the cwd the host launches the server in;
+// LEINA_MCP_ALLOW_ROOTS allow-lists other roots).
 // ---------------------------------------------------------------------------
 
 export type McpHostId = "claude" | "cursor" | "windsurf";

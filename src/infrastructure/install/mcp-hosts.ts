@@ -1,7 +1,9 @@
 // mcp-hosts.ts — user-global (per-machine) registration of the leina MCP server.
 //
 // One registration per host covers ALL projects: every MCP tool takes an optional `root`
-// that defaults to the cwd the host launches the server in, so nothing here is per-repo.
+// that defaults to the cwd the host launches the server in and is confined to it
+// (symlinks resolved; other roots only via LEINA_MCP_ALLOW_ROOTS — see confineRoot in
+// cli/handlers/mcp.ts), so nothing here is per-repo.
 // The per-repo `.mcp.json` (init --mcp) remains as the committable, team-shared variant.
 //
 // Conservative by contract:

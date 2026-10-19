@@ -13,7 +13,8 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { delimiter, isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
 import {
   capabilities,
   harnessContractNew,
@@ -64,6 +65,13 @@ const optStrArr = (a: ToolArgs, k: string): string[] | undefined =>
 // the registration entry written by init/activate). Legitimate multi-project flows opt
 // out EXPLICITLY and auditably: LEINA_MCP_ALLOW_ROOTS lists extra allowed absolute paths
 // (':' PATH-style or ',' separated); a root equal to, or inside, one of them is accepted.
+//
+// The check runs on CANONICAL paths (symlinks resolved): a lexical check alone is fooled
+// by a symlink inside the workspace that points outside it (a cloned repo can ship
+// `rootlink -> /`). cwd, root and every allow-list entry go through realpath; a root
+// that does not exist yet canonicalises through its nearest existing ancestor, and one
+// that cannot be resolved (dangling link, loop, EACCES) is rejected. The CANONICAL root
+// is what the tool then uses, so the path checked is the path operated on.
 
 /** True when `child` is `parent` itself or a path inside it (both already resolved). */
 const isWithin = (parent: string, child: string): boolean => {
@@ -72,28 +80,110 @@ const isWithin = (parent: string, child: string): boolean => {
 };
 
 /**
- * Resolve a tool's `root` argument against `cwd` and enforce the confinement above.
- * Pure (cwd and allow-list are injected) and exported for direct unit testing
- * (test/mcp-root-confinement.test.ts). Throws when the resolved root falls outside
- * `cwd` and no LEINA_MCP_ALLOW_ROOTS entry covers it.
+ * Realpath of an absolute path; `undefined` when nothing exists there yet. Throws when
+ * an entry exists but cannot be resolved: a dangling symlink also reports ENOENT, but
+ * following it later (mkdir -p, writeFile) would land wherever it points.
  */
-export function confineRoot(rootArg: string | undefined, cwd: string, allowRoots?: string): string {
-  const resolved = resolvePath(cwd, rootArg ?? ".");
-  if (isWithin(cwd, resolved)) return resolved;
-  const allowed = (allowRoots ?? "")
+export type RealpathFn = (p: string) => string | undefined;
+
+const realpathOrMissing: RealpathFn = (p) => {
+  try {
+    return realpathSync(p);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+    let entry;
+    try {
+      entry = lstatSync(p, { throwIfNoEntry: false });
+    } catch {
+      entry = undefined; // ENOTDIR: a parent is a regular file — nothing can exist here
+    }
+    if (entry !== undefined) throw err;
+    return undefined;
+  }
+};
+
+/** Canonicalise `abs` (already absolute): realpath of its nearest existing ancestor + the not-yet-created tail. */
+function canonicalize(abs: string, real: RealpathFn): string {
+  const tail: string[] = [];
+  let cur = abs;
+  for (;;) {
+    const resolved = real(cur);
+    if (resolved !== undefined) return tail.length === 0 ? resolved : join(resolved, ...tail.reverse());
+    const parent = dirname(cur);
+    if (parent === cur) throw new Error(`no existing ancestor of "${abs}"`);
+    tail.push(basename(cur));
+    cur = parent;
+  }
+}
+
+/** The LEINA_MCP_ALLOW_ROOTS entries, canonicalised; unresolvable entries are dropped (never widen). */
+function allowedBases(allowRoots: string | undefined, cwd: string, real: RealpathFn): string[] {
+  return (allowRoots ?? "")
     .split(delimiter)
     .flatMap((part) => part.split(","))
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
-    .map((p) => resolvePath(cwd, p));
-  if (allowed.some((base) => isWithin(base, resolved))) return resolved;
+    .flatMap((p) => {
+      try {
+        return [canonicalize(resolvePath(cwd, p), real)];
+      } catch {
+        return [];
+      }
+    });
+}
+
+/**
+ * Resolve a model-supplied path `arg` against `base` and enforce the confinement above:
+ * the canonical result must sit inside the canonical `cwd` or an allow-listed root.
+ * `what` names the argument in error messages ("root", "out").
+ */
+function confinePath(
+  what: string,
+  arg: string,
+  base: string,
+  cwd: string,
+  allowRoots: string | undefined,
+  real: RealpathFn,
+): string {
+  const requested = resolvePath(base, arg);
+  let resolved: string;
+  let workspace: string;
+  try {
+    resolved = canonicalize(requested, real);
+    workspace = canonicalize(resolvePath(cwd), real);
+  } catch (err) {
+    throw new Error(
+      `${what} "${requested}" cannot be resolved safely ` +
+        `(${err instanceof Error ? err.message : String(err)}) — refusing to guess where it points.`,
+    );
+  }
+  if (isWithin(workspace, resolved)) return resolved;
+  if (allowedBases(allowRoots, cwd, real).some((b) => isWithin(b, resolved))) return resolved;
+  const shown = resolved === requested ? `"${requested}"` : `"${requested}" (resolves to "${resolved}")`;
   throw new Error(
-    `root "${resolved}" is outside the server workspace "${cwd}". MCP tool calls are ` +
-      `confined to the directory the server was launched in, so a prompt-injected root ` +
-      `cannot read (or run gates against) other projects. To allow specific external ` +
-      `roots on purpose, launch the server with ` +
+    `${what} ${shown} is outside the server workspace "${workspace}". MCP tool calls are ` +
+      `confined to the directory the server was launched in, so a prompt-injected path ` +
+      `cannot read (or run gates against, or write into) other projects. To allow specific ` +
+      `external roots on purpose, launch the server with ` +
       `LEINA_MCP_ALLOW_ROOTS=/abs/path[:/abs/path...] (':' or ',' separated).`,
   );
+}
+
+/**
+ * Resolve a tool's `root` argument against `cwd` and enforce the confinement above.
+ * cwd, allow-list and realpath are injected, so it is unit-testable without a real
+ * filesystem (test/mcp-root-confinement.test.ts). Returns the CANONICAL root; throws
+ * when it falls outside `cwd` and no LEINA_MCP_ALLOW_ROOTS entry covers it, or when it
+ * cannot be resolved safely.
+ */
+export function confineRoot(
+  rootArg: string | undefined,
+  cwd: string,
+  allowRoots?: string,
+  real: RealpathFn = realpathOrMissing,
+): string {
+  return confinePath("root", rootArg ?? ".", cwd, cwd, allowRoots, real);
 }
 
 const rootOf = (a: ToolArgs): string =>
@@ -326,8 +416,8 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
 const ROOT_PROP = {
   type: "string",
   description:
-    "Project directory (default: server cwd). Must resolve inside the server cwd; " +
-    "paths outside it are rejected unless allow-listed via LEINA_MCP_ALLOW_ROOTS.",
+    "Project directory (default: server cwd). Must resolve, symlinks included, inside the " +
+    "server cwd; paths outside it are rejected unless allow-listed via LEINA_MCP_ALLOW_ROOTS.",
 };
 
 // JSON-friendly schema override for tools whose REGISTRY schema still describes the

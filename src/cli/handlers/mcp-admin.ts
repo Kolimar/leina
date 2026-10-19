@@ -6,7 +6,8 @@
 // the ~0.15s read-path startup intact.
 //
 // One user-scope registration covers all projects: the server resolves each tool's
-// `root` argument at call time (default: the cwd the host launched it in). The per-repo
+// `root` argument at call time (default: the cwd the host launched it in; confined to
+// it unless LEINA_MCP_ALLOW_ROOTS allow-lists more — see confineRoot). The per-repo
 // `.mcp.json` (init --mcp) stays available as the committable, team-shared variant.
 
 import {
