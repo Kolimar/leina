@@ -474,6 +474,82 @@ test("(mcps-11) memory_verified honours the type filter like memory_search", asy
   }
 });
 
+test("(mcps-12) every tool schema matches its executor: root optional + confined, numeric args bounded", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home12-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo12-"));
+  const env = sandboxEnv(home);
+  try {
+    const responses = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    ]);
+    interface Prop { type?: string; description?: string; minimum?: number; maximum?: number }
+    interface Tool { name: string; inputSchema: { type?: string; required?: string[]; properties?: Record<string, Prop> } }
+    const tools = (responses.find((r) => r.id === 2)?.result?.tools ?? []) as unknown as Tool[];
+    assert.equal(tools.length, 24);
+    for (const t of tools) {
+      assert.equal(t.inputSchema.type, "object", `${t.name}: object schema`);
+      assert.ok(!(t.inputSchema.required ?? []).includes("root"), `${t.name}: root is optional (defaults to the server cwd)`);
+      const props = t.inputSchema.properties ?? {};
+      assert.ok(props.root, `${t.name}: declares root`);
+      assert.match(props.root.description ?? "", /LEINA_MCP_ALLOW_ROOTS/, `${t.name}: root describes the confinement`);
+      // Port-injected registry fields (store objects) must never leak onto the wire.
+      assert.ok(!("store" in props), `${t.name}: no port-injected store field`);
+      if (t.name.startsWith("harness_")) continue; // validated by the harness use cases
+      for (const [k, p] of Object.entries(props)) {
+        if (p.type !== "number" && p.type !== "integer") continue;
+        assert.equal(p.type, "integer", `${t.name}.${k}: integer`);
+        assert.ok(typeof p.minimum === "number" && typeof p.maximum === "number", `${t.name}.${k}: bounded`);
+      }
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(mcps-13) out-of-range numeric args are clamped, never a SQL datatype error or an unbounded read", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home13-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo13-"));
+  const env = sandboxEnv(home);
+  try {
+    writeFileSync(join(dir, "a.ts"), "export function one(): number { return 1; }\n");
+    await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "memory_add", arguments: { root: dir, atomic: true, items: [
+        { title: "gadget one", content: "gadget a" },
+        { title: "gadget two", content: "gadget b" },
+        { title: "gadget three", content: "gadget c" },
+      ] } } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "graph_build", arguments: { root: dir } } },
+    ]);
+    const call = (id: number, name: string, args: object): object =>
+      ({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: { root: dir, ...args } } });
+    const responses = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      call(2, "memory_context", { limit: 1e20, sessionLimit: 1e20 }),
+      call(3, "memory_search", { query: "gadget", limit: -1 }),
+      call(4, "memory_search", { query: "gadget", limit: 1.5 }),
+      call(5, "memory_verified", { query: "gadget", limit: 1e20 }),
+      call(6, "graph_query", { question: "one", depth: -5, maxNodes: 1e20 }),
+      call(7, "graph_affected", { symbol: "one", depth: 1e20 }),
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+    for (const id of [2, 3, 4, 5, 6, 7]) {
+      assert.ok(!byId.get(id)?.result?.isError, `call ${id} failed: ${byId.get(id)?.result?.content?.[0]?.text}`);
+    }
+    const hits = (id: number): unknown[] => JSON.parse(byId.get(id)?.result?.content?.[0]?.text ?? "[]") as unknown[];
+    assert.equal(hits(3).length, 1, "limit:-1 clamps to 1 instead of an unbounded LIMIT -1");
+    assert.equal(hits(4).length, 1, "limit:1.5 truncates to 1");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(mcps-6) harness tools: parseable schemas and contract new → show → verify → list → end over stdio", async () => {
   const home = mkdtempSync(join(tmpdir(), "leina-mcp-home6-"));
   const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo6-"));

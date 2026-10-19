@@ -47,10 +47,27 @@ const str = (a: ToolArgs, k: string): string => {
   if (typeof v !== "string" || v.length === 0) throw new Error(`missing required string argument "${k}"`);
   return v;
 };
+// Numeric args come from the MODEL and reach SQL LIMITs and BFS loops: a float (1.5)
+// or a huge value (1e20) binds as REAL and node:sqlite fails with "datatype mismatch";
+// a negative LIMIT means "unbounded" — the payload blowup the preview/limit shaping
+// exists to prevent. Every numeric MCP arg therefore goes through intArg with a bound
+// from ARG_BOUNDS (also advertised as minimum/maximum in the tool schemas): absent or
+// non-finite → undefined (the use case's own default), else truncated and clamped.
+const ARG_BOUNDS = {
+  depth: [1, 20],
+  maxNodes: [1, 200],
+  limit: [1, 100],
+  sessionLimit: [1, 50],
+} as const satisfies Record<string, readonly [number, number]>;
+
+const intArg = (a: ToolArgs, k: keyof typeof ARG_BOUNDS): number | undefined => {
+  const v = a[k];
+  if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+  const [min, max] = ARG_BOUNDS[k];
+  return Math.min(max, Math.max(min, Math.trunc(v)));
+};
 const optNum = (a: ToolArgs, k: string): number | undefined =>
   typeof a[k] === "number" ? (a[k]) : undefined;
-const posInt = (v: number | undefined): number | undefined =>
-  v !== undefined && Number.isFinite(v) && v >= 1 ? Math.floor(v) : undefined;
 const optStr = (a: ToolArgs, k: string): string | undefined =>
   typeof a[k] === "string" ? (a[k]) : undefined;
 const optStrArr = (a: ToolArgs, k: string): string[] | undefined =>
@@ -262,12 +279,12 @@ function assertConsent(tool: string, root: string): void {
 // process-to-process; an MCP tool result would pull the values into model context.
 const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
   graph_query: async (a) =>
-    withFreshStore(rootOf(a), (s) => queryGraph(s, str(a, "question"), optNum(a, "depth"), optNum(a, "maxNodes"))),
+    withFreshStore(rootOf(a), (s) => queryGraph(s, str(a, "question"), intArg(a, "depth"), intArg(a, "maxNodes"))),
   graph_affected: async (a) =>
     withFreshStore(rootOf(a), (s) => {
       const seed = resolveSeed(s, str(a, "symbol"));
       if (!seed) return { seed: null, dependents: [], note: `no graph node matches "${str(a, "symbol")}"` };
-      return { seed: { id: seed.id, label: seed.label }, dependents: affected(s, seed.id, optNum(a, "depth")) };
+      return { seed: { id: seed.id, label: seed.label }, dependents: affected(s, seed.id, intArg(a, "depth")) };
     }),
   graph_path: async (a) =>
     withFreshStore(rootOf(a), (s) => {
@@ -301,7 +318,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       // Same seed resolution as the CLI (label/file → node id); analyzeImpact alone
       // expects a node id and silently returned empty lists for a symbol name.
       const symbol = str(a, "symbol");
-      const { seed, impacted } = analyzeSymbolImpact(s, symbol, optNum(a, "depth"));
+      const { seed, impacted } = analyzeSymbolImpact(s, symbol, intArg(a, "depth"));
       if (!seed) return { seed: null, impacted, note: `no graph node matches "${symbol}"` };
       return { seed: { id: seed.id, label: seed.label, sourceFile: seed.sourceFile }, impacted };
     }),
@@ -334,23 +351,20 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
     }),
   memory_search: (a) =>
     withMemStore(rootOf(a), (s) =>
-      searchMemory(s.store, str(a, "query"), { type: optStr(a, "type") as ObservationType | undefined, limit: optNum(a, "limit") }),
+      searchMemory(s.store, str(a, "query"), { type: optStr(a, "type") as ObservationType | undefined, limit: intArg(a, "limit") }),
     ),
   memory_verified: (a) =>
     withMemStore(rootOf(a), (mem) =>
       getVerifiedContext(mem.store, str(a, "query"), mem.verifyNode, {
         type: optStr(a, "type") as ObservationType | undefined,
-        limit: optNum(a, "limit"),
+        limit: intArg(a, "limit"),
       }),
     ),
   memory_context: (a) =>
     withMemStore(rootOf(a), (s) => {
-      // Clamp to positive integers: recentContext feeds these to SQL LIMIT, where a
-      // model-supplied 0/negative value would mean "no limit" — the exact blowup this
-      // tool's preview shaping exists to prevent.
       const ctx = s.store.recentContext({
-        limit: posInt(optNum(a, "limit")),
-        sessionLimit: posInt(optNum(a, "sessionLimit")),
+        limit: intArg(a, "limit"),
+        sessionLimit: intArg(a, "sessionLimit"),
       });
       return a.full === true ? ctx : previewRecentContext(ctx);
     }),
@@ -459,8 +473,18 @@ const ROOT_PROP = {
     "server cwd; paths outside it are rejected unless allow-listed via LEINA_MCP_ALLOW_ROOTS.",
 };
 
-// JSON-friendly schema override for tools whose REGISTRY schema still describes the
-// port-injected form (store objects) — the MCP surface always takes root+params.
+/** Schema for a numeric arg: integer, with the same bounds intArg clamps to. */
+const intProp = (k: keyof typeof ARG_BOUNDS, description: string): object => ({
+  type: "integer",
+  minimum: ARG_BOUNDS[k][0],
+  maximum: ARG_BOUNDS[k][1],
+  description: `${description}; clamped to [${ARG_BOUNDS[k][0]}, ${ARG_BOUNDS[k][1]}]`,
+});
+
+// MCP-facing input schema for EVERY registry tool. The registry schemas describe the
+// port-injected form (store objects) or mark `root` required; the MCP surface always
+// takes an optional, confined root + JSON params, and numeric args are bounded — so
+// each tool's advertised schema matches what its executor actually reads.
 const MCP_INPUT_OVERRIDES: Record<string, object> = {
   graph_query: {
     type: "object",
@@ -468,8 +492,47 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     properties: {
       root: ROOT_PROP,
       question: { type: "string" },
-      depth: { type: "number" },
-      maxNodes: { type: "number" },
+      depth: intProp("depth", "neighbourhood hops around the seeds (default 2)"),
+      maxNodes: intProp("maxNodes", "max nodes in the returned subgraph (default 40)"),
+    },
+  },
+  graph_affected: {
+    type: "object",
+    required: ["symbol"],
+    properties: {
+      root: ROOT_PROP,
+      symbol: { type: "string", description: "symbol name, node id or file path" },
+      depth: intProp("depth", "dependency hops (default 3)"),
+    },
+  },
+  graph_path: {
+    type: "object",
+    required: ["from", "to"],
+    properties: {
+      root: ROOT_PROP,
+      from: { type: "string", description: "symbol name, node id or file path" },
+      to: { type: "string", description: "symbol name, node id or file path" },
+    },
+  },
+  graph_stats: { type: "object", properties: { root: ROOT_PROP } },
+  graph_build: { type: "object", properties: { root: ROOT_PROP } },
+  impact_analyze: {
+    type: "object",
+    required: ["symbol"],
+    properties: {
+      root: ROOT_PROP,
+      symbol: { type: "string", description: "symbol name, node id or file path" },
+      depth: intProp("depth", "BFS hops in both directions (default 3)"),
+    },
+  },
+  memory_verified: {
+    type: "object",
+    required: ["query"],
+    properties: {
+      root: ROOT_PROP,
+      query: { type: "string" },
+      type: { type: "string", description: "only observations of this type" },
+      limit: intProp("limit", "max hits (default 10)"),
     },
   },
   memory_add: {
@@ -494,16 +557,16 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     properties: {
       root: ROOT_PROP,
       query: { type: "string" },
-      type: { type: "string" },
-      limit: { type: "number" },
+      type: { type: "string", description: "only observations of this type" },
+      limit: intProp("limit", "max hits (default 10)"),
     },
   },
   memory_context: {
     type: "object",
     properties: {
       root: ROOT_PROP,
-      limit: { type: "number", description: "max observations (default 20)" },
-      sessionLimit: { type: "number", description: "max sessions (default 5)" },
+      limit: intProp("limit", "max observations (default 20)"),
+      sessionLimit: intProp("sessionLimit", "max sessions (default 5)"),
       full: {
         type: "boolean",
         description:
