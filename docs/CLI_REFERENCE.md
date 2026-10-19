@@ -114,6 +114,13 @@ port — no zombie process).
 > exports a **static, shareable `.html` file** for one project; `graph serve` is a **live server**
 > (multi-project selector + per-node anchored memory) that only runs while the process is up.
 
+### `graph gc [--dry-run] [--json]`
+Housekeeping for the global project registry (`~/.leina/projects.json`): drop every entry
+whose root no longer exists on disk (a deleted checkout, a moved repo). Reads already ignore
+vanished roots, so stale entries are harmless — they just accumulate. `--dry-run` lists what
+would be removed without rewriting the registry; `--json` prints
+`{path, dryRun, kept, removed[]}`. Never touches any `graph.db` or the memory db.
+
 ---
 
 ## Workspace commands (multi-repo)
@@ -216,6 +223,16 @@ Minting is **additive** (unions with any anchors the observation already has) an
 **idempotent** per `(observation_id, node_id)`: re-running never duplicates a row.
 `--dry-run` reports what would be minted/rejected without writing. Prints a summary
 (`{processed, minted, rejected}`) plus a per-observation breakdown.
+
+### `memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--dry-run]`
+Garbage-collect this project's **superseded snapshots** — the prior revisions every
+`--topic` upsert keeps — then `VACUUM` so the freed pages go back to the OS. The live row of
+every topic (and every non-topic observation) is always kept; anchors of deleted snapshots
+are removed in the same transaction. `--keep N` retains the N newest snapshots per topic
+(default 0). Sessions are untouched unless `--sessions-older-than DAYS` purges the ones idle
+for longer than that. `--dry-run` reports the counts without writing. Only the current
+project is compacted; re-running is idempotent. Prints the removal counts and the db size
+before/after.
 
 ### `memory export <dir> [--out file.jsonl]`
 Dump this project's observations + anchors as JSONL (to `--out` or stdout).
@@ -529,12 +546,12 @@ takes an explicit `--hosts` (`devin`, `claude`) — leina never picks a host on 
 A repo that has only a `.devin/hooks.v1.json` but no consent flag resolves to `unknown`, so it
 is re-prompted once rather than silently silenced.
 
-### `setup --hosts devin,claude [--no-user-hooks] [--mcp --mcp-hosts <...>]`
+### `setup --hosts devin,claude [--no-user-hooks] [--preset minimal|sdd|full] [--skills a,b|all|none] [--agents a,b|all|none] [--mcp --mcp-hosts <...>]`
 The one-shot "magic" command (once per machine). Composes `activate` (share + symlinks +
 user-global `Exec` grant + hooks) **and** turns the blanket sentinel ON. Idempotent. After `setup`,
 leina is available in every session and each repo is governed by its consent flag.
 `--no-user-hooks` skips merging the user-global hooks. Add `--mcp --mcp-hosts <...>` to register
-the MCP server during install.
+the MCP server during install. The asset-selection flags work as in `activate`.
 
 ### `disable`
 Inverse of `setup` (once per machine). Turns the blanket sentinel OFF and runs the global
@@ -542,7 +559,7 @@ teardown (unlinks hosts, revokes the CLI `Exec` grant, removes the user-global h
 Strip-inverse only — removes leina's managed entries while preserving any third-party
 symlinks/grants/hooks. Idempotent (a second `disable` exits 0).
 
-### `init <dir> [--hosts devin,claude] [--profile devin|windsurf] [--freshness auto|refuse] [--build] [--name <project-name>] [--mcp] [--claude-hooks]`
+### `init <dir> [--hosts devin,claude] [--profile devin|windsurf] [--freshness auto|refuse] [--build] [--name <project-name>] [--mcp] [--claude-hooks] [--harness-preset generic|leina-native]`
 Per-repo opt-in — **adaptive** on whether blanket is active. Always writes the consent flag
 `enabled` and ensures the `.gitignore` block. Then:
 
@@ -559,6 +576,11 @@ foreground** (with progress) right after wiring. `--name <project-name>` writes 
 `.leina/config.json` locking the project key. `--profile windsurf` adds the Windsurf
 capabilities section to `AGENTS.md` (FULL only). `--mcp` writes a project-level `.mcp.json`.
 `--claude-hooks` forces the Claude Code hooks even when the `claude` host isn't in `--hosts`.
+`--harness-preset` chooses the seed for a **new** `.harness/config.json`: `generic` disables the
+four leina-coupled builtin rules (`leina-*`) so the harness works without adopting the rest of
+leina; `leina-native` (the default) keeps the full builtin suite. An existing
+`.harness/config.json` is never overwritten — the flag is then ignored with a note. See
+[concepts/07-harness.md](concepts/07-harness.md#rule-presets--generic-vs-leina-native).
 
 Example (standalone full init):
 
@@ -573,11 +595,17 @@ repo's managed artifacts: the `AGENTS.md` protocol block, the `.gitignore` block
 Idempotent — when there is nothing to revert (e.g. after a LIGHT init) it exits 0 with a
 "nothing to revert" note.
 
-### `activate --hosts devin,claude [--mcp --mcp-hosts <...>]`
+### `activate --hosts devin,claude [--no-user-hooks] [--preset minimal|sdd|full] [--skills a,b|all|none] [--agents a,b|all|none] [--mcp --mcp-hosts <...>]`
 The global half of `setup` (once per machine), without flipping the blanket sentinel. Populate
 `~/.leina/share/{skills,agents,workflows}` from bundled assets and symlink each entry into the
 hosts' global dirs (`~/.config/devin/{skills,agents}`), and write the user-global config (the
 `Exec(leina)` grant + hooks). Add `--mcp --mcp-hosts <...>` to register the MCP server too.
+
+**Asset selection.** `--preset` picks a group bundle from `assets/catalog.json` (`minimal` =
+core, `sdd` = core + SDD, `full` = everything); `--skills` / `--agents` take a comma-separated
+list of asset names, `all` or `none`. Required assets and dependencies are auto-included (noted
+on stderr), and an unknown name is a hard error. Omit all three to keep the previously
+persisted selection; `--hosts` alone changes *where* assets are linked without changing *which*.
 
 ### `deactivate`
 Inverse of `activate` (once per machine). Runs the global teardown (unlinks hosts, revokes the

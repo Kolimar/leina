@@ -125,6 +125,13 @@ proceso zombie).
 > estático y compartible** de un solo proyecto; `graph serve` es un **server en vivo** (selector
 > multi-proyecto + memoria anclada por nodo) que corre solo mientras el proceso está arriba.
 
+### `graph gc [--dry-run] [--json]`
+Mantenimiento del registro global de proyectos (`~/.leina/projects.json`): elimina toda entrada
+cuya raíz ya no existe en disco (un checkout borrado, un repo movido). Las lecturas ya ignoran
+las raíces desaparecidas, así que las entradas viejas son inofensivas — solo se acumulan.
+`--dry-run` lista lo que se eliminaría sin reescribir el registro; `--json` imprime
+`{path, dryRun, kept, removed[]}`. Nunca toca ningún `graph.db` ni la db de memoria.
+
 ---
 
 ## Comandos de workspace (multi-repo)
@@ -224,9 +231,25 @@ la DB. Útil para depurar fallas de proyecto ambiguo.
 Mueve/fusiona todas las observaciones de una project key a otra (por ejemplo, tras un rename
 del remote). `--dry-run` reporta qué se movería.
 
-### `memory reanchor <dir> <id>`
-Vuelve a resolver los anchors de una observación contra el grafo vivo, actualizando a qué
-nodes apunta después de que el código se movió o cambió de nombre.
+### `memory reanchor <dir> [--dry-run]`
+Retro-ancla observaciones **existentes** que mencionan en la prosa un archivo/símbolo real
+pero se guardaron sin `--anchors` explícitos. Solo extrae referencias EXPLÍCITAS (un path que
+coincide con el `sourceFile` de un nodo, o un símbolo resuelto con match funcional-exacto
+contra el grafo vivo): los candidatos ambiguos (2+ matches) o sin resolver se descartan, nunca
+se adivinan. El minting es **aditivo** (se une a los anchors que la observación ya tenga) e
+**idempotente** por `(observation_id, node_id)`. `--dry-run` informa qué se mintearía o
+rechazaría sin escribir. Imprime un resumen (`{processed, minted, rejected}`) y el detalle por
+observación.
+
+### `memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--dry-run]`
+Recolecta los **snapshots superseded** de este proyecto (las revisiones previas que guarda
+cada upsert con `--topic`) y después hace `VACUUM` para devolverle el espacio al sistema
+operativo. La fila viva de cada topic (y toda observación sin topic) se conserva siempre; los
+anchors de los snapshots borrados se eliminan en la misma transacción. `--keep N` conserva los
+N snapshots más nuevos por topic (default 0). Las sesiones no se tocan salvo que
+`--sessions-older-than DAYS` purgue las inactivas hace más de esa cantidad de días.
+`--dry-run` informa los conteos sin escribir. Solo compacta el proyecto actual y re-correrlo es
+idempotente. Imprime los conteos y el tamaño de la db antes/después.
 
 ### `memory export <dir> [--out file.jsonl]`
 Vuelca las observaciones + anchors de este proyecto como JSONL (a `--out` o a stdout).
@@ -541,13 +564,14 @@ local, git-ignored** (`.leina/consent`) con tres estados:
 Un repo que solo tiene un `.devin/hooks.v1.json` pero sin consent flag resuelve a `unknown`,
 así que se le vuelve a preguntar una vez en lugar de quedar silenciado sin más.
 
-### `setup --hosts <devin|claude>[,...] [--mcp --mcp-hosts <claude|cursor|windsurf>[,...]] [--no-user-hooks]`
+### `setup --hosts <devin|claude>[,...] [--mcp --mcp-hosts <claude|cursor|windsurf>[,...]] [--no-user-hooks] [--preset minimal|sdd|full] [--skills a,b|all|none] [--agents a,b|all|none]`
 El comando "mágico" de una sola vez (una vez por máquina). Compone `activate` (share +
 symlinks + grant `Exec` user-global + hooks) **y** activa el blanket sentinel. `--hosts` es
 obligatorio. Idempotente. Tras `setup`, leina está disponible en toda sesión de los hosts
 elegidos y cada repo se gobierna por su consent flag. Agregá `--mcp` (con su `--mcp-hosts`
 acompañante) para registrar el server MCP durante la instalación. `--no-user-hooks` omite la
-fusión de los hooks user-global.
+fusión de los hooks user-global. Los flags de selección de assets funcionan igual que en
+`activate`.
 
 ```bash
 leina setup --hosts claude
@@ -561,7 +585,7 @@ user-global). Solo strip-inverse — elimina las entradas gestionadas por leina 
 cualquier symlink/grant/hook de terceros; **no** depende de archivos `.bak`. Idempotente (un
 segundo `disable` sale con 0).
 
-### `init [dir] --hosts <devin|claude>[,...] --profile <devin|windsurf> [--freshness auto|refuse] [--build] [--mcp] [--name <project-name>] [--claude-hooks]`
+### `init [dir] --hosts <devin|claude>[,...] --profile <devin|windsurf> [--freshness auto|refuse] [--build] [--mcp] [--name <project-name>] [--claude-hooks] [--harness-preset generic|leina-native]`
 Opt-in por-repo — **adaptativo** según si blanket está activo. Siempre escribe el consent flag
 `enabled` y asegura el bloque de `.gitignore`. Luego:
 
@@ -579,7 +603,11 @@ foreground** (con progreso) justo después del wiring. `--name <project-name>` e
 `.leina/config.json` commiteable que fija la project key. `--profile windsurf` agrega la
 sección de capabilities de Windsurf a `AGENTS.md` (solo FULL). `--mcp` escribe un `.mcp.json`
 de proyecto commiteable. `--claude-hooks` fuerza los hooks de Claude Code aunque el host
-`claude` no esté en `--hosts`.
+`claude` no esté en `--hosts`. `--harness-preset` elige la semilla de un `.harness/config.json`
+**nuevo**: `generic` desactiva las cuatro rules builtin acopladas a leina (`leina-*`) para usar
+el harness sin adoptar el resto de leina; `leina-native` (el default) conserva la suite builtin
+completa. Un `.harness/config.json` existente nunca se sobreescribe — en ese caso el flag se
+ignora con un aviso. Ver [concepts/07-harness.md](concepts/07-harness.md).
 
 ```bash
 leina init <dir> --hosts claude --profile devin
@@ -593,12 +621,19 @@ elimina los artefactos gestionados del repo: el bloque de protocolo `AGENTS.md`,
 los marcadores gestionados se preserva. Idempotente — cuando no hay nada que revertir (por
 ejemplo, tras un init LIGHT) sale con 0 con una nota de "nothing to revert".
 
-### `activate --hosts <devin|claude>[,...] [--mcp --mcp-hosts <claude|cursor|windsurf>[,...]]`
+### `activate --hosts <devin|claude>[,...] [--mcp --mcp-hosts <claude|cursor|windsurf>[,...]] [--no-user-hooks] [--preset minimal|sdd|full] [--skills a,b|all|none] [--agents a,b|all|none]`
 La mitad global de `setup` (una vez por máquina), sin activar el blanket sentinel. `--hosts`
 es obligatorio. Puebla `~/.leina/share/{skills,agents,workflows}` a partir de los assets
 empaquetados y symlinkea cada entrada en los directorios globales de cada host elegido (para
 Devin, `~/.config/devin/{skills,agents}`), y escribe la config user-global (el grant
 `Exec(leina)` + hooks). Agregá `--mcp` (con `--mcp-hosts`) para registrar el server MCP.
+
+**Selección de assets.** `--preset` elige un grupo de `assets/catalog.json` (`minimal` = core,
+`sdd` = core + SDD, `full` = todo); `--skills` / `--agents` reciben una lista separada por comas
+de nombres de assets, `all` o `none`. Los assets requeridos y sus dependencias se incluyen
+automáticamente (avisado por stderr) y un nombre desconocido es un error. Sin ninguno de los
+tres se conserva la selección persistida; `--hosts` solo cambia *dónde* se linkean los assets,
+no *cuáles*.
 
 ```bash
 leina activate --hosts devin,claude
