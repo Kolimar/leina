@@ -227,11 +227,19 @@ export function handleGraphGc(rest: string[]): void {
 }
 
 export async function handleQuery(rest: string[]): Promise<void> {
-  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: query <dir> <question>");
-  const question = rest.slice(1).join(" ");
+  const root = rest[0] && !rest[0].startsWith("--") ? rest[0] : fail("usage: query <dir> <question> [--json]");
+  // `--json` is a flag wherever it sits after <dir>, never part of the question.
+  const asJson = rest.includes("--json");
+  const question = rest.slice(1).filter((a) => a !== "--json").join(" ");
   const store = await openFreshStore(root);
   const res = queryGraph(store, question);
   store.close();
+  if (asJson) {
+    // The registry's graph.query output contract (graphQueryOutputSchema): the same
+    // {seeds, nodes, edges} QueryResult the MCP graph_query tool returns.
+    process.stdout.write(`${JSON.stringify(res)}\n`);
+    return;
+  }
   console.log(`Seeds: ${res.seeds.map((s) => s.label).join(", ") || "(none)"}`);
   console.log(`Subgraph: ${res.nodes.length} nodes, ${res.edges.length} edges`);
   for (const e of res.edges) {

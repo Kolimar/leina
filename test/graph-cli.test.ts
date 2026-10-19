@@ -166,6 +166,26 @@ test("(GC-10) query: prints seeds and subgraph summary", () => {
   }
 });
 
+test("(GC-12) query --json: prints the graph.query output contract, flag kept out of the question", () => {
+  const dir = tmpProject();
+  try {
+    runCli(["build", dir]);
+    const text = runCli(["query", dir, "beta"]);
+    // The flag may sit anywhere after <dir>; it must never become a search term.
+    for (const args of [["query", dir, "beta", "--json"], ["query", dir, "--json", "beta"]]) {
+      const r = runCli(args);
+      assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
+      const out = JSON.parse(r.stdout) as { seeds: { label: string }[]; nodes: unknown[]; edges: unknown[] };
+      // graphQueryOutputSchema: required seeds/nodes/edges arrays.
+      for (const k of ["seeds", "nodes", "edges"] as const) assert.ok(Array.isArray(out[k]), `${k} is an array`);
+      assert.equal(out.seeds[0]?.label, "beta()", "same top seed as the text output");
+      assert.match(text.stdout, new RegExp(`Subgraph: ${out.nodes.length} nodes, ${out.edges.length} edges`));
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(GC-11) read on a dir with no graph fails with a build hint", () => {
   const dir = mkdtempSync(join(tmpdir(), "leina-graphcli-empty-"));
   try {

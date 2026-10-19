@@ -350,7 +350,8 @@ export function printRootHelp(): void {
       `  affected <dir> <symbol|file>  blast radius (who depends on it; a file\n` +
       `                          expands to its members)\n` +
       `  path <dir> <a> <b>      shortest path between two symbols\n` +
-      `  query <dir> <question>  term-scored subgraph\n` +
+      `  query <dir> <question> [--json]\n` +
+      `                          term-scored subgraph (--json: {seeds, nodes, edges})\n` +
       `  impact analyze [<dir>] <symbol> [--json]\n` +
       `                          bidirectional impact BFS (files/tests/services/configs)\n` +
       `  visualize <dir> [--out <path>] [--drilldown]\n` +
