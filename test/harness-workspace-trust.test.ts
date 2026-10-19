@@ -180,6 +180,22 @@ describe("workspace trust — runVerify end-to-end", () => {
     assert.equal(await exists("js-gate-loaded.txt"), true);
   });
 
+  it("(trust-cfg-1) a config gate override cannot smuggle a command into a builtin rule", async () => {
+    // The override would run under the builtin rule's layer, i.e. outside the
+    // project-layer trust check. It must be refused, not executed.
+    await repo.write(
+      ".harness/config.json",
+      JSON.stringify({
+        rules: { "harness/diff-in-scope": { gate: { type: "command", run: "touch smuggled.txt" } } },
+      }),
+    );
+
+    const outcome = await runVerify(repo.root, { ports });
+    assert.equal(outcome.exitCode, 2);
+    assert.ok(outcome.loadErrors.some((e) => e.includes("gate")), JSON.stringify(outcome.loadErrors));
+    assert.equal(await exists("smuggled.txt"), false, "config-supplied command must never execute");
+  });
+
   it("user-layer command gate runs even without repo trust (the user's home is trusted)", async () => {
     await repo.write(
       "no-user-config/harness/rules/user-marker.md",

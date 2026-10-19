@@ -1,7 +1,8 @@
 // application/harness/resolver.ts — layered rule resolution:
 //   1. Rule files merge by id — a later layer (builtin < project < user)
 //      replaces the whole rule.
-//   2. config.json `rules.<id>` entries apply partial overrides.
+//   2. config.json `rules.<id>` entries apply partial overrides (enabled /
+//      severity only — gates are declared in rule files).
 //   3. Enforceability invariant: user-local layers (user rule files, user/local
 //      config) may NOT weaken a project/builtin blocking rule — no disabling it
 //      and no downgrading severity. Attempts are ignored with a warning.
@@ -85,7 +86,6 @@ export async function loadResolvedRules(repoRoot: string): Promise<Resolution> {
       ...rule,
       ...(effective.enabled !== undefined ? { enabled: effective.enabled } : {}),
       ...(effective.severity !== undefined ? { severity: effective.severity } : {}),
-      ...(effective.gate !== undefined ? { gate: effective.gate } : {}),
     });
   }
 

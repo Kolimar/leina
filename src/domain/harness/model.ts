@@ -191,10 +191,13 @@ export interface TaskContract {
 // enforceability is not defeatable by local config. The resolver enforces this.
 // ---------------------------------------------------------------------------
 
+/**
+ * Config-level rule override. Deliberately no `gate`: gates come from rule
+ * files, where the declaring layer (and so its trust) is known.
+ */
 export interface RuleOverride {
   enabled?: boolean;
   severity?: Severity;
-  gate?: Gate | Gate[];
 }
 
 export const STRICTNESS_LEVELS = ["strict", "guided"] as const;

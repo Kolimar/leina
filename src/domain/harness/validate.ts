@@ -457,17 +457,20 @@ export function validateRuleOverride(value: unknown, path = ""): ValidationResul
   const errors: string[] = [];
   const prefix = path === "" ? "" : `${path}.`;
 
-  let gate: Gate | Gate[] | undefined;
+  // Gates are declared in rule files only. A config-supplied gate would run
+  // under the overridden rule's layer (builtin/user = trusted), letting a repo
+  // smuggle a command past the project-layer trust check. Rejected loudly
+  // rather than stripped, so a stale config gets noticed.
   if (value.gate !== undefined) {
-    const parsed = validateGateField(value.gate, `${prefix}gate`);
-    if (parsed.ok) gate = parsed.value;
-    else errors.push(...parsed.errors);
+    errors.push(
+      `${prefix}gate: not allowed in config — gates are declared in rule files (.harness/rules/); ` +
+        "config overrides accept only enabled/severity",
+    );
   }
 
   const override: RuleOverride = {
     ...opt("enabled", readBoolean(value, "enabled", prefix, errors)),
     ...opt("severity", readEnum<Severity>(value, "severity", prefix, errors, SEVERITIES)),
-    ...opt("gate", gate),
   };
 
   if (errors.length > 0) return { ok: false, errors };

@@ -64,8 +64,8 @@ export async function loadConfig(repoRoot: string): Promise<LoadedConfig> {
   }
 
   // Merge raw objects shallowly per top-level key; `rules` merges by rule id
-  // with field-level merge across layers (a local layer adding `gate` must not
-  // wipe the project layer's `severity` for the same rule).
+  // with field-level merge across layers (a local layer adding `enabled` must
+  // not wipe the project layer's `severity` for the same rule).
   const mergedRaw: Record<string, unknown> = {};
   const mergedRules: Record<string, Record<string, unknown>> = {};
   const localRuleOverridesRaw: Record<string, Record<string, unknown>> = {};

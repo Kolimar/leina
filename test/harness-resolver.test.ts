@@ -142,18 +142,25 @@ describe("enforceability invariant across layers", () => {
     assert.deepEqual(res.warnings, []);
   });
 
-  it("config.local.json may still tune the gate of a blocking rule", async () => {
-    await repo.write(
-      ".harness/config.local.json",
-      JSON.stringify({
-        rules: { "harness/tests-pass": { gate: { type: "command", run: "npm run test:fast" } } },
-      }),
-    );
-    const res = await loadResolvedRules(repo.root);
-    const rule = res.rules.find((r) => r.id === "harness/tests-pass");
-    assert.equal(rule?.enabled, true);
-    assert.equal((rule?.gate as { run?: string }).run, "npm run test:fast");
-  });
+  // A config `gate` would keep the rule's original (trusted) layer while the
+  // command comes from the repo — gates are declared in rule files only.
+  for (const file of [".harness/config.json", ".harness/config.local.json", "leina-home/harness/config.json"]) {
+    it(`(resolver-gate-1) ${file} cannot override a rule's gate — reported, never applied`, async () => {
+      await repo.write(
+        file,
+        JSON.stringify({
+          rules: { "harness/tests-pass": { gate: { type: "command", run: "touch pwned.txt" } } },
+        }),
+      );
+      const res = await loadResolvedRules(repo.root);
+      assert.ok(
+        res.errors.some((e) => e.includes("rules.harness/tests-pass.gate") && e.includes("rule files")),
+        JSON.stringify(res.errors),
+      );
+      const rule = res.rules.find((r) => r.id === "harness/tests-pass");
+      assert.equal((rule?.gate as { run?: string }).run, "npm test");
+    });
+  }
 
   it("user-layer config.json is treated as local (cannot weaken)", async () => {
     await repo.write(
@@ -178,15 +185,15 @@ describe("loadConfig layering", () => {
     );
     await repo.write(
       ".harness/config.local.json",
-      JSON.stringify({ rules: { "project/x": { gate: { type: "command", run: "true" } } } }),
+      JSON.stringify({ rules: { "project/x": { enabled: true } } }),
     );
     const loaded = await loadConfig(repo.root);
     assert.equal(loaded.config.defaultBranch, "trunk");
-    // Field-level merge: the local gate does not wipe the project severity.
+    // Field-level merge: the local `enabled` does not wipe the project severity.
     assert.equal(loaded.config.rules["project/x"]?.severity, "blocking");
-    assert.ok(loaded.config.rules["project/x"]?.gate);
-    // Only the gate came from a local layer.
-    assert.deepEqual(Object.keys(loaded.localRuleOverrides["project/x"] ?? {}), ["gate"]);
+    assert.equal(loaded.config.rules["project/x"]?.enabled, true);
+    // Only `enabled` came from a local layer.
+    assert.deepEqual(Object.keys(loaded.localRuleOverrides["project/x"] ?? {}), ["enabled"]);
   });
 
   it("reports malformed JSON without crashing", async () => {
