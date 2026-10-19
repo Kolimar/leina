@@ -26,6 +26,13 @@ La posture se configura por proyecto (`.leina/config.json`, clave `freshness`).
 Construye el grafo de `<dir>` en `.leina/graph.db`. Con `--json`, además exporta un
 dump node-link a `.leina/graph.json`. Imprime el recuento de nodes/edges/archivos.
 
+Las fuentes se descubren vía git dentro de un work tree (archivos rastreados + no rastreados no
+ignorados, así que se respeta `.gitignore`) y recorriendo el árbol fuera de git. Los
+repositorios/worktrees anidados, los directorios ocultos que no sean de configuración de CI
+(`.github`, `.gitlab`, `.circleci`, …), los directorios de dependencias y build, los bundles
+minificados y los symlinks nunca son fuentes — ver
+[El grafo de código](concepts/02-grafo.md#qué-archivos-cuentan-como-fuente).
+
 Los archivos fuente de más de **4 MiB** se omiten (diagnóstico `[build] skipped <archivo>` por
 stderr; quedan listados en `oversizeSkipped` del reporte del build) y el chequeo de freshness
 los ignora igual, así que un archivo generado o vendorizado enorme no puede agotar la memoria

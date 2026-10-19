@@ -1,10 +1,25 @@
 // Source-file enumeration — the set of files the graph is built from.
 // Extracted from build.ts so the freshness/manifest layer can list sources
 // without pulling in the heavy extractor stack (tree-sitter, ts-morph, sidecars).
+//
+// Discovery honours the repo's own idea of what is "the project":
+//   · inside a git work tree it asks git (`ls-files --cached --others
+//     --exclude-standard`): tracked files plus untracked-but-not-ignored ones, so
+//     .gitignore'd output (coverage/, generated clients, local scratch) is never
+//     indexed, and nested repositories / linked worktrees are never descended into
+//     (git lists them as a bare `dir/`).
+//   · outside git (or when git is unavailable / lists nothing, e.g. a root that is
+//     itself ignored) it walks the tree, skipping any subdirectory that carries its
+//     own `.git` entry — the same nested-repo rule.
+// Both paths then apply the same filters: IGNORE_DIRS, hidden directories (except
+// the CI/devcontainer config dirs yaml-infra indexes), minified bundles, and the
+// extension set. Workspace members are separate repos and are built separately
+// (application/workspace/build.ts), each as its own root.
 
-import { readdirSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, statSync } from "node:fs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join, resolve } from "node:path";
+import { safeGitRawOutput } from "../../infrastructure/install/safe-exec.ts";
 import { detectLang } from "./detect.ts";
 
 const IGNORE_DIRS = new Set([
@@ -25,6 +40,40 @@ const IGNORE_DIRS = new Set([
   "obj",
   "bin",
 ]);
+
+// Hidden directories hold tool state, not project sources: agent worktrees
+// (.claude/worktrees/<name> is a full checkout — indexing it duplicates every symbol),
+// editor/IDE state, framework caches (.svelte-kit, .nuxt, .turbo, .cache), package
+// manager payloads (.yarn/releases). They are skipped everywhere EXCEPT the CI and
+// dev-environment config dirs whose YAML the yaml-infra extractor turns into
+// config/service nodes (workflows, pipelines, devcontainer compose files).
+const INDEXED_HIDDEN_DIRS = new Set([
+  ".github",
+  ".gitlab",
+  ".gitea",
+  ".forgejo",
+  ".circleci",
+  ".buildkite",
+  ".devcontainer",
+]);
+
+/** True for a directory name source discovery never descends into. */
+function isSkippedDir(name: string): boolean {
+  if (IGNORE_DIRS.has(name)) return true;
+  return name.startsWith(".") && !INDEXED_HIDDEN_DIRS.has(name);
+}
+
+// Resolution-affecting config files: the TS compiler options/paths (tsconfig*.json,
+// jsconfig.json) and package manifests (workspaces, exports/imports maps). They are not
+// graph sources, but a change to one can re-route imports, so the build manifest
+// fingerprints them (manifest.ts) and a change makes the graph stale.
+/** True for a resolution-affecting config file name (tsconfig*.json, jsconfig.json, package.json). */
+export function isResolutionConfig(name: string): boolean {
+  if (name === "package.json" || name === "jsconfig.json" || name === "tsconfig.json") return true;
+  // tsconfig.<variant>.json / tsconfig-<variant>.json (base, build, app, spec, …)
+  const sep = name.charAt("tsconfig".length);
+  return name.startsWith("tsconfig") && (sep === "." || sep === "-") && name.endsWith(".json");
+}
 
 // Minified bundles (vendored vis-network, copied dist artifacts) are generated,
 // unreadable code: indexing one floods the graph with meaningless one-letter god
@@ -113,49 +162,144 @@ export function detectIsConfig(path: string): boolean {
 //     invalidation signal exists, so we stop at intra-operation memoization.
 // ---------------------------------------------------------------------------
 
-const sourceListMemo = new AsyncLocalStorage<Map<string, string[]>>();
+/** What one discovery pass finds under a root (absolute or root-relative paths, as given). */
+export interface ProjectFiles {
+  /** Graph sources: code files (detectLang) and YAML infra config (detectIsConfig). */
+  sources: string[];
+  /** Resolution-affecting config files (isResolutionConfig) — fingerprinted, never extracted. */
+  configs: string[];
+}
+
+const projectFilesMemo = new AsyncLocalStorage<Map<string, ProjectFiles>>();
 
 /**
  * Run `fn` with source-walk memoization enabled for its dynamic extent: every
- * listSourceFiles(root) call inside shares one walk per root. Re-entrant —
+ * listing of the same root inside shares one discovery pass. Re-entrant —
  * nested scopes join the outer memo (same logical operation). The memo is
  * dropped when `fn` settles; nothing persists across operations.
  */
 export async function withSourceListMemo<T>(fn: () => Promise<T>): Promise<T> {
-  if (sourceListMemo.getStore() !== undefined) return fn();
-  return sourceListMemo.run(new Map(), fn);
+  if (projectFilesMemo.getStore() !== undefined) return fn();
+  return projectFilesMemo.run(new Map(), fn);
+}
+
+/**
+ * Drop the memoized listing of `root` for the current operation, so the next listing
+ * re-discovers. For an operation that waited (a cross-process build lock) and must judge
+ * freshness on what is on disk NOW, not on the listing taken before the wait.
+ */
+export function forgetSourceList(root: string): void {
+  projectFilesMemo.getStore()?.delete(resolve(root));
+}
+
+type FileKind = "source" | "config";
+
+/** Classify a file name: graph source, resolution config, or neither. */
+function classify(name: string): FileKind | null {
+  // Include code files (detectLang) OR YAML infra config (detectIsConfig). The
+  // fine-grained routing (which extractor handles what) is done later by
+  // ext.supports() in build.ts — here we just discover candidates.
+  if (isMinifiedArtifact(name)) return null;
+  if (detectLang(name) !== null || detectIsConfig(name)) return "source";
+  return isResolutionConfig(name) ? "config" : null;
+}
+
+/** Every file the project consists of (sources + resolution configs), memoized per operation. */
+export function listProjectFiles(root: string): ProjectFiles {
+  const memo = projectFilesMemo.getStore();
+  const memoKey = resolve(root);
+  const cached = memo?.get(memoKey);
+  // Defensive copies — callers may sort/mutate their listing without corrupting the memo.
+  if (cached) return { sources: [...cached.sources], configs: [...cached.configs] };
+  const found = listViaGit(root) ?? listViaWalk(root);
+  memo?.set(memoKey, { sources: [...found.sources], configs: [...found.configs] });
+  return found;
 }
 
 export function listSourceFiles(root: string): string[] {
-  const memo = sourceListMemo.getStore();
-  const memoKey = resolve(root);
-  const cached = memo?.get(memoKey);
-  // Defensive copy — callers may sort/mutate their listing without corrupting the memo.
-  if (cached) return [...cached];
-  const found: string[] = [];
-  function walk(dir: string): void {
+  return listProjectFiles(root).sources;
+}
+
+export function listConfigFiles(root: string): string[] {
+  return listProjectFiles(root).configs;
+}
+
+// Generous bounds for the one git call on the read path: a monorepo's listing can run to
+// tens of MB, and a cold cache on a slow disk can take seconds. On timeout/overflow the
+// call returns null and discovery falls back to the walk.
+const GIT_LIST_TIMEOUT_MS = 15_000;
+const GIT_LIST_MAX_BUFFER = 256 * 1024 * 1024;
+
+/**
+ * Discovery through git: tracked + untracked-not-ignored files under `root`, relative to it
+ * (git scopes `ls-files` to the cwd subtree). Null when `root` is not inside a git work tree,
+ * git is unavailable, or git lists nothing at all — the last case covers a root that is
+ * itself ignored by an enclosing repo (`leina build coverage/`), where the walk is the only
+ * way to see its files.
+ */
+function listViaGit(root: string): ProjectFiles | null {
+  const out = safeGitRawOutput(
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    root,
+    {
+      timeout: GIT_LIST_TIMEOUT_MS,
+      maxBuffer: GIT_LIST_MAX_BUFFER,
+      // HOME/XDG_CONFIG_HOME let git find the user's global excludes file, so
+      // --exclude-standard matches what `git status` considers ignored.
+      env: { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME },
+    },
+  );
+  if (!out) return null;
+  const found: ProjectFiles = { sources: [], configs: [] };
+  for (const rel of out.split("\0")) {
+    // "dir/" entries are untracked nested repositories / worktrees — never descended into.
+    if (rel === "" || rel.endsWith("/")) continue;
+    const segments = rel.split("/");
+    const name = segments.pop()!;
+    if (segments.some(isSkippedDir)) continue;
+    const kind = classify(name);
+    if (!kind) continue;
+    const full = join(root, rel);
+    // The index can name things that are not regular files on disk: a tracked file deleted
+    // in the working tree, a submodule gitlink, a symlink. The walk never yields those
+    // (Dirent.isFile), so neither does this path — lstat on candidates only.
+    if (!isRegularFile(full)) continue;
+    found[kind === "source" ? "sources" : "configs"].push(full);
+  }
+  return found;
+}
+
+function isRegularFile(path: string): boolean {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** Discovery by walking the tree (outside git): same filters, plus the nested-repo rule. */
+function listViaWalk(root: string): ProjectFiles {
+  const found: ProjectFiles = { sources: [], configs: [] };
+  function walk(dir: string, isRoot: boolean): void {
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       return;
     }
+    // A subdirectory with its own `.git` (dir or file) is another repository or a linked
+    // worktree: its code belongs to that checkout, not to this project.
+    if (!isRoot && entries.some((e) => e.name === ".git")) return;
     for (const e of entries) {
       const full = join(dir, e.name);
       if (e.isDirectory()) {
-        if (IGNORE_DIRS.has(e.name)) continue;
-        walk(full);
+        if (!isSkippedDir(e.name)) walk(full, false);
       } else if (e.isFile()) {
-        // Include code files (detectLang) OR YAML infra config (detectIsConfig).
-        // The fine-grained routing (which extractor handles what) is done later by
-        // ext.supports() in build.ts — here we just discover candidates.
-        if (isMinifiedArtifact(e.name)) continue;
-        if (detectLang(e.name) !== null || detectIsConfig(e.name)) found.push(full);
+        const kind = classify(e.name);
+        if (kind) found[kind === "source" ? "sources" : "configs"].push(full);
       }
     }
   }
-  walk(root);
-  // Store a pristine copy so a caller mutating `found` cannot poison later hits.
-  memo?.set(memoKey, [...found]);
+  walk(root, true);
   return found;
 }

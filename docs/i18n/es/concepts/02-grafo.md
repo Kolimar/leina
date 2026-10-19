@@ -35,6 +35,26 @@ Tras volcar nodes y edges en SQLite, `build` escribe un **manifest** (huellas de
 fuente) que después sirve para detectar si el mapa quedó viejo — ver
 [Búsqueda y consultas](./03-busqueda-y-consultas.md#el-freshness-gate).
 
+### Qué archivos cuentan como fuente
+
+La lista de fuentes sigue la idea que el propio repo tiene de qué es el proyecto:
+
+- **Dentro de git**, leina le pregunta a git: archivos rastreados más los no rastreados que
+  **no están ignorados** (`git ls-files --cached --others --exclude-standard`). Lo que tu
+  `.gitignore` excluye — `coverage/`, clientes generados, borradores locales — nunca se indexa.
+- **Fuera de git** (o si git no está disponible), recorre el árbol de directorios.
+- **En ambos casos** nunca entra en: otro repositorio o worktree enlazado anidado dentro del
+  proyecto (un directorio con su propio `.git`); directorios ocultos (`.claude/`, `.idea/`,
+  `.cache/`, …) **salvo** los de configuración de CI/entorno de desarrollo cuyo YAML lee el
+  extractor de infra (`.github`, `.gitlab`, `.gitea`, `.forgejo`, `.circleci`, `.buildkite`,
+  `.devcontainer`); directorios de build/dependencias (`node_modules`, `dist`, `build`,
+  `vendor`, `target`, `obj`, `bin`, …); bundles minificados (`*.min.js`); symlinks.
+
+Los worktrees de agentes como `.claude/worktrees/<nombre>/` son checkouts completos del repo:
+antes de esta regla, indexarlos duplicaba cada símbolo. Un **workspace** multi-repo construye
+cada miembro como su propia raíz (ver `leina workspace build`). Los submódulos de git también
+son repositorios anidados: constrúyelos por separado.
+
 ---
 
 ## Extracción en tres niveles

@@ -36,6 +36,26 @@ After dumping nodes and edges into SQLite, `build` writes a **manifest** (finger
 source files) that's later used to detect if the map has gone stale — see
 [Search and queries](./03-busqueda-y-consultas.md#el-freshness-gate).
 
+### Which files count as sources
+
+The source list follows the repo's own idea of what the project is:
+
+- **Inside git**, leina asks git: tracked files plus untracked files that are **not ignored**
+  (`git ls-files --cached --others --exclude-standard`). Anything your `.gitignore` excludes —
+  `coverage/`, generated clients, local scratch — is never indexed.
+- **Outside git** (or if git is unavailable), it walks the directory tree.
+- **Either way**, it never descends into: another repository or linked worktree nested inside
+  the project (a directory with its own `.git`); hidden directories (`.claude/`, `.idea/`,
+  `.cache/`, …) **except** the CI/dev-environment config dirs whose YAML the infra extractor
+  reads (`.github`, `.gitlab`, `.gitea`, `.forgejo`, `.circleci`, `.buildkite`,
+  `.devcontainer`); build/dependency dirs (`node_modules`, `dist`, `build`, `vendor`,
+  `target`, `obj`, `bin`, …); minified bundles (`*.min.js`); symlinks.
+
+Agent worktrees such as `.claude/worktrees/<name>/` are full checkouts of the repo: before this
+rule, indexing them duplicated every symbol. A multi-repo **workspace** builds each member as
+its own root instead (see `leina workspace build`). Git submodules are nested repositories too:
+build them separately.
+
 ---
 
 ## Three-level extraction

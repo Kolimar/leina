@@ -67,8 +67,21 @@ export function safeGitOutput(
   cwd: string,
   opts?: Partial<ExecFileSyncOptions>,
 ): string | null {
+  return safeGitRawOutput(args, cwd, opts)?.trim() ?? null;
+}
+
+/**
+ * {@link safeGitOutput} without the trim: stdout exactly as git wrote it. For
+ * NUL-separated listings (`-z`), where trimming could eat a leading space of the
+ * first path. Same hardening (pinned binary, `PATH=SAFE_PATH`), `null` on any error.
+ */
+export function safeGitRawOutput(
+  args: string[],
+  cwd: string,
+  opts?: Partial<ExecFileSyncOptions>,
+): string | null {
   try {
-    const out = execFileSync(GIT_BINARY, args, {
+    return execFileSync(GIT_BINARY, args, {
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2000,
@@ -76,7 +89,6 @@ export function safeGitOutput(
       encoding: "utf8",
       env: { ...opts?.env, PATH: SAFE_PATH },
     });
-    return out.trim();
   } catch {
     return null;
   }

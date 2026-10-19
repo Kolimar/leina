@@ -30,7 +30,7 @@ import { join, relative, sep } from "node:path";
 import type { GraphEdge, GraphNode } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
 import type { WorkspaceMember } from "../project/detect-key.ts";
-import { exceedsSourceCap, isMinifiedArtifact } from "../graph/sources.ts";
+import { exceedsSourceCap, listSourceFiles as listGraphSources } from "../graph/sources.ts";
 import { makeId, normalizeLabel } from "../../domain/shared/id.ts";
 
 export type PkgEvidence = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
@@ -152,39 +152,21 @@ function matchConfidence(importModule: string, packageName: string): PkgEvidence
 // ---------------------------------------------------------------------------
 
 const SOURCE_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".java", ".cs"]);
-const SKIP_DIRS = new Set(["node_modules", ".git", ".leina", "dist", "build", "out", "__pycache__", "obj", "bin"]);
 
-/** Recursively list source files in a directory. */
+/**
+ * The member's source files this linker parses: the graph build's own discovery
+ * (gitignore, hidden dirs, nested repos, minified bundles — graph/sources.ts) narrowed to
+ * the languages with an import parser here, under the same per-file size cap.
+ */
 function listSourceFiles(dir: string): string[] {
-  const result: string[] = [];
-  function walk(d: string): void {
-    let entries: string[];
+  return listGraphSources(dir).filter((full) => {
+    if (!SOURCE_EXTS.has(full.slice(full.lastIndexOf(".")))) return false;
     try {
-      entries = readdirSync(d);
+      return !exceedsSourceCap(statSync(full).size);
     } catch {
-      return;
+      return false;
     }
-    for (const entry of entries) {
-      if (SKIP_DIRS.has(entry)) continue;
-      const full = join(d, entry);
-      let st;
-      try {
-        st = statSync(full);
-      } catch {
-        continue;
-      }
-      if (st.isDirectory()) {
-        walk(full);
-      } else if (st.isFile()) {
-        if (isMinifiedArtifact(entry)) continue; // vendored/dist bundles — keep in sync with graph/sources.ts
-        if (exceedsSourceCap(st.size)) continue; // same per-file size cap as the graph build
-        const ext = entry.slice(entry.lastIndexOf("."));
-        if (SOURCE_EXTS.has(ext)) result.push(full);
-      }
-    }
-  }
-  walk(dir);
-  return result;
+  });
 }
 
 /** Collect single-capture-group module imports (java/cs/py bare `import`). */

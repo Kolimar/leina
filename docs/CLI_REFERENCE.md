@@ -24,6 +24,12 @@ All read commands (`query`, `affected`, `path`) route through the **freshness ga
 Build the graph for `<dir>` into `.leina/graph.db`. With `--json`, also export a
 node-link dump to `.leina/graph.json`. Prints node/edge/file counts.
 
+Sources are discovered through git inside a work tree (tracked + untracked-not-ignored files, so
+`.gitignore` is honoured) and by walking the tree outside git. Nested repositories/worktrees,
+hidden directories other than CI config dirs (`.github`, `.gitlab`, `.circleci`, …), dependency
+and build dirs, minified bundles and symlinks are never sources — see
+[The code graph](concepts/02-grafo.md#which-files-count-as-sources).
+
 Source files larger than **4 MiB** are skipped (a `[build] skipped <file>` diagnostic on
 stderr; listed in the build report's `oversizeSkipped`) and the freshness check ignores them
 the same way, so a huge generated or vendored file can neither exhaust memory nor keep the
