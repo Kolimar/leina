@@ -12,13 +12,16 @@ import { formatBatchResults } from "../../domain/shared/batch.ts";
 import { getVerifiedContext } from "../../application/memory/query.ts";
 import { reanchorObservations } from "../../application/memory/reanchor.ts";
 import { compactMemory, type CompactReport } from "../../application/memory/compact.ts";
-import type {
-  ExportedObservation,
-  ImportReport,
-  ObservationInput,
-  ObservationType,
-  Scope,
-  UpdateFields,
+import {
+  InvalidMemoryValueError,
+  parseObservationType,
+  parseScope,
+  type ExportedObservation,
+  type ImportReport,
+  type ObservationInput,
+  type ObservationType,
+  type Scope,
+  type UpdateFields,
 } from "../../domain/memory/model.ts";
 import { parseExportedObservation } from "../../domain/memory/portable.ts";
 import {
@@ -49,6 +52,28 @@ function normalizeAnchors(raw: unknown): string[] | undefined {
   throw new TypeError("anchors must be a string[] or a comma-separated string");
 }
 
+// Flag values reach the store already validated, so an invalid --type / --scope fails with
+// the list of accepted values instead of a stack trace (the repository re-checks every
+// write, which is what covers the batch and MCP paths).
+function validFlag<T>(parse: () => T): T {
+  try {
+    return parse();
+  } catch (e) {
+    if (e instanceof InvalidMemoryValueError) fail(e.message);
+    throw e;
+  }
+}
+
+function typeFlag(rest: string[], fallback: string | undefined): ObservationType | undefined {
+  const raw = optFlag(rest, "--type", fallback);
+  return raw === undefined ? undefined : validFlag(() => parseObservationType(raw));
+}
+
+function scopeFlag(rest: string[]): Scope {
+  const raw = optFlag(rest, "--scope", "project") ?? "project";
+  return validFlag(() => parseScope(raw));
+}
+
 async function memSave(rest: string[], dir: string): Promise<void> {
   const { store, close } = memOpenGuarded(dir);
   try {
@@ -61,9 +86,10 @@ async function memSave(rest: string[], dir: string): Promise<void> {
         return {
           title: raw.title,
           content: raw.content,
-          type: (raw.type as ObservationType) ?? "manual",
+          // Validated per item by the store: a bad type/scope fails that item, not the batch.
+          type: (raw.type ?? "manual") as ObservationType,
           topicKey: raw.topicKey as string | undefined,
-          scope: (raw.scope as Scope) ?? "project",
+          scope: (raw.scope ?? "project") as Scope,
           anchors: normalizeAnchors(raw.anchors),
         };
       });
@@ -80,9 +106,9 @@ async function memSave(rest: string[], dir: string): Promise<void> {
     const contentIdx = rest.indexOf("--content");
     const title = titleIdx >= 0 ? (rest[titleIdx + 1] ?? fail("--title requires a value")) : fail("memory save requires --title");
     const content = contentIdx >= 0 ? (rest[contentIdx + 1] ?? fail("--content requires a value")) : fail("memory save requires --content");
-    const type = (optFlag(rest, "--type", "manual") ?? "manual") as ObservationType;
+    const type = typeFlag(rest, "manual") ?? "manual";
     const topicKey = optFlag(rest, "--topic", undefined);
-    const scope = (optFlag(rest, "--scope", "project") ?? "project") as Scope;
+    const scope = scopeFlag(rest);
     const anchorsRaw = optFlag(rest, "--anchors", undefined);
     const anchors = anchorsRaw ? anchorsRaw.split(",").map((a) => a.trim()).filter(Boolean) : undefined;
     const { observation, evolved } = store.save({ title, content, type, topicKey, scope, anchors });
@@ -114,7 +140,7 @@ function memUpdate(rest: string[], dir: string): void {
         const fields: UpdateFields = {};
         if (typeof raw.title === "string") fields.title = raw.title;
         if (typeof raw.content === "string") fields.content = raw.content;
-        if (typeof raw.type === "string") fields.type = raw.type as ObservationType;
+        if (raw.type !== undefined) fields.type = raw.type as ObservationType; // store validates
         const anchors = normalizeAnchors(raw.anchors);
         if (anchors !== undefined) fields.anchors = anchors;
         return { id: raw.id, fields };
@@ -127,11 +153,11 @@ function memUpdate(rest: string[], dir: string): void {
     const fields: UpdateFields = {};
     const title = optFlag(rest, "--title", undefined);
     const content = optFlag(rest, "--content", undefined);
-    const type = optFlag(rest, "--type", undefined);
+    const type = typeFlag(rest, undefined);
     const anchorsRaw = optFlag(rest, "--anchors", undefined);
     if (title !== undefined) fields.title = title;
     if (content !== undefined) fields.content = content;
-    if (type !== undefined) fields.type = type as ObservationType;
+    if (type !== undefined) fields.type = type;
     if (anchorsRaw !== undefined) fields.anchors = anchorsRaw.split(",").map((a) => a.trim()).filter(Boolean);
     const obs = store.update(id, fields);
     console.log(`Updated #${obs.id} (rev ${obs.revision}).`);
@@ -170,8 +196,8 @@ function warnIfOrphanKeys(dir: string): void {
 
 function memSearch(rest: string[], dir: string): void {
   const query = rest.slice(2).filter((a) => !a.startsWith("--")).join(" ") || fail("memory search requires a query");
-  const type = optFlag(rest, "--type", undefined) as ObservationType | undefined;
-  const scope = (optFlag(rest, "--scope", "project") ?? "project") as Scope;
+  const type = typeFlag(rest, undefined);
+  const scope = scopeFlag(rest);
   const limit = Number(optFlag(rest, "--limit", "10"));
   const { store, close } = memOpenGuarded(dir);
   const hits = store.search(query, { type, scope, limit });
@@ -191,8 +217,8 @@ function memSearch(rest: string[], dir: string): void {
 function memVerified(rest: string[], dir: string): void {
   // Search + classify each hit against the live graph (drift detection).
   const query = rest.slice(2).filter((a) => !a.startsWith("--")).join(" ") || fail("memory verified requires a query");
-  const type = optFlag(rest, "--type", undefined) as ObservationType | undefined;
-  const scope = (optFlag(rest, "--scope", "project") ?? "project") as Scope;
+  const type = typeFlag(rest, undefined);
+  const scope = scopeFlag(rest);
   const limit = Number(optFlag(rest, "--limit", "10"));
   const { store, verifyNode, close } = memOpenGuarded(dir);
   const ctx = getVerifiedContext(store, query, verifyNode, { type, scope, limit });

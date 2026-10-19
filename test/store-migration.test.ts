@@ -199,7 +199,7 @@ function makeMemoryV4Db(dbPath: string): void {
   db.close();
 }
 
-test("(mem-mig-v4tov5) DB en v4 migra a v5 al abrir: user_version=5 y datos preservados", () => {
+test("(mem-mig-v4tov5) DB en v4 migra hasta la versión actual al abrir y conserva los datos", () => {
   const dir = makeTmpDir();
   try {
     const dbPath = join(dir, "memory.db");
@@ -212,17 +212,17 @@ test("(mem-mig-v4tov5) DB en v4 migra a v5 al abrir: user_version=5 y datos pres
       probe.close();
     }
 
-    // Abrir con ensureMemorySchema → debe migrar a v5
+    // Abrir con ensureMemorySchema → recorre la escalera completa (v4 → … → actual)
     {
       const db = new DatabaseSync(dbPath);
       ensureMemorySchema(db);
       db.close();
     }
 
-    // Post: user_version=5, datos preservados
+    // Post: user_version=actual, datos preservados
     {
       const probe = new DatabaseSync(dbPath);
-      assert.equal(getUserVersion(probe), 5, "debe estar en v5 tras la migración");
+      assert.equal(getUserVersion(probe), MEMORY_SCHEMA_VERSION, "debe quedar en la versión actual");
       const count = (
         probe.prepare("SELECT COUNT(*) AS n FROM observations").get() as unknown as { n: number }
       ).n;
@@ -234,27 +234,25 @@ test("(mem-mig-v4tov5) DB en v4 migra a v5 al abrir: user_version=5 y datos pres
   }
 });
 
-test("(mem-mig-v4tov5-idempotent) abrir dos veces la misma DB v5 es idempotente", () => {
+test("(mem-mig-v4tov5-idempotent) abrir dos veces la misma DB migrada es idempotente", () => {
   const dir = makeTmpDir();
   try {
     const dbPath = join(dir, "memory.db");
     makeMemoryV4Db(dbPath);
 
-    // Primera apertura: v4 → v5
+    // Primera apertura: v4 → actual
     {
       const db = new DatabaseSync(dbPath);
       ensureMemorySchema(db);
       db.close();
     }
-    // Segunda apertura: v5 → sigue en v5 (no sube a v6)
+    // Segunda apertura: sigue en la versión actual
     {
       const db = new DatabaseSync(dbPath);
       ensureMemorySchema(db);
-      assert.equal(getUserVersion(db), 5, "segunda apertura no debe cambiar la versión");
+      assert.equal(getUserVersion(db), MEMORY_SCHEMA_VERSION, "segunda apertura no debe cambiar la versión");
       db.close();
     }
-    // MEMORY_SCHEMA_VERSION debe ser exactamente 5
-    assert.equal(MEMORY_SCHEMA_VERSION, 5, "MEMORY_SCHEMA_VERSION debe ser 5");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

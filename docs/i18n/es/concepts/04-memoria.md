@@ -99,6 +99,13 @@ Es un hecho fechado y **tipado** sobre el proyecto. El `type` clasifica la natur
 | `preference` | una preferencia del equipo/usuario |
 | `manual` | nota libre |
 
+La lista es **cerrada**: una escritura con cualquier otro `type` (o con un `scope`
+desconocido) se rechaza con un error que lista los valores válidos. Las bases escritas antes de
+3.0 podían tener tipos libres (el CLI aceptaba cualquier cosa); la migración v6 los reescribe
+una sola vez — `note`, `reference`, `suggestion` y `project` → `discovery`, cualquier otro →
+`manual`, scopes desconocidos → `project` — y `memory import` mapea los mismos alias heredados,
+así que los exports viejos se siguen cargando.
+
 Esta distinción de `type` reaparece en el [drift detection](./05-comunicacion-grafo-memoria.md):
 algunos tipos son *descriptivos* (caducan cuando el código cambia) y otros *normativos* (reglas
 que siguen valiendo aunque el código se mueva).

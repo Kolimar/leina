@@ -235,10 +235,18 @@ If the project key is ambiguous (multiple git repos), commands fail with guidanc
 `.leina/config.json` with `{"project_name":"<name>"}`.
 
 Observation `--type` values: `decision`, `bugfix`, `discovery`, `pattern`, `architecture`,
-`config`, `manual` (default). `--scope` is one of nine values — `project` (default), `personal`,
+`config`, `preference`, `manual` (default). `--scope` is one of nine values — `project` (default), `personal`,
 `workspace`, `path`, `skill`, `process`, `technology`, `security`, `infra`. Search/`verified`
 default to `--scope project`; pass an explicit `--scope` to retrieve observations saved under
 the richer scopes. The live-row unique constraint is `(project_key, scope, topic_key)`.
+
+Both sets are **closed**: every write (`save`, `update`, their `--batch` items, MCP
+`memory_add`/`memory_update`) and the `search`/`verified` filters reject any other value with
+an error that lists the accepted ones (a batch fails only the offending item). Older versions
+stored `--type` unvalidated; opening the db with 3.0 migrates those rows once, in place:
+`note`, `reference`, `suggestion` and `project` become `discovery`, any other unknown type
+becomes `manual`, and an unknown scope becomes `project`. `memory import` / `sync` accept the
+same legacy aliases, so an export taken before the upgrade still loads.
 
 ### `memory save <dir> --title "..." --content "..." [--type t] [--topic key] [--scope s] [--anchors a,b]`
 Add (or upsert) an observation. Passing `--topic <key>` evolves the existing entry with that

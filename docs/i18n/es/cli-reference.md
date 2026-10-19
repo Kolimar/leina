@@ -256,11 +256,20 @@ Si la project key es ambigua (múltiples repos git), los comandos fallan con una
 de crear `.leina/config.json` con `{"project_name":"<name>"}`.
 
 Valores de `--type` de observación: `decision`, `bugfix`, `discovery`, `pattern`,
-`architecture`, `config`, `manual` (por defecto). `--scope` es uno de nueve valores —
+`architecture`, `config`, `preference`, `manual` (por defecto). `--scope` es uno de nueve valores —
 `project` (por defecto), `personal`, `workspace`, `path`, `skill`, `process`, `technology`,
 `security`, `infra`. Search/`verified` usan por defecto `--scope project`; pasá un `--scope`
 explícito para recuperar observaciones guardadas bajo los scopes más ricos. El schema de la
 DB migra de forma idempotente.
+
+Ambos conjuntos son **cerrados**: toda escritura (`save`, `update`, los ítems de sus `--batch`,
+`memory_add`/`memory_update` por MCP) y los filtros de `search`/`verified` rechazan cualquier
+otro valor con un error que lista los aceptados (en un batch falla solo el ítem culpable).
+Las versiones anteriores guardaban `--type` sin validar; al abrir la DB con 3.0 esas filas se
+migran una vez, en el lugar: `note`, `reference`, `suggestion` y `project` pasan a `discovery`,
+cualquier otro tipo desconocido pasa a `manual` y un scope desconocido pasa a `project`.
+`memory import` / `sync` aceptan los mismos alias heredados, así que un export tomado antes de
+la actualización se sigue cargando.
 
 ### `memory save <dir> --title "..." --content "..." [--type t] [--topic key] [--scope s] [--anchors a,b]`
 Guarda (o hace upsert de) una observación. Pasar `--topic <key>` evoluciona la entrada

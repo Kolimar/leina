@@ -35,7 +35,12 @@ import { searchMemory, getVerifiedContext } from "../../application/memory/query
 import { previewRecentContext } from "../../application/memory/context-preview.ts";
 import { buildActiveContext } from "../../application/context/active-context.ts";
 import { runAudit } from "../../application/audit/run.ts";
-import type { ObservationInput, ObservationType, UpdateFields } from "../../domain/memory/model.ts";
+import {
+  parseObservationType,
+  type ObservationInput,
+  type ObservationType,
+  type UpdateFields,
+} from "../../domain/memory/model.ts";
 import { readConsentFlag } from "../../application/install/consent.ts";
 import { isWorkspaceTrusted } from "../../application/install/trust.ts";
 import {
@@ -78,6 +83,10 @@ const optNum = (a: ToolArgs, k: string): number | undefined =>
   typeof a[k] === "number" ? (a[k]) : undefined;
 const optStr = (a: ToolArgs, k: string): string | undefined =>
   typeof a[k] === "string" ? (a[k]) : undefined;
+// Type filters/values are validated like the CLI's: an unknown type is an error listing the
+// accepted values, never a silent empty result.
+const optType = (a: ToolArgs): ObservationType | undefined =>
+  a.type === undefined ? undefined : parseObservationType(a.type);
 const optStrArr = (a: ToolArgs, k: string): string[] | undefined =>
   Array.isArray(a[k]) ? (a[k] as string[]) : undefined;
 
@@ -371,19 +380,19 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       const input: ObservationInput = {
         title: str(a, "title"),
         content: str(a, "content"),
-        type: (optStr(a, "type") ?? "manual") as ObservationType,
+        type: optType(a) ?? "manual",
         topicKey: optStr(a, "topic"),
       };
       return s.store.save(input);
     }),
   memory_search: (a) =>
     withMemStore(rootOf(a), (s) =>
-      searchMemory(s.store, str(a, "query"), { type: optStr(a, "type") as ObservationType | undefined, limit: intArg(a, "limit") }),
+      searchMemory(s.store, str(a, "query"), { type: optType(a), limit: intArg(a, "limit") }),
     ),
   memory_verified: (a) =>
     withMemStore(rootOf(a), (mem) =>
       getVerifiedContext(mem.store, str(a, "query"), mem.verifyNode, {
-        type: optStr(a, "type") as ObservationType | undefined,
+        type: optType(a),
         limit: intArg(a, "limit"),
       }),
     ),
@@ -406,7 +415,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       const fields: UpdateFields = {
         title: optStr(a, "title"),
         content: optStr(a, "content"),
-        type: optStr(a, "type") as ObservationType | undefined,
+        type: optType(a),
         anchors: Array.isArray(a.anchors) ? (a.anchors as string[]) : undefined,
       };
       return s.store.update(str(a, "id"), fields);

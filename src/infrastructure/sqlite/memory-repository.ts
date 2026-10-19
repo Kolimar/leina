@@ -22,6 +22,7 @@ import type {
   ExportedObservation,
   ImportReport,
 } from "../../domain/memory/model.ts";
+import { parseObservationType, parseScope } from "../../domain/memory/model.ts";
 import type { BatchResult } from "../../domain/shared/batch.ts";
 import type { MemoryRepository } from "../../domain/memory/ports.ts";
 
@@ -497,9 +498,13 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   // Contains the entire write logic of save() but with NO BEGIN/COMMIT/ROLLBACK.
   // Callers are responsible for wrapping with a transaction.
 
-  private _saveInTx(input: ObservationInput, now?: number): { observation: Observation; evolved: boolean } {
+  private _saveInTx(raw: ObservationInput, now?: number): { observation: Observation; evolved: boolean } {
     const ts = now ?? Date.now();
-    const scope: Scope = input.scope ?? "project";
+    // Closed value sets are enforced HERE, at the one write path every transport (CLI,
+    // batch, MCP, workspace federation) goes through: unvalidated `--type note` rows once
+    // made `memory export` → `memory import` fail on a fresh machine.
+    const input: ObservationInput = { ...raw, type: parseObservationType(raw.type) };
+    const scope: Scope = parseScope(input.scope ?? "project");
     const topicKey = input.topicKey ?? null;
     // Fall back to the active session when no explicit sessionId is provided.
     const resolvedSessionId = input.sessionId ?? this.activeSessionId ?? null;
@@ -695,7 +700,7 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     }
     if (fields.type !== undefined) {
       sets.push("type=?");
-      params.push(fields.type);
+      params.push(parseObservationType(fields.type));
     }
 
     params.push(id, this.projectKey); // WHERE id=? AND project_key=?

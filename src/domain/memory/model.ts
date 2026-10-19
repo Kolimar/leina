@@ -29,6 +29,54 @@ export const OBSERVATION_TYPES = [
 
 export type ObservationType = (typeof OBSERVATION_TYPES)[number];
 
+/**
+ * Type values that pre-3.0 CLIs stored without validation (`--type` was cast blindly), mapped
+ * to the canonical type that replaces them. The v6 schema migration rewrites them in place
+ * (any other unknown value becomes `manual`), and `memory import` accepts them so an export
+ * taken before the upgrade still loads. New writes reject every value not in OBSERVATION_TYPES.
+ */
+export const LEGACY_TYPE_ALIASES: Readonly<Record<string, ObservationType>> = {
+  note: "discovery",
+  reference: "discovery",
+  suggestion: "discovery",
+  project: "discovery",
+};
+
+/** Raised when a write carries a type or scope outside the closed value sets. */
+export class InvalidMemoryValueError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidMemoryValueError";
+  }
+}
+
+export function isObservationType(v: unknown): v is ObservationType {
+  return typeof v === "string" && (OBSERVATION_TYPES as readonly string[]).includes(v);
+}
+
+export function isScope(v: unknown): v is Scope {
+  return typeof v === "string" && (SCOPES as readonly string[]).includes(v);
+}
+
+/**
+ * Validate a type value on its way into the store. `legacy: true` (import only) maps the
+ * LEGACY_TYPE_ALIASES to their canonical type instead of rejecting them.
+ */
+export function parseObservationType(raw: unknown, opts?: { legacy?: boolean }): ObservationType {
+  if (isObservationType(raw)) return raw;
+  if (opts?.legacy === true && typeof raw === "string" && Object.hasOwn(LEGACY_TYPE_ALIASES, raw)) {
+    return LEGACY_TYPE_ALIASES[raw]!;
+  }
+  throw new InvalidMemoryValueError(
+    `invalid type ${JSON.stringify(raw)}: must be one of ${OBSERVATION_TYPES.join("|")}`,
+  );
+}
+
+export function parseScope(raw: unknown): Scope {
+  if (isScope(raw)) return raw;
+  throw new InvalidMemoryValueError(`invalid scope ${JSON.stringify(raw)}: must be one of ${SCOPES.join("|")}`);
+}
+
 export interface ObservationInput {
   title: string;
   content: string;

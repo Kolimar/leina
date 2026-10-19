@@ -10,11 +10,13 @@
 // Dependency rule: this file MUST import only from domain modules.
 
 import {
+  InvalidMemoryValueError,
+  LEGACY_TYPE_ALIASES,
   OBSERVATION_TYPES,
   SCOPES,
+  parseObservationType,
   type ExportedAnchor,
   type ExportedObservation,
-  type ObservationType,
   type Scope,
 } from "./model.ts";
 
@@ -67,6 +69,20 @@ function oneOf<T extends string>(o: Record<string, unknown>, key: string, allowe
   return v as T;
 }
 
+// Exports taken before 3.0 may carry the unvalidated legacy types the CLI used to store
+// (`note`, …): they load under their canonical type instead of failing the whole import.
+function legacyAwareType(v: unknown): ExportedObservation["type"] {
+  try {
+    return parseObservationType(v, { legacy: true });
+  } catch (e) {
+    if (!(e instanceof InvalidMemoryValueError)) throw e;
+    throw new InvalidExport(
+      `type must be one of ${OBSERVATION_TYPES.join("|")} ` +
+        `(legacy ${Object.keys(LEGACY_TYPE_ALIASES).join("|")} are mapped)`,
+    );
+  }
+}
+
 function parseAnchor(raw: unknown, i: number): ExportedAnchor {
   const path = `anchors[${i}]`;
   if (!isRecord(raw)) throw new InvalidExport(`${path} must be an object`);
@@ -112,7 +128,7 @@ function parseOrThrow(raw: unknown): ExportedObservation {
     // The stored project key is always the importing store's own; carried for shape only.
     projectKey: typeof raw.projectKey === "string" ? raw.projectKey : "",
     scope: oneOf<Scope>(raw, "scope", SCOPES),
-    type: oneOf<ObservationType>(raw, "type", OBSERVATION_TYPES),
+    type: legacyAwareType(raw.type),
     title: raw.title,
     content: raw.content,
     createdAt: timestamp(raw, "createdAt"),

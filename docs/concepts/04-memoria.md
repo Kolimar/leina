@@ -97,6 +97,12 @@ It's a dated, **typed** fact about the project. The `type` classifies its nature
 | `preference` | a team/user preference |
 | `manual` | a free-form note |
 
+The list is **closed**: a write with any other `type` (or an unknown `scope`) is rejected with
+an error that lists the valid values. Databases written before 3.0 could hold free-form types
+(the CLI used to accept anything); the v6 migration rewrites them once — `note`, `reference`,
+`suggestion` and `project` → `discovery`, anything else → `manual`, unknown scopes → `project` —
+and `memory import` maps the same legacy aliases, so old exports still load.
+
 This `type` distinction reappears in [drift detection](./05-comunicacion-grafo-memoria.md):
 some types are *descriptive* (they expire when the code changes) and others *normative*
 (rules that keep holding even as the code moves).

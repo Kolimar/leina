@@ -2,8 +2,9 @@
 // FTS5 rides the implicit rowid; triggers maintain the external-content index.
 
 import type { DatabaseSync } from "node:sqlite";
+import { LEGACY_TYPE_ALIASES, OBSERVATION_TYPES, SCOPES } from "../../domain/memory/model.ts";
 
-export const MEMORY_SCHEMA_VERSION = 5;
+export const MEMORY_SCHEMA_VERSION = 6;
 
 // Node bundles its built-in SQLite WITHOUT the FTS5 compile flag until Node 24.
 // Node 22/23 builds ship without FTS5; Node 24+ enables it (nodejs/node#56476).
@@ -272,6 +273,7 @@ function runMemoryMigrations(db: DatabaseSync, fts5: boolean): void {
   // v4→v5: no-op marker — scope es TEXT sin CHECK; sella la taxonomía rica (9 valores).
   // No gateada por fts5: el cambio afecta al modelo de dominio, no a los índices FTS.
   if (v < 5) migrateV4toV5(db);
+  if (v < 6) migrateV5toV6(db);
   db.exec(`PRAGMA user_version = ${MEMORY_SCHEMA_VERSION}`);
 }
 
@@ -355,4 +357,28 @@ function migrateV3toV4(db: DatabaseSync): void {
 function migrateV4toV5(_db: DatabaseSync): void {
   // no-op: scope is TEXT without CHECK; the rich 9-value taxonomy is purely a TypeScript
   // compile-time contract. No SQL structural changes needed.
+}
+
+// v5 → v6: normalise the closed value sets. Before 3.0 the CLI cast `--type` / `--scope`
+// without validation, so real dbs hold rows typed `note` (and other free-form values) that
+// `memory import` then rejects — an export from such a db could not be re-imported anywhere.
+// Legacy aliases map to their canonical type (LEGACY_TYPE_ALIASES), any other unknown type
+// becomes `manual`, any unknown scope becomes `project`. Snapshots are normalised too (they
+// travel in exports). Pure UPDATEs, idempotent: a second run matches no row. On FTS5 dbs the
+// obs_au trigger re-indexes the touched live rows with identical title/content — a no-op for
+// the index. Not gated by fts5.
+function migrateV5toV6(db: DatabaseSync): void {
+  const placeholders = (n: number): string => Array.from({ length: n }, () => "?").join(",");
+  inTransaction(db, () => {
+    const alias = db.prepare("UPDATE observations SET type = ? WHERE type = ?");
+    for (const [legacy, canonical] of Object.entries(LEGACY_TYPE_ALIASES)) alias.run(canonical, legacy);
+    db.prepare(
+      `UPDATE observations SET type = 'manual' WHERE type NOT IN (${placeholders(OBSERVATION_TYPES.length)})`,
+    ).run(...OBSERVATION_TYPES);
+    for (const table of ["observations", "sessions"]) {
+      db.prepare(
+        `UPDATE ${table} SET scope = 'project' WHERE scope NOT IN (${placeholders(SCOPES.length)})`,
+      ).run(...SCOPES);
+    }
+  });
 }
