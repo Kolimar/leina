@@ -148,6 +148,26 @@ test("(proot-8) graph root never crosses into the enclosing repo from a nested w
   }
 });
 
+test("(proot-10) project root: a package with its own consent or name lock stays its own project", () => {
+  const root = fresh();
+  try {
+    mkdirSync(join(root, ".git"), { recursive: true });
+    write(join(root, ".leina", "graph.db"), "");
+    mkdirSync(join(root, "pkg-a", "src"), { recursive: true });
+    mkdirSync(join(root, "pkg-b", "src"), { recursive: true });
+    mkdirSync(join(root, "pkg-c", "src"), { recursive: true });
+    write(join(root, "pkg-a", ".leina", "consent"), "enabled");
+    write(join(root, "pkg-b", ".leina", "config.json"), '{"project_name":"b"}');
+    // Runtime leftovers (session markers, a memory snapshot) do not make a project.
+    write(join(root, "pkg-c", ".leina", "session.memory-loaded"), "");
+    assert.equal(resolveGraphRoot(join(root, "pkg-a", "src")), join(root, "pkg-a"));
+    assert.equal(resolveGraphRoot(join(root, "pkg-b", "src")), join(root, "pkg-b"));
+    assert.equal(resolveGraphRoot(join(root, "pkg-c", "src")), root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("(proot-9) outside git: an ancestor workspace graph serves; otherwise the start dir itself", () => {
   const ws = fresh();
   try {

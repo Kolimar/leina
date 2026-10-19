@@ -14,6 +14,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 
 const CONSENT_REL = join(".leina", "consent");
 const GRAPH_DB_REL = join(".leina", "graph.db");
+const PROJECT_MARKERS_REL = [GRAPH_DB_REL, CONSENT_REL, join(".leina", "config.json")];
 
 /** `start` and each of its ancestors, nearest first. */
 function ancestors(start: string): string[] {
@@ -94,18 +95,27 @@ export function findConsentRoot(start: string): string | undefined {
   return undefined;
 }
 
+/** A directory leina already treats as a project: it holds a graph, a consent flag or a name lock. */
+function isLeinaProjectDir(dir: string): boolean {
+  if (isLeinaHomeParent(dir)) return false;
+  return PROJECT_MARKERS_REL.some((rel) => existsSync(join(dir, rel)));
+}
+
 /**
- * The directory whose `.leina/graph.db` serves graph reads for `start`: the
- * nearest ancestor (inclusive) with a graph, never crossing the enclosing git
- * toplevel (a nested worktree has its own code, so the outer repo's graph would
- * be wrong for it). Without a graph, the git toplevel; outside git, `start`
- * itself unless an ancestor holds one (a multi-repo workspace root).
+ * The project root every per-project CLI command (graph reads and builds, memory) acts on
+ * for `start`: the nearest ancestor (inclusive) that is already a leina project — it
+ * holds `.leina/graph.db`, `.leina/consent` or a `.leina/config.json` name lock — never
+ * crossing the enclosing git toplevel (a nested worktree or repo has its own code, so the
+ * outer project's graph would be wrong for it). Without one, the git toplevel; outside
+ * git, `start` itself unless an ancestor is a project (a multi-repo workspace root). So a
+ * command run from `src/` reads the repo's graph instead of building a second one, and a
+ * monorepo package that was `init`ed on its own stays its own project.
  */
 export function resolveGraphRoot(start: string): string {
   const abs = resolve(start);
   const top = findGitToplevel(abs);
   for (const dir of ancestors(abs)) {
-    if (!isLeinaHomeParent(dir) && existsSync(join(dir, GRAPH_DB_REL))) return dir;
+    if (isLeinaProjectDir(dir)) return dir;
     if (dir === top) break;
   }
   return top ?? abs;
