@@ -151,6 +151,11 @@ async function driveMcp(cwd: string, env: NodeJS.ProcessEnv, requests: object[])
       }
     });
     child.on("error", rejectDone);
+    // A server that dies mid-session (process.exit in a tool path) fails fast instead
+    // of timing out. Once every response is in, this is a no-op (already resolved).
+    child.once("exit", (code) =>
+      rejectDone(new Error(`server exited (code ${code}) after ${responses.length}/${expected} responses`)),
+    );
   });
 
   for (const req of requests) child.stdin.write(`${JSON.stringify(req)}\n`);
@@ -356,6 +361,41 @@ test("(mcps-8) graph_visualize: out resolves against root, is confined and must 
     rmSync(home, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
     rmSync(join(tmpdir(), escapeName), { force: true });
+  }
+});
+
+test("(mcps-9) a refused stale graph is a tool error, never a server exit", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home9-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo9-"));
+  const env = sandboxEnv(home);
+  try {
+    writeFileSync(join(dir, "a.ts"), "export function one(): number { return 1; }\n");
+    await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "graph_build", arguments: { root: dir } } },
+    ]);
+    // Stale (new source) under the "refuse" posture: every gated read must refuse in-band.
+    writeFileSync(join(dir, "b.ts"), "export function two(): number { return 2; }\n");
+    writeFileSync(join(dir, ".leina", "config.json"), JSON.stringify({ freshness: "refuse" }));
+
+    const responses = await driveMcp(dir, { ...env, LEINA_FRESHNESS: "" }, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "graph_query", arguments: { root: dir, question: "one" } } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "graph_visualize", arguments: { root: dir } } },
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "graph_stats", arguments: { root: dir } } },
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+
+    for (const id of [2, 3]) {
+      assert.equal(byId.get(id)?.result?.isError, true, `call ${id} refused in-band`);
+      assert.match(byId.get(id)?.result?.content?.[0]?.text ?? "", /freshness posture is "refuse"/);
+    }
+    assert.ok(!byId.get(4)?.result?.isError, "server still alive and answering after the refusals");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

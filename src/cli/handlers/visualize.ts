@@ -17,7 +17,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { openFreshStore, openWorkspaceFreshStore } from "../wiring.ts";
+import { openFreshStoreOrThrow, openWorkspaceFreshStore } from "../wiring.ts";
 import { detectWorkspaceMode } from "../../application/project/detect-key.ts";
 import { entryAssetsRootFrom } from "../../infrastructure/install/global.ts";
 import {
@@ -143,7 +143,8 @@ export async function runVisualizeToFile(
   // SINGLE-REPO: comportamiento clásico (auto-rebuild si stale + postura auto).
   const p = join(root, ".leina", "graph.db");
   if (!existsSync(p)) throw new Error(`No graph at ${p}. Run: leina build ${root}`);
-  const store = await openFreshStore(root);
+  // Throwing gate, never openFreshStore: its fail() would process.exit the MCP server.
+  const store = await openFreshStoreOrThrow(root);
   try {
     const graph = store.toNodeLink();
     const artifact = renderGraphHtml(graph, visJs, { projectName });

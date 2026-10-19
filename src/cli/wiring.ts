@@ -187,6 +187,8 @@ export async function openFreshStore(root: string): Promise<GraphRepository> {
  * Detects workspace members, orchestrates per-repo builds (reuse-or-rebuild),
  * and returns the merged store (workspace graph.db v3 at <wsRoot>/.leina/).
  *
+ * Throws (never process.exit): it also serves the MCP graph_visualize executor, so
+ * the single-mode fallback uses the throwing gate; CLI callers wrap it in fail().
  * The caller is responsible for calling `.close()` on the returned store.
  */
 export async function openWorkspaceFreshStore(
@@ -198,7 +200,7 @@ export async function openWorkspaceFreshStore(
 
   if (detection.mode === "single") {
     // Fall back to single-repo path (covers --single override)
-    return openFreshStore(resolved);
+    return openFreshStoreOrThrow(resolved);
   }
 
   const mergedDbPath = graphDbPath(wsRoot); // reuse same path helper for the workspace root
