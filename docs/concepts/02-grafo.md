@@ -107,6 +107,10 @@ For TypeScript, the cartographer walks the project **twice**:
 Why two passes? Because TypeScript allows *forward references* and cross-file calls: you can't
 resolve a call to something you haven't registered yet.
 
+A local rename resolves to the declaration it names: after
+`const { run } = await import("./jobs")`, `const run = jobs.run` or `const api = { run }`,
+the call `run()` / `api.run()` is a `calls` edge to `run` in `jobs.ts`.
+
 ---
 
 ## The model: nodes and edges

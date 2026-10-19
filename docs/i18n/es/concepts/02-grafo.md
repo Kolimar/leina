@@ -106,6 +106,10 @@ Para TypeScript, la extracción recorre el proyecto **dos veces**:
 ¿Por qué dos? Porque TypeScript permite *forward references* y llamadas cruzadas entre
 archivos: no podés resolver una llamada a algo que todavía no registraste.
 
+Un renombre local se resuelve a la declaración que nombra: después de
+`const { run } = await import("./jobs")`, `const run = jobs.run` o `const api = { run }`,
+la llamada `run()` / `api.run()` es un edge `calls` al `run` de `jobs.ts`.
+
 ---
 
 ## El modelo: nodes y edges

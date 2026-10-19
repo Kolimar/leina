@@ -204,10 +204,12 @@ Crudo: [`precision-value.json`](../../../bench/results/precision-value.json), [`
   como valor), así que cambiar la forma de una interfaz sí revela su blast radius real. Era
   un punto ciego documentado que el benchmark expuso — el recall saltó 4.5% → 98.2% al
   cerrar el gap.
-- El ~2% residual es destructuring de import dinámico (`const { x } = await import(...)`),
-  que necesita una ruta de resolución estructuralmente distinta y está registrado en el
-  backlog. Un benchmark que revela el último gap — no solo los aciertos — está haciendo su
-  trabajo.
+- El ~2% residual es del oráculo, no de leina: las dos pérdidas son un mismo fixture
+  de test que declara *su propio* `GraphNode`/`GraphEdge` e importa esos, así que una
+  búsqueda de imports por nombre lo cuenta y el grafo (correctamente) no. El destructuring
+  de import dinámico (`const { x } = await import(...)`), al que antes se atribuía este gap,
+  ya se resuelve: `x()` es una llamada al `x` exportado. Un benchmark que revela el último
+  gap — no solo los aciertos — está haciendo su trabajo.
 
 Límites del método, dichos claro: el oráculo cuenta `import`s internos de una y varias
 líneas (se pierde re-exports e imports dinámicos), y es una *cota inferior* — así que el

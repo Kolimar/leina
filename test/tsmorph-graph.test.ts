@@ -156,3 +156,37 @@ test("(b4-merged-value-type) a const and a type alias sharing a name resolve by 
   assert.deepStrictEqual(edgesFrom(`${USER}:asuser`), [`${USER}:asuser -references-> ${KINDS}:user @L12`]);
   assert.deepStrictEqual(edgesFrom(`${KINDS}:user`), [`${KINDS}:user -references-> ${KINDS}:user:variable @L14`]);
 });
+
+// ---------------------------------------------------------------------------
+// B1 — destructured dynamic imports and local renames resolve to the declaration
+// ---------------------------------------------------------------------------
+
+const DT = "dyn_target_ts";
+const DU = "dyn_user_ts";
+
+test("(b1-dynamic-shorthand) `const { f } = await import()` then `f()` is a call of f", () => {
+  assert.deepStrictEqual(edgesFrom(`${DU}:shorthand`), [
+    `${DU}:shorthand -calls-> ${DT}:runtask @L5`,
+    `${DU}:shorthand -references-> ${DT}:runtask @L4`,
+  ]);
+});
+
+test("(b1-dynamic-renamed) `const { f: g } = await import()` then `g()` is a call of f", () => {
+  assert.deepStrictEqual(edgesFrom(`${DU}:renamed`), [
+    `${DU}:renamed -calls-> ${DT}:stoptask @L10`,
+    `${DU}:renamed -references-> ${DT}:stoptask @L9`,
+  ]);
+});
+
+test("(b1-dynamic-namespace) `(await import()).f()` through a namespace const is a call of f", () => {
+  assert.deepStrictEqual(edgesFrom(`${DU}:namespaced`), [`${DU}:namespaced -calls-> ${DT}:stoptask @L15`]);
+});
+
+test("(b1-local-alias) const aliases and shorthand properties are followed to the function", () => {
+  assert.deepStrictEqual(edgesFrom(`${DU}:aliased`), [
+    `${DU}:aliased -calls-> ${DT}:runtask @L21`,
+    `${DU}:aliased -references-> ${DT}:runtask @L19`,
+    `${DU}:aliased -references-> ${DT}:tools @L19`,
+  ]);
+  assert.deepStrictEqual(edgesFrom(`${DT}:tools`), [`${DT}:tools -references-> ${DT}:runtask @L8`]);
+});

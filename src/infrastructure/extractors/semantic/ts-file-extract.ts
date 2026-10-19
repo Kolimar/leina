@@ -18,7 +18,7 @@ import type {
   Relation,
   Signature,
 } from "../../../domain/graph/model.ts";
-import type { FileDefs, FnLike, TsDef } from "./ts-defs.ts";
+import { nameText, unwrapExpression, type FileDefs, type FnLike, type TsDef } from "./ts-defs.ts";
 
 export interface TsProgramEnv {
   program: ts.Program;
@@ -182,6 +182,9 @@ function isCallee(n: ts.Node): boolean {
   const p = n.parent;
   return (ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression === n;
 }
+
+/** How many local renames (`const { a } = …`, `const b = a`, `{ b }`) resolution follows. */
+const MAX_ALIAS_HOPS = 8;
 
 const loc = (n: ts.Node, sf: ts.SourceFile): string =>
   `L${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`;
@@ -369,15 +372,53 @@ class FileExtractor {
     return fallback;
   }
 
-  private resolveSymbol(sym: ts.Symbol, meaning: Meaning): string | undefined {
+  private resolveSymbol(sym: ts.Symbol, meaning: Meaning, hops = 0): string | undefined {
     const cache = this.resolved[meaning];
     const hit = cache.get(sym);
     if (hit !== undefined) return hit ?? undefined;
+    cache.set(sym, null); // a cycle of aliases (`const a = b, b = a`) resolves to nothing
     let target = sym;
     if (target.flags & ts.SymbolFlags.Alias) target = this.checker.getAliasedSymbol(target);
-    const id = this.pickDecl(target.declarations ?? [], meaning);
+    const decls = target.declarations ?? [];
+    let id = this.pickDecl(decls, meaning);
+    if (id === undefined && decls[0] !== undefined && hops < MAX_ALIAS_HOPS) {
+      const next = this.aliasTarget(decls[0]);
+      if (next !== undefined) id = this.resolveSymbol(next, meaning, hops + 1);
+    }
     cache.set(sym, id ?? null);
     return id;
+  }
+
+  /**
+   * The symbol an unregistered local declaration is only another name for: a destructured
+   * member (`const { run } = await import("./m")`, a `{ run }: Deps` parameter), a const alias
+   * (`const run = mod.run`), or an object-literal property holding one (`{ run }`,
+   * `{ run: impl }`). Following it makes `run()` a call of the declaration it names.
+   */
+  private aliasTarget(d: ts.Declaration): ts.Symbol | undefined {
+    if (ts.isBindingElement(d)) {
+      if (d.dotDotDotToken !== undefined || !ts.isObjectBindingPattern(d.parent)) return undefined;
+      const name = nameText(d.propertyName ?? d.name);
+      if (name === undefined) return undefined;
+      // The pattern's type is the destructured value's: a module namespace for `await import()`.
+      const source = this.checker.getNonNullableType(this.checker.getTypeAtLocation(d.parent));
+      return this.checker.getPropertyOfType(source, name);
+    }
+    if (ts.isVariableDeclaration(d)) {
+      const isConst = (ts.getCombinedNodeFlags(d) & ts.NodeFlags.Const) !== 0;
+      return isConst && d.initializer !== undefined ? this.symbolOfAliasExpr(d.initializer) : undefined;
+    }
+    if (ts.isShorthandPropertyAssignment(d)) return this.checker.getShorthandAssignmentValueSymbol(d);
+    if (ts.isPropertyAssignment(d)) return this.symbolOfAliasExpr(d.initializer);
+    return undefined;
+  }
+
+  /** `name` or `a.b.name` (through parens/casts) → the symbol it reads; anything else → none. */
+  private symbolOfAliasExpr(e: ts.Expression): ts.Symbol | undefined {
+    const u = unwrapExpression(e);
+    if (ts.isIdentifier(u)) return this.checker.getSymbolAtLocation(u);
+    if (ts.isPropertyAccessExpression(u)) return this.checker.getSymbolAtLocation(u.name);
+    return undefined;
   }
 
   private resolve(node: ts.Node, meaning: Meaning): string | undefined {

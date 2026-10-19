@@ -195,9 +195,12 @@ Raw: [`precision-value.json`](../../bench/results/precision-value.json), [`preci
   type-args) and value references (a symbol used as a value), so changing an interface's
   shape surfaces its real blast radius — `affected GraphNode` returns the files that depend
   on that type.
-- The residual ~2% is dynamic-import destructuring (`const { x } = await import(...)`),
-  which needs a structurally different resolution path and is tracked in the backlog. A
-  benchmark that surfaces the last gap — not just the wins — is doing its job.
+- The residual ~2% is the oracle's, not leina's: both misses are one test fixture
+  that declares its *own* `GraphNode`/`GraphEdge` and imports those, so a name-based
+  import search counts it while the graph (correctly) does not. Dynamic-import
+  destructuring (`const { x } = await import(...)`), once suspected for this gap, is
+  resolved: `x()` is a call of the exported `x`. A benchmark that surfaces the last gap —
+  not just the wins — is doing its job.
 
 Method limits, stated plainly: the oracle counts single-line and multi-line internal
 `import`s (it misses re-exports and dynamic imports), and it is a *lower bound* — so recall
