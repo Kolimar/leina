@@ -26,10 +26,10 @@ export interface ObservationPreview {
   title: string;
   topicKey?: string;
   updatedAt: number;
-  /** First DEFAULT_PREVIEW_CHARS of content (word/line-aligned), "…"-terminated when clipped. */
+  /** First DEFAULT_PREVIEW_CHARS code points of content (word/line-aligned), "…"-terminated when clipped. */
   preview: string;
   truncated: boolean;
-  /** Full body length, so the caller can judge whether memory.get is worth it. */
+  /** Full body length in code points, so the caller can judge whether memory.get is worth it. */
   contentChars: number;
 }
 
@@ -49,12 +49,30 @@ export interface RecentContextPreview {
   note?: string;
 }
 
-/** Clip to `max` chars, preferring the last line/word break past 60% so previews end cleanly. */
+// "Chars" throughout this module are Unicode CODE POINTS, not UTF-16 units: a UTF-16
+// cut can land between the two halves of a surrogate pair (any emoji / astral char),
+// leaving a lone high surrogate that serialises as U+FFFD or breaks strict JSON
+// consumers. Clipping by code point never splits a pair. (Grapheme clusters such as
+// ZWJ emoji sequences may still be split into their component code points — that is
+// still valid text, and a segmenter would be overkill for a preview budget.)
+
+/** Number of Unicode code points in `s`. */
+function codePointLength(s: string): number {
+  let n = 0;
+  for (const _ of s) n++;
+  return n;
+}
+
+/** Clip to `max` code points, preferring the last line/word break past 60% so previews end cleanly. */
 function clip(text: string, max: number): { text: string; truncated: boolean } {
+  // UTF-16 length bounds the code-point count from above: the common short case is free.
   if (text.length <= max) return { text, truncated: false };
-  const slice = text.slice(0, max);
+  const points = Array.from(text);
+  if (points.length <= max) return { text, truncated: false };
+  const slice = points.slice(0, max).join("");
+  // Breaks are BMP chars, so cutting at one never splits a pair either.
   const lastBreak = Math.max(slice.lastIndexOf("\n"), slice.lastIndexOf(" "));
-  const cut = lastBreak > max * 0.6 ? slice.slice(0, lastBreak) : slice;
+  const cut = lastBreak > slice.length * 0.6 ? slice.slice(0, lastBreak) : slice;
   return { text: `${cut.trimEnd()}…`, truncated: true };
 }
 
@@ -88,7 +106,7 @@ export function previewRecentContext(
       updatedAt: o.updatedAt,
       preview: clipped.text,
       truncated: clipped.truncated,
-      contentChars: o.content.length,
+      contentChars: codePointLength(o.content),
     };
   });
 

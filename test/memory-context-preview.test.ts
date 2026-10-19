@@ -100,3 +100,35 @@ test("(ctxprev-6) metadata needed for follow-up fetches survives the preview", (
   assert.equal(o.updatedAt, 42);
   assert.equal(o.preview, `${"y".repeat(100)}…`, "previewChars override respected");
 });
+
+/** True when `s` contains a high surrogate not followed by a low one (or a stray low). */
+function hasLoneSurrogate(s: string): boolean {
+  return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+}
+
+test("(ctxprev-7) clipping never splits a surrogate pair (emoji at the budget boundary)", () => {
+  // 99 ASCII chars then emoji: a UTF-16 cut at 100 would land between the two halves.
+  const body = `${"x".repeat(99)}${"😀".repeat(50)}`;
+  const out = previewRecentContext({ sessions: [], observations: [obs({ content: body })] }, { previewChars: 100 });
+  const o = out.observations[0]!;
+  assert.ok(o.truncated);
+  assert.ok(!hasLoneSurrogate(o.preview), "no lone surrogate in the preview");
+  assert.equal(o.preview, `${"x".repeat(99)}😀…`, "budget counted in code points");
+  // The serialized payload stays valid UTF-8 (a lone surrogate would turn into U+FFFD).
+  assert.equal(Buffer.from(JSON.stringify(o), "utf8").toString("utf8"), JSON.stringify(o));
+});
+
+test("(ctxprev-8) contentChars counts code points; an all-emoji body under budget is not clipped", () => {
+  const body = "🚀".repeat(300); // 300 code points, 600 UTF-16 units
+  const out = previewRecentContext({ sessions: [], observations: [obs({ content: body })] });
+  const o = out.observations[0]!;
+  assert.equal(o.contentChars, 300, "code points, not UTF-16 units");
+  assert.equal(o.truncated, false, "300 code points fit the 500 budget");
+  assert.equal(o.preview, body);
+  // Session summaries go through the same clip.
+  const s = previewRecentContext(
+    { sessions: [session({ summary: `${"s".repeat(9)}${"🚀".repeat(5)}` })], observations: [] },
+    { previewChars: 10 },
+  ).sessions[0]!;
+  assert.equal(s.summary, `${"s".repeat(9)}🚀…`);
+});
