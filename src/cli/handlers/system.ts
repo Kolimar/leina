@@ -371,7 +371,7 @@ export function printRootHelp(): void {
       `  events tail [dir] [--json]\n` +
       `                          print the local event outbox (off unless\n` +
       `                          LEINA_EVENTS_PERSIST=1)\n` +
-      `  memory <dir> <sub>      local memory: save|update|get|search|verified|context|session|\n` +
+      `  memory <sub> <dir>      local memory: save|update|get|search|verified|context|session|\n` +
       `                          session-start|suggest-topic|current-project|merge-projects|reanchor|\n` +
       `                          compact|export|import|sync  (run 'leina memory' for each sub-command's flags)\n` +
       `  mcp                     MCP server over stdio (tools = the capability registry);\n` +

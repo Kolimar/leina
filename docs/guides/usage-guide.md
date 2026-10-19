@@ -294,7 +294,7 @@ full contract, including POST requests with a token in the header and the strict
 | `leina query <dir> "<question>"` | Relevant subgraph for a question. |
 | `leina impact analyze <dir> <symbol>` | Impact crossing code→tests→configs→services. |
 | `leina visualize <dir>` | Exports an interactive, offline HTML viewer of the graph. |
-| `leina memory <dir> <sub>` | Local memory (`save`/`update`/`search`/`verified`/`get`/`context`/`session`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`). |
+| `leina memory <sub> <dir>` | Local memory (`save`/`update`/`search`/`verified`/`get`/`context`/`session`/`session-start`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`/`compact`/`export`/`import`/`sync`). |
 | `leina workspace <sub> [dir]` | Multi-repo: `build`/`status`/`detect`/`memory context\|search`/`visualize`. |
 | `leina audit [dir]` | Candidate source→sink paths + findings (`--format md\|json\|html`). |
 | `leina env <sub>` | Credentials for skills (names-not-values): `set`/`list`/`get`/`unset`/`exec`. |

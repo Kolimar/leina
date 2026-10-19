@@ -293,7 +293,7 @@ contrato completo, incluyendo POST con token en el header y las variantes más e
 | `leina query <dir> "<pregunta>"` | Subgrafo relevante a una pregunta. |
 | `leina impact analyze <dir> <símbolo>` | Impacto que cruza código→tests→configs→servicios. |
 | `leina visualize <dir>` | Exporta un visor HTML interactivo y offline del grafo. |
-| `leina memory <dir> <sub>` | Memoria global (`save`/`update`/`search`/`verified`/`get`/`context`/`session`/`session-start`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`). |
+| `leina memory <sub> <dir>` | Memoria global (`save`/`update`/`search`/`verified`/`get`/`context`/`session`/`session-start`/`suggest-topic`/`current-project`/`merge-projects`/`reanchor`/`compact`/`export`/`import`/`sync`). |
 | `leina workspace <sub> [dir]` | Multi-repo: `build`/`status`/`detect`/`memory context\|search`/`visualize`. |
 | `leina audit [dir]` | Rutas candidatas source→sink + findings (`--format md\|json\|html`). |
 | `leina env <sub>` | Credenciales para skills (names-not-values): `set`/`list`/`get`/`unset`/`exec`. |

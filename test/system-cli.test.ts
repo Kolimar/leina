@@ -80,7 +80,8 @@ test("(SC-4) help: prints the root help banner", () => {
   const r = runCli(["help"]);
   assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
   assert.match(r.stdout, /leina — code knowledge graph \+ project memory/);
-  assert.match(r.stdout, /memory <dir> <sub>/);
+  // The dispatcher reads `memory <sub> <dir>` (handleMemory: rest[0] = sub).
+  assert.match(r.stdout, /memory <sub> <dir>/);
 });
 
 test("(SC-5) --help alias prints the same banner", () => {
