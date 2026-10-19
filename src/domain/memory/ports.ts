@@ -232,9 +232,11 @@ export interface MemoryRepository {
 
   /**
    * Merge exported observations into this project. Deterministic by (revision, updatedAt):
-   * unknown ids insert verbatim (timestamps/revisions preserved; projectKey remapped to
-   * this store's key); known ids update only when strictly newer; live topic_key
-   * collisions resolve toward the newer side, superseding the older one.
+   * unknown ids insert verbatim (timestamps/revisions preserved, except that timestamps are
+   * clamped to the import time; projectKey remapped to this store's key); known ids update
+   * only when strictly newer; live topic_key collisions resolve toward the newer side,
+   * superseding the older one. An id already owned by ANOTHER project is never touched —
+   * it is skipped and counted in `skippedForeign`.
    */
   importObservations(items: ExportedObservation[]): ImportReport;
 

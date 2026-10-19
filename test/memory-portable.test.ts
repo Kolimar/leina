@@ -7,11 +7,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SQLiteMemoryRepository } from "../src/infrastructure/sqlite/memory-repository.ts";
+import {
+  MAX_IMPORT_CONTENT_CHARS,
+  MAX_IMPORT_TITLE_CHARS,
+  parseExportedObservation,
+} from "../src/domain/memory/portable.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
 
@@ -136,5 +141,129 @@ test("(port-4) CLI: export --out / import --in / sync snapshot round-trip betwee
     rmSync(proj, { recursive: true, force: true });
     rmSync(homeA, { recursive: true, force: true });
     rmSync(homeB, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Untrusted snapshots: a `.leina/memory-export.jsonl` committed in a forked or hostile repo
+// is input from a stranger. It must stay confined to the importing project and be validated.
+// ---------------------------------------------------------------------------
+
+test("(port-5) import never rewrites another project's observation that shares the id", () => {
+  const dir = mkdtempSync(join(tmpdir(), "leina-portable-foreign-"));
+  const p = new SQLiteMemoryRepository(join(dir, "memory.db"), "p");
+  const q = new SQLiteMemoryRepository(join(dir, "memory.db"), "q");
+  try {
+    const victim = p.save({ title: "Deploy policy", content: "run migrations first", type: "decision", topicKey: "decision/deploy" }).observation;
+    // Hostile export shipped by repo Q: P's id, a bumped revision and attacker content.
+    const hostile = p.exportAll().map((o) => ({ ...o, content: "skip migrations", revision: 99 }));
+
+    const r = q.importObservations(hostile);
+    assert.equal(r.skippedForeign, 1, "the foreign id is skipped and reported");
+    assert.deepEqual({ inserted: r.inserted, updated: r.updated }, { inserted: 0, updated: 0 });
+
+    const after = p.exportAll();
+    assert.equal(after.length, 1);
+    assert.equal(after[0]!.content, "run migrations first", "P's content untouched");
+    assert.equal(after[0]!.revision, victim.revision, "P's revision untouched");
+    assert.equal(q.exportAll().length, 0, "nothing landed in Q either");
+  } finally {
+    p.close(); q.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(port-6) import clamps future timestamps so an entry cannot pin itself on top forever", () => {
+  const a = tmpRepo("a6");
+  const b = tmpRepo("b6");
+  try {
+    a.repo.save({ title: "pinned", content: "c", type: "decision", anchors: ["Sym"] });
+    const year2286 = 9_999_999_999_999;
+    const tampered = a.repo.exportAll().map((o) => ({
+      ...o,
+      createdAt: year2286,
+      updatedAt: year2286,
+      anchors: o.anchors.map((x) => ({ ...x, createdAt: year2286 })),
+    }));
+    const before = Date.now();
+    b.repo.importObservations(tampered);
+    const [stored] = b.repo.exportAll();
+    const after = Date.now();
+    assert.ok(stored!.updatedAt >= before && stored!.updatedAt <= after, `updatedAt clamped to now (got ${stored!.updatedAt})`);
+    assert.ok(stored!.createdAt <= stored!.updatedAt, "createdAt never after updatedAt");
+    assert.ok(stored!.anchors[0]!.createdAt <= after, "anchor createdAt clamped too");
+  } finally {
+    a.repo.close(); b.repo.close();
+    rmSync(a.dir, { recursive: true, force: true });
+    rmSync(b.dir, { recursive: true, force: true });
+  }
+});
+
+test("(port-7) parseExportedObservation accepts a real export line and rejects malformed ones", () => {
+  const a = tmpRepo("a7");
+  try {
+    a.repo.save({ title: "t", content: "c", type: "decision", topicKey: "t/k" });
+    const good = JSON.parse(JSON.stringify(a.repo.exportAll()[0])) as Record<string, unknown>;
+    const ok = parseExportedObservation(good);
+    assert.equal(ok.ok, true, ok.ok ? "" : ok.error);
+
+    const bad: [string, Record<string, unknown>, RegExp][] = [
+      ["unknown scope", { ...good, scope: "everything" }, /scope/],
+      ["unknown type", { ...good, type: "exploit" }, /type/],
+      ["non-string supersededBy", { ...good, supersededBy: 42 }, /supersededBy/],
+      ["self-supersede", { ...good, supersededBy: good.id }, /supersededBy/],
+      ["oversized title", { ...good, title: "x".repeat(MAX_IMPORT_TITLE_CHARS + 1) }, /title/],
+      ["oversized content", { ...good, content: "x".repeat(MAX_IMPORT_CONTENT_CHARS + 1) }, /content/],
+      ["non-numeric updatedAt", { ...good, updatedAt: "tomorrow" }, /updatedAt/],
+      ["negative createdAt", { ...good, createdAt: -1 }, /createdAt/],
+      ["fractional revision", { ...good, revision: 1.5 }, /revision/],
+      ["unsupported schemaVersion", { ...good, schemaVersion: 2 }, /schemaVersion/],
+      ["anchor without nodeId", { ...good, anchors: [{ role: "about", createdAt: 1 }] }, /anchors\[0\]/],
+    ];
+    for (const [label, raw, re] of bad) {
+      const r = parseExportedObservation(raw);
+      assert.equal(r.ok, false, `${label} must be rejected`);
+      if (!r.ok) assert.match(r.error, re, label);
+    }
+  } finally {
+    a.repo.close();
+    rmSync(a.dir, { recursive: true, force: true });
+  }
+});
+
+test("(port-8) CLI: sync of a hostile snapshot leaves the other project's memory intact; import rejects invalid lines", () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-portable-hostile-"));
+  const projP = join(home, "P");
+  const projQ = join(home, "Q");
+  mkdirSync(join(projQ, ".leina"), { recursive: true });
+  mkdirSync(projP, { recursive: true });
+  const env: NodeJS.ProcessEnv = { ...process.env, LEINA_HOME: join(home, ".leina"), HOME: home, USERPROFILE: home };
+  const run = (args: string[]) =>
+    spawnSync(process.execPath, ["--no-warnings", "--experimental-strip-types", CLI, "memory", ...args], {
+      encoding: "utf8", env,
+    });
+  try {
+    assert.equal(run(["save", projP, "--title", "Deploy policy", "--content", "run migrations first"]).status, 0);
+    const exported = run(["export", projP]);
+    const hostile = exported.stdout.trim().split("\n").map((l) => {
+      const o = JSON.parse(l) as Record<string, unknown>;
+      return JSON.stringify({ ...o, content: "skip migrations", revision: 99 });
+    });
+    writeFileSync(join(projQ, ".leina", "memory-export.jsonl"), `${hostile.join("\n")}\n`);
+
+    const sync = run(["sync", projQ]);
+    assert.equal(sync.status, 0, sync.stderr);
+    assert.match(sync.stdout, /1 skipped \(id belongs to another project\)/);
+    const p = run(["export", projP]);
+    assert.match(p.stdout, /run migrations first/, "P's memory is untouched");
+    assert.doesNotMatch(p.stdout, /skip migrations/);
+
+    const invalid = join(home, "invalid.jsonl");
+    writeFileSync(invalid, `${hostile[0]!.replace(/"type":"[a-z]+"/, '"type":"exploit"')}\n`);
+    const imp = run(["import", projQ, "--in", invalid]);
+    assert.notEqual(imp.status, 0, "invalid entry fails the import");
+    assert.match(imp.stderr, /line 1: .*type/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });

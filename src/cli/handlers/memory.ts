@@ -14,11 +14,13 @@ import { reanchorObservations } from "../../application/memory/reanchor.ts";
 import { compactMemory } from "../../application/memory/compact.ts";
 import type {
   ExportedObservation,
+  ImportReport,
   ObservationInput,
   ObservationType,
   Scope,
   UpdateFields,
 } from "../../domain/memory/model.ts";
+import { parseExportedObservation } from "../../domain/memory/portable.ts";
 import {
   AmbiguousProjectError,
   deriveProjectKey,
@@ -444,6 +446,9 @@ function toJsonl(items: ExportedObservation[]): string {
   return items.map((o) => JSON.stringify(o)).join("\n") + (items.length > 0 ? "\n" : "");
 }
 
+// The snapshot may come from any checkout (a committed .leina/memory-export.jsonl in a fork
+// is untrusted input): every line is validated (closed value sets, size caps, finite
+// numbers) and the whole import fails on the first bad line, naming it.
 function parseJsonl(text: string): ExportedObservation[] {
   const out: ExportedObservation[] = [];
   for (const [i, line] of text.split("\n").entries()) {
@@ -455,13 +460,17 @@ function parseJsonl(text: string): ExportedObservation[] {
     } catch {
       fail(`memory import: line ${i + 1} is not valid JSON`);
     }
-    const o = obj as ExportedObservation;
-    if (typeof o.id !== "string" || typeof o.title !== "string" || typeof o.revision !== "number") {
-      fail(`memory import: line ${i + 1} is not an exported observation (id/title/revision required)`);
-    }
-    out.push({ ...o, anchors: Array.isArray(o.anchors) ? o.anchors : [] });
+    const parsed = parseExportedObservation(obj);
+    if (!parsed.ok) fail(`memory import: line ${i + 1}: ${parsed.error}`);
+    out.push(parsed.value);
   }
   return out;
+}
+
+// Shared tail of the import/sync summaries; the foreign count only shows when non-zero.
+function importReportTail(r: ImportReport): string {
+  const foreign = r.skippedForeign > 0 ? `, ${r.skippedForeign} skipped (id belongs to another project)` : "";
+  return `${foreign}, ${r.topicConflicts} topic conflict(s)`;
 }
 
 // memory export <dir> [--out <file>] — JSONL to stdout (or a file), deterministic order.
@@ -491,8 +500,7 @@ function memImport(rest: string[], dir: string): void {
   try {
     const r = repo.store.importObservations(items);
     console.log(
-      `imported: ${r.inserted} new, ${r.updated} updated, ${r.skippedOlder} skipped (older), ` +
-        `${r.topicConflicts} topic conflict(s) resolved`,
+      `imported: ${r.inserted} new, ${r.updated} updated, ${r.skippedOlder} skipped (older)${importReportTail(r)} resolved`,
     );
   } finally {
     repo.close();
@@ -509,8 +517,7 @@ function memSync(_rest: string[], dir: string): void {
     if (existsSync(snapPath)) {
       const r = repo.store.importObservations(parseJsonl(readFileSync(snapPath, "utf8")));
       console.log(
-        `absorbed snapshot: ${r.inserted} new, ${r.updated} updated, ${r.skippedOlder} skipped, ` +
-          `${r.topicConflicts} topic conflict(s)`,
+        `absorbed snapshot: ${r.inserted} new, ${r.updated} updated, ${r.skippedOlder} skipped${importReportTail(r)}`,
       );
     }
     const items = repo.store.exportAll();

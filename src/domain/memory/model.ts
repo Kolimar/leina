@@ -1,25 +1,33 @@
 // Memory domain — shared types. Type-stripping-safe: no enums, no namespaces.
 
-export type Scope =
-  | "project"
-  | "personal"
-  | "workspace"
-  | "path"
-  | "skill"
-  | "process"
-  | "technology"
-  | "security"
-  | "infra";
+// The closed value sets are runtime arrays (the types derive from them) so untrusted
+// input — e.g. an imported snapshot — can be checked against the same single source.
+export const SCOPES = [
+  "project",
+  "personal",
+  "workspace",
+  "path",
+  "skill",
+  "process",
+  "technology",
+  "security",
+  "infra",
+] as const;
 
-export type ObservationType =
-  | "decision"
-  | "bugfix"
-  | "architecture"
-  | "discovery"
-  | "pattern"
-  | "config"
-  | "preference"
-  | "manual";
+export type Scope = (typeof SCOPES)[number];
+
+export const OBSERVATION_TYPES = [
+  "decision",
+  "bugfix",
+  "architecture",
+  "discovery",
+  "pattern",
+  "config",
+  "preference",
+  "manual",
+] as const;
+
+export type ObservationType = (typeof OBSERVATION_TYPES)[number];
 
 export interface ObservationInput {
   title: string;
@@ -104,5 +112,7 @@ export interface ImportReport {
   inserted: number;
   updated: number;
   skippedOlder: number;
+  /** Entries whose id already belongs to ANOTHER project in the global db — never touched. */
+  skippedForeign: number;
   topicConflicts: number;
 }

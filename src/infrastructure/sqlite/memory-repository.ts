@@ -348,17 +348,41 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     return local.id;
   }
 
+  // An imported entry may never claim to be newer than the moment it is imported: a
+  // far-future updatedAt (year 2286) would pin it on top of every recency-ordered read
+  // (SessionStart injection included) and win every later merge tie. createdAt never
+  // follows updatedAt; anchors are clamped the same way.
+  private static clampTimestamps(item: ExportedObservation, now: number): ExportedObservation {
+    const updatedAt = Math.min(item.updatedAt, now);
+    return {
+      ...item,
+      updatedAt,
+      createdAt: Math.min(item.createdAt, updatedAt),
+      anchors: item.anchors.map((a) => ({ ...a, createdAt: Math.min(a.createdAt, now) })),
+    };
+  }
+
   importObservations(items: ExportedObservation[]): ImportReport {
-    const report: ImportReport = { inserted: 0, updated: 0, skippedOlder: 0, topicConflicts: 0 };
+    const report: ImportReport = { inserted: 0, updated: 0, skippedOlder: 0, skippedForeign: 0, topicConflicts: 0 };
     const insertStmt = this.db.prepare(
       `INSERT INTO observations
          (id, project_key, scope, type, title, content, topic_key, session_id,
           created_at, updated_at, revision, superseded_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
+    // Scoped to this project: the guard below already skips foreign ids, and the
+    // project_key predicate keeps the write confined even if that guard ever regresses.
     const updateStmt = this.db.prepare(
       `UPDATE observations SET scope=?, type=?, title=?, content=?, topic_key=?, session_id=?,
-          created_at=?, updated_at=?, revision=?, superseded_by=? WHERE id=?`,
+          created_at=?, updated_at=?, revision=?, superseded_by=? WHERE id=? AND project_key=?`,
+    );
+    // Ids are globally unique across the shared memory.db, so the lookup is by id alone and
+    // the owner decides: a row owned by ANOTHER project is never updated (a snapshot shipped
+    // by a forked/hostile repo could otherwise rewrite that project's memory, which its
+    // SessionStart then injects) and never re-inserted (the id is taken) — it is skipped
+    // and reported.
+    const ownerStmt = this.db.prepare(
+      `SELECT project_key, revision, updated_at FROM observations WHERE id = ?`,
     );
     const anchorInsert = this.db.prepare(
       `INSERT OR REPLACE INTO memory_anchors
@@ -377,19 +401,26 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     const isNewer = (a: { revision: number; updatedAt: number }, b: { revision: number; updatedAt: number }): boolean =>
       a.revision > b.revision || (a.revision === b.revision && a.updatedAt > b.updatedAt);
 
+    const now = Date.now();
     this.db.exec("BEGIN");
     try {
-      for (const item of items) {
-        const existing = this.get(item.id);
-        if (existing) {
-          if (!isNewer(item, existing)) {
+      for (const raw of items) {
+        const item = SQLiteMemoryRepository.clampTimestamps(raw, now);
+        const owner = ownerStmt.get(item.id) as unknown as
+          { project_key: string; revision: number; updated_at: number } | undefined;
+        if (owner !== undefined && owner.project_key !== this.projectKey) {
+          report.skippedForeign++;
+          continue;
+        }
+        if (owner) {
+          if (!isNewer(item, { revision: owner.revision, updatedAt: owner.updated_at })) {
             report.skippedOlder++;
             continue;
           }
           updateStmt.run(
             item.scope, item.type, item.title, item.content, item.topicKey ?? null,
             item.sessionId ?? null, item.createdAt, item.updatedAt, item.revision,
-            item.supersededBy ?? null, item.id,
+            item.supersededBy ?? null, item.id, this.projectKey,
           );
           writeAnchors(item.id, item.anchors);
           report.updated++;

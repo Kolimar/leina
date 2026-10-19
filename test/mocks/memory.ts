@@ -268,7 +268,7 @@ export class MockMemoryRepository implements MemoryRepository {
   }
 
   importObservations(): import("../../src/domain/memory/model.ts").ImportReport {
-    return { inserted: 0, updated: 0, skippedOlder: 0, topicConflicts: 0 };
+    return { inserted: 0, updated: 0, skippedOlder: 0, skippedForeign: 0, topicConflicts: 0 };
   }
 
   close(): void {
