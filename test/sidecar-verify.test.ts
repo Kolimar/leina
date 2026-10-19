@@ -11,9 +11,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
+
+// Isolated from the real home: no sidecar built under the user's ~/.leina is ever picked up
+// (it would turn the "skip" scenarios into a real verify), in-process or in the CLI child.
+const SANDBOX = mkdtempSync(join(tmpdir(), "leina-sidecar-verify-"));
+mkdirSync(join(SANDBOX, "home"), { recursive: true });
+process.env.HOME = join(SANDBOX, "home");
+process.env.LEINA_HOME = join(SANDBOX, "leina-home");
+delete process.env.LEINA_CSHARP_SIDECAR;
+delete process.env.LEINA_JAVA_SIDECAR;
+test.after(() => rmSync(SANDBOX, { recursive: true, force: true }));
 
 interface RunResult {
   stdout: string;
@@ -134,7 +147,7 @@ test("(SV-7) verify() message text is English, never the Spanish original", asyn
     if (check.status !== "skip") continue; // this environment must skip at least one of these
     assert.ok(check.message, `${lang}: skip debe traer message`);
     assert.doesNotMatch(check.message, /no disponible|no configurado/, `${lang}: message no debe estar en español`);
-    assert.match(check.message, /toolchain unavailable for|sidecar not configured for/, `${lang}: message debe usar el texto en inglés esperado`);
+    assert.match(check.message, /^sidecar not (installed|built) for /, `${lang}: message debe usar el texto en inglés esperado`);
   }
 });
 

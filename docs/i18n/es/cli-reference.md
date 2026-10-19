@@ -463,10 +463,13 @@ opcionales de compilador bajo demanda. Sin sidecar, Java/C# igual se extraen ví
 - `sidecar build <csharp|java>` — construye el sidecar (necesita el toolchain local: dotnet
   SDK para C#; JDK 17+ con `jpackage` para Java).
 - `sidecar clean [csharp|java]` — elimina los sidecars construidos.
-- `sidecar verify <java|csharp>` — verifica el extractor contra un fixture mínimo.
-  **Skip honesto**: si falta el toolchain imprime `<lang>: skip — …` y sale con `0` (nunca una
-  falla espuria); con el toolchain presente corre una extracción normal y reporta `ok`/`fail`
-  más un `VerificationCheck`.
+- `sidecar verify <java|csharp>` — corre el sidecar configurado (construido, instalado o
+  definido con `LEINA_<LANG>_SIDECAR`) sobre un fixture mínimo que viene con leina
+  (`assets/fixtures/<lang>`), así que funciona desde una instalación npm, y reporta `ok` con el
+  recuento de nodes/edges. Un grafo vacío es `FAIL` (sale con `1`). **Skip honesto**: sin
+  sidecar imprime `<lang>: skip — …` nombrando `leina sidecar build <lang>` (toolchain presente)
+  o `leina sidecar install <lang>` (falta el toolchain) y sale con `0`. Un sidecar precompilado se
+  verifica aunque no haya dotnet/JDK en el `PATH`.
 
 El extractor YAML-infra (servicios de docker-compose, jobs de CI, archivos de configuración
 genéricos) parsea con tree-sitter, usando la gramática mantenida `tree-sitter-yaml` incluida en
@@ -494,10 +497,11 @@ orden de extractores.
 - `scip install [go]` — **solo detecta + instruye**: imprime el comando para instalar el
   indexador (por ejemplo, `go install github.com/scip-code/scip-go/cmd/scip-go@latest`);
   nunca descarga ni ejecuta nada en nombre del usuario.
-- `scip verify [go]` — verifica el extractor contra un fixture mínimo. **Skip honesto**: si no
-  se encuentra el indexador imprime `<lang>: skip — …` y sale con `0` (nunca una falla
-  espuria); con el indexador presente corre un indexado + parseo real y reporta `ok`/`fail`
-  más el recuento de nodes/edges.
+- `scip verify [go|rust|python]` — verifica el extractor contra un fixture mínimo que viene con
+  leina (`assets/fixtures/scip/<lang>`, así que funciona desde una instalación npm). **Skip
+  honesto**: si no se encuentra el indexador imprime `<lang>: skip — …` y sale con `0` (nunca
+  una falla espuria); con el indexador presente corre un indexado + parseo real y reporta
+  `ok`/`fail` más el recuento de nodes/edges.
 
 El extractor SCIP (id `scip-<lang>`, por ejemplo `scip-go`) corre a nivel de proyecto
 completo: invoca al indexador contra la raíz del proyecto, transmite el índice protobuf

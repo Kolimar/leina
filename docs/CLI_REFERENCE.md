@@ -433,10 +433,12 @@ call edges best-effort); the sidecar adds compiler-grade precision.
 - `sidecar build <csharp|java>` — build the sidecar (needs the local toolchain: dotnet SDK for C#;
   JDK 17+ with `jpackage` for Java).
 - `sidecar clean [csharp|java]` — remove built sidecars.
-- `sidecar verify <java|csharp>` — verify the extractor against a minimal fixture. **Honest
-  skip**: if the toolchain is missing it prints `<lang>: skip — …` and exits `0` (never a
-  spurious failure); with the toolchain present it runs a normal extraction and reports
-  `ok`/`fail` plus a verification check.
+- `sidecar verify <java|csharp>` — run the configured sidecar (built, installed, or set through
+  `LEINA_<LANG>_SIDECAR`) over a minimal fixture shipped with leina (`assets/fixtures/<lang>`),
+  so it works from an npm install, and report `ok` with node/edge counts. An empty graph is a
+  `FAIL` (exit `1`). **Honest skip**: with no sidecar it prints `<lang>: skip — …` naming
+  `leina sidecar build <lang>` (toolchain present) or `leina sidecar install <lang>` (toolchain
+  missing) and exits `0`. A prebuilt sidecar is verified even without dotnet/JDK on `PATH`.
 
 All extractors (ts-morph, the two sidecars, tree-sitter, and the YAML-infra extractor) implement
 a common extractor contract and each extraction returns a versioned result
@@ -469,10 +471,11 @@ end-to-end.
   `rustup component add rust-analyzer` for Rust, `npm install -g @sourcegraph/scip-python` for
   Python — which also needs a working `pip` on `PATH`, e.g. any venv's `bin/`); never downloads or
   runs anything on the user's behalf.
-- `scip verify [go|rust|python]` — verify the extractor against a minimal fixture. **Honest
-  skip**: if the indexer isn't found it prints `<lang>: skip — …` and exits `0` (never a spurious
-  failure); with the indexer present it runs a real index + parse and reports `ok`/`fail` plus
-  node/edge counts.
+- `scip verify [go|rust|python]` — verify the extractor against a minimal fixture shipped with
+  leina (`assets/fixtures/scip/<lang>`, so it works from an npm install). **Honest skip**: if the
+  indexer isn't found it prints `<lang>: skip — …` and exits `0` (never a spurious failure);
+  with the indexer present it runs a real index + parse and reports `ok`/`fail` plus node/edge
+  counts.
 
 The SCIP extractor (id `scip-<lang>`, e.g. `scip-go`, `scip-rust`, `scip-python`) runs
 whole-project: it invokes the indexer against the project root and translates each SCIP symbol to

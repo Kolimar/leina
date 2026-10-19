@@ -20,14 +20,11 @@
 // cli/handlers/system.ts's `leina scip` group, deliberately separate from
 // `leina sidecar`).
 
-import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { relative } from "node:path";
 import type { GraphExtractionResult, GraphExtractor, VerificationCheck } from "../../../domain/graph/extractor.ts";
 import { isAuxiliarySourcePath } from "../../../application/graph/detect.ts";
 import { resolveScipIndexer, runScipIndexer, scipExtensionsFor, type ScipLang } from "./scip-indexer.ts";
-
-// src/infrastructure/extractors/semantic/ → up 4 → package root → test/fixtures/scip/<lang>
-const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
+import { missingFixtureProblem, verifyFixtureDir } from "./verify-fixtures.ts";
 
 export class ScipExtractor implements GraphExtractor {
   readonly id: string;
@@ -55,7 +52,10 @@ export class ScipExtractor implements GraphExtractor {
         message: `${this.lang} SCIP indexer unavailable — run \`leina scip install ${this.lang}\``,
       };
     }
-    const fixtureDir = join(PKG_ROOT, "test", "fixtures", "scip", this.lang);
+    // The shipped fixture (assets/fixtures/scip/<lang>), so verify works from an install.
+    const fixtureDir = verifyFixtureDir("scip", this.lang);
+    const problem = missingFixtureProblem(fixtureDir);
+    if (problem) return { status: "fail", message: problem };
     const start = Date.now();
     try {
       const res = runScipIndexer(this.lang, fixtureDir);

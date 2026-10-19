@@ -109,14 +109,11 @@ export function runSemanticSidecar(
 // GraphExtractor adapter — wraps runSemanticSidecarProject en el puerto de dominio.
 // ---------------------------------------------------------------------------
 
-import { join, dirname, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { relative } from "node:path";
 import { isAuxiliarySourcePath } from "../../../application/graph/detect.ts";
 import { buildSidecar, missingTools } from "./sidecar-build.ts";
+import { missingFixtureProblem, verifyFixtureDir } from "./verify-fixtures.ts";
 import type { GraphExtractor, GraphExtractionResult, VerificationCheck } from "../../../domain/graph/extractor.ts";
-
-// Ruta al directorio de fixtures de prueba: src/infrastructure/extractors/semantic/ → arriba 4 → paquete root → test/fixtures/<lang>
-const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
 /**
  * Make the sidecar available: configured already, or built on first use when
@@ -167,22 +164,33 @@ export class SidecarExtractor implements GraphExtractor {
     return false;
   }
 
+  // Runs the configured sidecar (env override, built or installed) over the shipped fixture.
+  // The build toolchain only matters when there is no sidecar yet: a prebuilt one
+  // (`leina sidecar install`) embeds its runtime and needs no dotnet/JDK to be verified.
   async verify(): Promise<VerificationCheck> {
-    const missing = missingTools(this.lang);
-    if (missing.length > 0) {
+    if (!isSidecarConfigured(this.lang)) {
+      const missing = missingTools(this.lang);
       return {
         status: "skip",
-        message: `toolchain unavailable for ${this.lang} — missing tools in PATH: ${missing.join(", ")}`,
+        message:
+          missing.length > 0
+            ? `sidecar not installed for ${this.lang}, and the toolchain to build it is unavailable ` +
+              `(missing in PATH: ${missing.join(", ")}) — run \`leina sidecar install ${this.lang}\` for a prebuilt one`
+            : `sidecar not built for ${this.lang} — run \`leina sidecar build ${this.lang}\``,
       };
     }
-    // Verificación con fixture determinista
-    const fixtureDir = join(PKG_ROOT, "test", "fixtures", this.lang);
+    const fixtureDir = verifyFixtureDir(this.lang);
+    const problem = missingFixtureProblem(fixtureDir);
+    if (problem) return { status: "fail", message: problem };
     const start = Date.now();
     try {
       const res = runSemanticSidecarProject(this.lang, fixtureDir);
       const durationMs = Date.now() - start;
       if (!res) {
-        return { status: "skip", message: `sidecar not configured for ${this.lang}` };
+        return { status: "skip", message: `sidecar not built for ${this.lang} — run \`leina sidecar build ${this.lang}\`` };
+      }
+      if (res.nodes.length === 0) {
+        return { status: "fail", message: `the ${this.lang} sidecar returned an empty graph for the verify fixture (${fixtureDir})` };
       }
       const result: GraphExtractionResult = {
         schemaVersion: 1,
