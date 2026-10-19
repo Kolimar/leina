@@ -97,15 +97,37 @@ C#/Java are still extracted with tree-sitter (less precise, but it works).
 
 ### The two-pass trick (TypeScript)
 
-For TypeScript, the cartographer walks the project **twice**:
+For TypeScript, the cartographer works in **two passes**:
 
-1. **Pass 1** records *all* declarations (functions, classes, methods) in a lookup map. It
-   builds the "phone book."
-2. **Pass 2** now that the phone book is complete, it resolves each call/inheritance to the
-   exact node.
+1. **Pass 1** reads a file's syntax alone and names every declaration in it (functions,
+   classes, methods, types, variables…). It builds that file's "phone book." A node's id
+   depends only on its own file, so any file's phone book can be rebuilt without the rest of
+   the project.
+2. **Pass 2** goes file by file with the type checker: each call, import or inheritance
+   resolves to the declaration it names — in whatever file — and gets that declaration's id
+   from the phone book of the file that declares it.
 
 Why two passes? Because TypeScript allows *forward references* and cross-file calls: you can't
-resolve a call to something you haven't registered yet.
+resolve a call to something you haven't named yet.
+
+Because an id never depends on other files, a rebuild only re-extracts what changed. Each
+file's result is kept in `.leina/extract-cache.db` together with a fingerprint of what other
+files can see of it (its declarations, exports, signatures and the types a checker would
+infer from it; the body of a function with an annotated return type is not part of it) and
+of where its imports resolved. On a rebuild:
+
+- a file whose content changed is re-extracted;
+- when that fingerprint changed — or a file was added or removed, or an import now resolves
+  to a different file — the files that import it, transitively, are re-extracted too;
+- every other file's result is reused, and the graph is the one a full extraction gives.
+
+Everything is re-extracted when there is no previous build, when the leina version, the
+graph schema, `tsconfig`, `package.json` or a lockfile changed, when a file that declares
+globals changed (a script without imports/exports, `declare global`, `declare module "x"`,
+triple-slash references), when a non-TypeScript file the checker reads changed (a
+`.js`/`.json` import), when half the files or more would be re-extracted anyway, or when
+`LEINA_TS_FULL_EXTRACT=1` is set. The build prints `ts extract cache: N reused, K
+re-extracted` when it reused results.
 
 A local rename resolves to the declaration it names: after
 `const { run } = await import("./jobs")`, `const run = jobs.run` or `const api = { run }`,

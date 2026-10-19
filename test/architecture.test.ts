@@ -163,6 +163,7 @@ test("arch-rule-2: web-tree-sitter and ts-morph are not statically imported outs
     "infrastructure/extractors/semantic/tsmorph.ts",
     "infrastructure/extractors/semantic/ts-defs.ts",
     "infrastructure/extractors/semantic/ts-file-extract.ts",
+    "infrastructure/extractors/semantic/ts-facts.ts",
     "infrastructure/extractors/yaml.ts",
   ]);
 

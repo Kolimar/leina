@@ -62,6 +62,19 @@ export interface VerificationCheck {
 }
 
 // ---------------------------------------------------------------------------
+// Options of one extraction run.
+// ---------------------------------------------------------------------------
+
+export interface ExtractOptions {
+  /**
+   * Why results cached by a previous build must not be reused (no previous build, another
+   * leina version or extractor schema, a resolution config changed), or null/absent when
+   * reuse is safe as far as the build basis goes. Extractors without a cache ignore it.
+   */
+  fullExtraction?: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Puerto GraphExtractor — firma única para todos los adaptadores.
 // ---------------------------------------------------------------------------
 
@@ -85,5 +98,5 @@ export interface GraphExtractor {
    * Extrae nodos y edges del conjunto de archivos dado bajo `root`.
    * El resultado debe incluir schemaVersion=1, diagnostics y durationMs siempre.
    */
-  extract(root: string, files: string[]): Promise<GraphExtractionResult>;
+  extract(root: string, files: string[], opts?: ExtractOptions): Promise<GraphExtractionResult>;
 }

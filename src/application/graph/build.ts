@@ -17,12 +17,12 @@
 import { relative, resolve, sep } from "node:path";
 import type { GraphEdge, GraphNode, ImportBinding, RawCall } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
-import type { GraphExtractor } from "../../domain/graph/extractor.ts";
+import type { ExtractOptions, GraphExtractor } from "../../domain/graph/extractor.ts";
 import { semanticLangOf } from "./detect.ts";
 import { resolve as resolveSymbols } from "./resolve.ts";
 import { dedup } from "./dedup.ts";
 import { listProjectFiles, MAX_SOURCE_BYTES, partitionBySize } from "./sources.ts";
-import { writeManifest } from "./manifest.ts";
+import { fullExtractionReason, writeManifest } from "./manifest.ts";
 import { detectCommunities } from "./community.ts";
 
 // Re-exported for back-compat: source enumeration now lives in sources.ts so the
@@ -69,6 +69,8 @@ interface ExtractionAcc {
   handled: Set<string>;
   degraded: Set<string>;
   quiet: boolean;
+  /** Passed to every extractor: whether per-file caches may be reused. */
+  extractOptions: ExtractOptions;
 }
 
 export interface BuildOptions {
@@ -83,9 +85,10 @@ async function runExtractor(
   ext: GraphExtractor,
   root: string,
   cand: string[],
+  opts: ExtractOptions,
 ): Promise<Awaited<ReturnType<GraphExtractor["extract"]>> | null> {
   try {
-    return await ext.extract(root, cand);
+    return await ext.extract(root, cand, opts);
   } catch (err) {
     // El extractor lanzó de forma inesperada — continuar (no bloquear el build)
     console.error(`  ! ${ext.id} extractor threw: ${(err as Error).message}`);
@@ -118,7 +121,7 @@ async function processExtractor(
   const cand = files.filter((f) => ext.supports(f) && !acc.handled.has(f));
   if (cand.length === 0) return;
 
-  const result = await runExtractor(ext, root, cand);
+  const result = await runExtractor(ext, root, cand, acc.extractOptions);
   if (!result) return;
 
   // Log de mensajes informativos del extractor (silenciados en un build quiet)
@@ -163,6 +166,9 @@ export async function buildGraph(
       `  · [build] skipped ${oversizeSkipped[i]} (${mib} MiB > ${MAX_SOURCE_BYTES / (1024 * 1024)} MiB source size cap)`,
     );
   });
+  // Read the previous build's manifest before this build overwrites it: extractor caches
+  // are reusable only on the same leina, extractor schema and resolution configs.
+  const fullExtraction = fullExtractionReason(root, project.configs);
   const listMs = Date.now() - t0;
   const extractorTimings: BuildTimings["extractors"] = [];
   const acc: ExtractionAcc = {
@@ -175,6 +181,7 @@ export async function buildGraph(
     handled: new Set<string>(),
     degraded: new Set<string>(),
     quiet,
+    extractOptions: { fullExtraction },
   };
 
   for (const ext of registry) {

@@ -97,14 +97,38 @@ se compila con el toolchain local (dotnet SDK / JDK 17+) y el binario queda cach
 
 ### El truco de las dos pasadas (TypeScript)
 
-Para TypeScript, la extracción recorre el proyecto **dos veces**:
+Para TypeScript, la extracción trabaja en **dos pasadas**:
 
-1. **Pasada 1:** anota *todas* las declaraciones (funciones, clases, métodos). Arma la "guía
-   telefónica".
-2. **Pasada 2:** ahora que la guía está completa, resuelve cada llamada/herencia al nodo exacto.
+1. **Pasada 1:** lee solo la sintaxis de un archivo y nombra cada declaración que contiene
+   (funciones, clases, métodos, tipos, variables…). Arma la "guía telefónica" de ese
+   archivo. El id de un nodo depende solo de su propio archivo, así que la guía de cualquier
+   archivo se puede rearmar sin el resto del proyecto.
+2. **Pasada 2:** recorre archivo por archivo con el type checker: cada llamada, import o
+   herencia se resuelve a la declaración que nombra — en el archivo que sea — y toma el id
+   de esa declaración de la guía del archivo que la declara.
 
 ¿Por qué dos? Porque TypeScript permite *forward references* y llamadas cruzadas entre
-archivos: no podés resolver una llamada a algo que todavía no registraste.
+archivos: no podés resolver una llamada a algo que todavía no nombraste.
+
+Como un id nunca depende de otros archivos, un rebuild re-extrae solo lo que cambió. El
+resultado de cada archivo se guarda en `.leina/extract-cache.db` junto con una huella de lo
+que los demás archivos pueden ver de él (sus declaraciones, exports, firmas y los tipos que
+el checker inferiría de él; el cuerpo de una función con tipo de retorno anotado no forma
+parte) y de adónde resolvieron sus imports. En un rebuild:
+
+- un archivo cuyo contenido cambió se re-extrae;
+- cuando esa huella cambió — o se agregó o borró un archivo, o un import ahora resuelve a
+  otro archivo — también se re-extraen los archivos que lo importan, transitivamente;
+- el resultado de todos los demás archivos se reutiliza, y el grafo es el mismo que da una
+  extracción completa.
+
+Se re-extrae todo cuando no hay un build previo, cuando cambió la versión de leina, el
+esquema del grafo, `tsconfig`, `package.json` o un lockfile, cuando cambió un archivo que
+declara globales (un script sin imports/exports, `declare global`, `declare module "x"`,
+referencias triple-slash), cuando cambió un archivo que no es TypeScript y que el checker lee
+(un import de `.js`/`.json`), cuando de todos modos habría que re-extraer la mitad de los
+archivos o más, o con `LEINA_TS_FULL_EXTRACT=1`. El build imprime `ts extract cache: N
+reused, K re-extracted` cuando reutilizó resultados.
 
 Un renombre local se resuelve a la declaración que nombra: después de
 `const { run } = await import("./jobs")`, `const run = jobs.run` o `const api = { run }`,

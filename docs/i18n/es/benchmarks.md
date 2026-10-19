@@ -16,12 +16,9 @@ borrados) y una vez en caliente.
 
 - **build (en frío)** — primer build: parseo completo de todos los archivos.
 - **rebuild (en caliente)** — el mismo build con la caché de extracción por archivo ya
-  poblada. La caché es por archivo **solo para los lenguajes de tree-sitter**: los
-  archivos tree-sitter sin cambios se saltean el re-parseo. TypeScript pasa por el parseo
-  y chequeo de tipos de **programa completo** de ts-morph en cada build — eso es lo que
-  hace sus edges de calidad de compilador, y significa que el build *no* es incremental
-  en la etapa de ts-morph (en este repo dominado por TS la caché caliente ahorra ~4%,
-  ver abajo).
+  poblada. Los archivos tree-sitter sin cambios se saltean el re-parseo y (desde 3.0.0)
+  los archivos TypeScript sin cambios se saltean el chequeo de tipos, salvo que un cambio
+  altere lo que importan — ver [Rebuilds incrementales](#rebuilds-incrementales-typescript).
 - **ruta de lectura** — `stats / affected / query / impact / audit / memory / context`:
   los comandos que un agente realmente invoca a mitad de sesión.
 
@@ -78,10 +75,48 @@ de calidad de compilador:
 <div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 13rem;text-align:right;opacity:.85">persist (SQLite)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:1%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#8b5cf6,#ec4899)"></span></span><span style="flex:0 0 5rem;opacity:.7">26 ms</span></div>
 </div>
 
-Este repo está dominado por TypeScript (291/316 archivos vía ts-morph), así que la caché
-en caliente ahorra poco aquí — se amortiza en repos políglotas donde predominan los
-archivos de tree-sitter. `leina build <dir> --profile` muestra exactamente en qué se va
-el tiempo en tu repo.
+Estas barras son anteriores a la extracción incremental de TypeScript: en este repo
+dominado por TypeScript (291/316 archivos vía ts-morph) la caché en caliente ahorraba
+entonces ~4 %. `leina build <dir> --profile` muestra exactamente en qué se va el tiempo
+en tu repo.
+
+### Rebuilds incrementales (TypeScript)
+
+Desde 3.0.0 los resultados de TypeScript también se cachean por archivo. Un rebuild
+re-extrae los archivos cuyo contenido cambió y — solo cuando un cambio altera lo que otros
+archivos pueden ver de un módulo (sus exports, firmas, tipos inferidos) — los archivos que lo
+importan, transitivamente, con un programa de chequeo de tipos que arranca solo de esos
+archivos. El grafo es idéntico al de una extracción completa (verificado cambio por cambio
+en los dos repos de abajo: cambios de cuerpo, exports nuevos, archivos borrados y nuevos,
+renombres, cambios de interfaces y de re-exports).
+
+Tiempo total de `leina build` por proceso (arranque incluido) y pico de RSS (`VmHWM`).
+Node 26.7, linux-x64, AMD Ryzen 9 7900X3D, medido el 2026-10-19; "antes" es el extractor
+de 2.1 (extracción de programa completo en cada build). Un "cambio de cuerpo" modifica el
+cuerpo de una función con tipo de retorno anotado en 1 o 10 archivos de producto (tres
+archivos distintos para el caso de un archivo).
+
+| repo | build | antes | después |
+|---|---|---:|---:|
+| leina (372 archivos TS) | en frío | 7,9 s · 847 MiB | 3,1 s · 638 MiB |
+| | en caliente, sin cambios | 7,7 s · 807 MiB | 0,55 s · 259 MiB |
+| | cambio de cuerpo en 1 archivo | 7,4–8,2 s · ~830 MiB | 0,84–0,89 s · 292–321 MiB |
+| | cambio de cuerpo en 10 archivos | 7,7 s · 832 MiB | 1,24 s · 377 MiB |
+| app Next.js (751 archivos TS) | en frío | 26,1 s · 1918 MiB | 10,0 s · 1497 MiB |
+| | en caliente, sin cambios | 21,0 s · 1808 MiB | 0,77 s · 278 MiB |
+| | cambio de cuerpo en 1 archivo | 19,5–19,6 s · ~1,8 GiB | 1,8–2,8 s · 464–620 MiB |
+| | cambio de cuerpo en 10 archivos | 19,4 s · 1923 MiB | 3,4 s · 711 MiB |
+
+Lo que sigue costando en un cambio es el chequeo de tipos del archivo editado contra todo
+lo que importa (y contra los archivos que declaran globales, que todo archivo ve): un
+cambio en un módulo apoyado en tipos de librería pesados (un query builder de ORM) es el
+extremo de 2,8 s del rango. Un cambio que altera los exports de un módulo re-extrae también
+a quienes lo importan — agregar un export a un módulo importado por 83 archivos re-extrajo
+84 archivos (≈ 3,8 s de extracción en la app Next.js). Un cambio en un archivo que declara
+globales (`declare global`, `declare module "x"`, referencias triple-slash), en un archivo
+del proyecto que no es TypeScript y que el checker lee (un import de `.js`/`.json`), en
+`tsconfig`/`package.json`/el lockfile, o en la versión de leina re-extrae todo; lo mismo
+`LEINA_TS_FULL_EXTRACT=1`.
 
 ### Cross-corpus — cómo escala el read path
 

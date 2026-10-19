@@ -13,12 +13,10 @@ latency. Builds run once cold (graph + extraction cache wiped) and once warm.
 ## What each measurement means
 
 - **build (cold)** — first-ever build: full parse of every file.
-- **rebuild (warm)** — same build with the per-file extraction cache populated. The cache
-  is per-file for the **tree-sitter languages only**: unchanged tree-sitter files skip
-  re-parsing. TypeScript goes through ts-morph's **whole-program** parse and type check on
-  every build — that is what makes its edges compiler-grade, and it means the build is
-  *not* incremental in the ts-morph stage (on this TS-heavy repo the warm cache saves ~4%,
-  see below).
+- **rebuild (warm)** — same build with the per-file extraction cache populated. Unchanged
+  tree-sitter files skip re-parsing, and (since 3.0.0) unchanged TypeScript files skip the
+  type check unless an edit changed what they import — see
+  [Incremental rebuilds](#incremental-rebuilds-typescript).
 - **read path** — `stats / affected / query / impact / audit / memory / context`: the
   commands an agent actually calls mid-session.
 
@@ -73,9 +71,45 @@ TypeScript whole-program type check**, which is what buys compiler-grade edges:
 <div style="display:flex;align-items:center;gap:.6rem;margin:.3rem 0"><span style="flex:0 0 13rem;text-align:right;opacity:.85">persist (SQLite)</span><span style="flex:1;background:rgba(128,128,128,.16);border-radius:5px"><span style="display:block;width:1%;height:1.15rem;border-radius:5px;background:linear-gradient(90deg,#8b5cf6,#ec4899)"></span></span><span style="flex:0 0 5rem;opacity:.7">26 ms</span></div>
 </div>
 
-This repo is TypeScript-dominated (291/316 files via ts-morph), so the warm cache saves
-little here — the cache pays off on polyglot repos where tree-sitter files dominate.
-`leina build <dir> --profile` shows exactly where your repo's time goes.
+These bars predate incremental TypeScript extraction: on this TypeScript-dominated repo
+(291/316 files via ts-morph) the warm cache then saved ~4 %. `leina build <dir> --profile`
+shows exactly where your repo's time goes.
+
+### Incremental rebuilds (TypeScript)
+
+Since 3.0.0 TypeScript results are cached per file too. A rebuild re-extracts the files
+whose content changed and — only when an edit changes what other files can see of a module
+(its exports, signatures, inferred types) — the files that import it, transitively, with a
+type-check program rooted at just those files. The graph is identical to a full
+extraction's (checked edit by edit on both repos below: body edits, added exports, deleted
+and added files, renames, interface and re-export changes).
+
+Wall time of `leina build` per process (startup included) and peak RSS (`VmHWM`). Node
+26.7, linux-x64, AMD Ryzen 9 7900X3D, measured 2026-10-19; "before" is the 2.1 extractor
+(whole-program extraction on every build). A "body edit" changes the body of a function
+with an annotated return type in 1 or 10 product files (three different files for the
+single-file case).
+
+| repo | build | before | after |
+|---|---|---:|---:|
+| leina (372 TS files) | cold | 7.9 s · 847 MiB | 3.1 s · 638 MiB |
+| | warm, nothing changed | 7.7 s · 807 MiB | 0.55 s · 259 MiB |
+| | 1-file body edit | 7.4–8.2 s · ~830 MiB | 0.84–0.89 s · 292–321 MiB |
+| | 10-file body edit | 7.7 s · 832 MiB | 1.24 s · 377 MiB |
+| Next.js app (751 TS files) | cold | 26.1 s · 1918 MiB | 10.0 s · 1497 MiB |
+| | warm, nothing changed | 21.0 s · 1808 MiB | 0.77 s · 278 MiB |
+| | 1-file body edit | 19.5–19.6 s · ~1.8 GiB | 1.8–2.8 s · 464–620 MiB |
+| | 10-file body edit | 19.4 s · 1923 MiB | 3.4 s · 711 MiB |
+
+What still costs time on an edit is the type check of the edited file against everything it
+imports (and against the files that declare globals, which every file can see): an edit in
+a module that leans on heavy library types (an ORM query builder) is the 2.8 s end of the
+range. An edit that changes a module's exports re-extracts its importers as well — adding
+an export to a module imported by 83 files re-extracted 84 files (≈ 3.8 s of extraction on
+the Next.js app). A change to a file that declares globals (`declare global`,
+`declare module "x"`, triple-slash references), to a non-TypeScript project file the
+checker reads (a `.js`/`.json` import), to `tsconfig`/`package.json`/the lockfile, or to
+the leina version re-extracts everything; so does `LEINA_TS_FULL_EXTRACT=1`.
 
 ### Cross-corpus — how the read path scales
 
