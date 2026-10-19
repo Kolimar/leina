@@ -110,7 +110,8 @@ implementaciones.
 
 Cada hit reporta el `node`, la `depth` a la que se alcanzó, la `viaRelation`, el `target` del
 que depende y el `site` — el `file:line` del propio edge (el call site), que es lo que imprime
-la CLI.
+la CLI. Por MCP, `graph_affected` envía cada hit compactado como
+`{id, label, kind, at, depth, relation, target, via?}`, con `at` = ese call site.
 
 ---
 

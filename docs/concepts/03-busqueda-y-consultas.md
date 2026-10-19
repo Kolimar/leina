@@ -110,7 +110,8 @@ incoming `implements` edges make its implementations dependents.
 
 Each hit reports the `node`, the `depth` at which it was reached, the `viaRelation`, the
 `target` it depends on and the `site` — the `file:line` of the edge itself (the call site),
-which is what the CLI prints.
+which is what the CLI prints. Over MCP, `graph_affected` sends each hit compacted to
+`{id, label, kind, at, depth, relation, target, via?}`, with `at` = that call site.
 
 ---
 

@@ -441,6 +441,71 @@ test("(mcps-10) impact_analyze resolves the symbol like the CLI and honours dept
   }
 });
 
+test("(mcps-g1) graph reads answer compact, unindented JSON with file:line on every node and edge", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-homeg1-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repog1-"));
+  const env = sandboxEnv(home);
+  try {
+    // Call chain across files: a() → b() → c(), each call on line 2.
+    writeFileSync(join(dir, "c.ts"), "export function c(): number { return 1; }\n");
+    writeFileSync(join(dir, "b.ts"), "import { c } from \"./c\";\nexport function b(): number { return c(); }\n");
+    writeFileSync(join(dir, "a.ts"), "import { b } from \"./b\";\nexport function a(): number { return b(); }\n");
+    const init = [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+    ];
+    await driveMcp(dir, env, [...init, { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "graph_build", arguments: { root: dir } } }]);
+    const call = (id: number, name: string, args: object): object =>
+      ({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: { root: dir, ...args } } });
+    const responses = await driveMcp(dir, env, [
+      ...init,
+      call(2, "graph_query", { question: "b" }),
+      call(3, "graph_affected", { symbol: "c" }),
+      call(4, "graph_path", { from: "a", to: "c" }),
+      call(5, "graph_path", { from: "a", to: "no_such_symbol" }),
+      call(6, "impact_analyze", { symbol: "c" }),
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+    const text = (id: number): string => byId.get(id)?.result?.content?.[0]?.text ?? "";
+    for (const id of [2, 3, 4, 5, 6]) {
+      assert.ok(!byId.get(id)?.result?.isError, `call ${id}: ${text(id)}`);
+      assert.ok(!text(id).includes("\n"), `call ${id} is unindented`);
+      assert.doesNotMatch(text(id), /"(signature|fileType|community|weight|sourceFile|sourceLocation)"/, `call ${id} drops redundant fields`);
+    }
+    const NODE_KEYS = ["at", "id", "kind", "label"];
+    interface N { id: string; label: string; kind: string; at: string }
+    interface E { source: string; target: string; relation: string; at: string }
+
+    const q = JSON.parse(text(2)) as { seeds: string[]; nodes: N[]; edges: E[]; testsExcluded: boolean };
+    assert.equal(q.nodes.find((n) => n.id === q.seeds[0])?.label, "b()");
+    for (const n of q.nodes) assert.deepEqual(Object.keys(n).sort(), NODE_KEYS);
+    assert.ok(q.edges.some((e) => e.relation === "calls" && e.at === "b.ts:2"), `call site on the edge: ${text(2)}`);
+
+    const aff = JSON.parse(text(3)) as { seed: N; dependents: (N & { depth: number; relation: string; target: string })[] };
+    assert.deepEqual(Object.keys(aff.seed).sort(), NODE_KEYS);
+    assert.equal(aff.seed.at, "c.ts:1");
+    const b = aff.dependents.find((d) => d.label === "b()");
+    assert.deepEqual([b?.at, b?.depth, b?.relation, b?.target], ["b.ts:2", 1, "calls", aff.seed.id], "call site + what it depends on");
+    assert.equal(aff.dependents.find((d) => d.label === "a()")?.target, b?.id);
+
+    const path = JSON.parse(text(4)) as { path: { nodes: N[]; edges: E[] }; endpoints?: unknown };
+    assert.equal(path.path.nodes[0]?.label, "a()");
+    assert.equal(path.path.nodes.at(-1)?.label, "c()");
+    assert.equal(path.path.edges.length, path.path.nodes.length - 1);
+    assert.equal(path.endpoints, undefined, "endpoints only when one is unresolved or ambiguous");
+
+    const miss = JSON.parse(text(5)) as { path: null; endpoints: { to: { note?: string } } };
+    assert.equal(miss.path, null);
+    assert.match(miss.endpoints.to.note ?? "", /no exact match for "no_such_symbol"/);
+
+    const impact = JSON.parse(text(6)) as { seed: N };
+    assert.deepEqual(Object.keys(impact.seed).sort(), NODE_KEYS);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(mcps-11) memory_verified honours the type filter like memory_search", async () => {
   const home = mkdtempSync(join(tmpdir(), "leina-mcp-home11-"));
   const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo11-"));

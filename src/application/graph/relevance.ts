@@ -101,10 +101,12 @@ export function analyzeQuestion(question: string): QuestionTerms {
   const raw = question.split(/[^\p{L}\p{N}_]+/u).filter((t) => t.length > 0);
   const content = raw.filter((t) => !STOPWORDS.has(fold(t)));
   const terms = new Set<string>();
+  // One-letter words are noise in a sentence, but a one-word question may name `x()`.
+  const minLength = content.length === 1 ? 1 : 2;
   for (const tok of content) {
     for (const w of splitIdentifier(tok)) {
       const f = fold(w);
-      if (f.length > 1 && !STOPWORDS.has(f)) terms.add(stem(f));
+      if (f.length >= minLength && !STOPWORDS.has(f)) terms.add(stem(f));
     }
   }
   const names = new Set<string>();

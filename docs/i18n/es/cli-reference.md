@@ -582,15 +582,24 @@ ruta real resuelta.
 `maxNodes` 1–200, `limit` 1–100, `sessionLimit` 1–50); un valor no numérico usa el default de
 la tool.
 
+**Los payloads de lectura del grafo** (`graph_query`, `graph_affected`, `graph_path`,
+`impact_analyze`) son JSON compacto, sin indentar. Cada node es `{id, label, kind, at}` —
+`label` calificado con su clase para los miembros (`Store.search()`), `at` el `file:line` de su
+definición, `id` un selector que la siguiente llamada acepta; en modo workspace se agrega
+`repo`. Cada edge es `{source, target, relation, at}` en su dirección real, con `at` donde
+ocurre (el call site); `confidence` aparece solo cuando no es `EXTRACTED` y `context` solo si
+existe. Se omiten firmas, ids de comunidad, `fileType` y `weight` — `leina build --json` sigue
+exportando el grafo completo.
+
 | CLI | MCP tool | Notas |
 |---|---|---|
-| `query` | `graph_query` | construye el grafo en el primer uso; `includeTests` equivale a `--include-tests`; `maxNodes` por defecto 25 |
-| `affected` | `graph_affected` | `symbol` acepta los selectores de la CLI; ambiguo → mejor match + `note` + `alternatives`; sin match exacto → `seed: null` + `note` + `suggestions` |
-| `path` | `graph_path` | `from`/`to` se resuelven como en `graph_affected`; `note`/`alternatives`/`suggestions` por extremo bajo `endpoints` |
+| `query` | `graph_query` | construye el grafo en el primer uso; `includeTests` equivale a `--include-tests`; `maxNodes` por defecto 25; devuelve `{seeds: [id], nodes, edges, testsExcluded}` (las seeds encabezan `nodes`; sin edges `contains`/`method`) |
+| `affected` | `graph_affected` | `symbol` acepta los selectores de la CLI; devuelve `{seed, dependents}`, cada dependiente `{id, label, kind, at, depth, relation, target, via?}` con `at` = el call site y `target` = el node del que depende; ambiguo → mejor match + `note` + `alternatives`; sin match exacto → `seed: null` + `note` + `suggestions` |
+| `path` | `graph_path` | `from`/`to` se resuelven como en `graph_affected`; devuelve `{path: {nodes, edges}}` (`edges[i]` une `nodes[i]` y `nodes[i+1]`, en su dirección real) o `path: null`; `endpoints` (`note`/`alternatives`/`suggestions` por extremo) solo cuando un extremo es ambiguo o no resuelve |
 | `stats` | `graph_stats` | |
 | `status` | `graph_status` | |
 | `build` / `refresh` | `graph_build` | las llamadas concurrentes para el mismo root comparten un solo build; las lecturas lo esperan |
-| `impact analyze` | `impact_analyze` | resuelve `symbol` igual que la CLI; respeta `depth`; devuelve `{seed, impacted, note?, alternatives?, suggestions?}` (`seed: null` + `suggestions` si nada matchea exactamente) |
+| `impact analyze` | `impact_analyze` | resuelve `symbol` igual que la CLI; respeta `depth`; devuelve `{seed, impacted, note?, alternatives?, suggestions?}` con `seed` como node compacto (`seed: null` + `suggestions` si nada matchea exactamente) |
 | `visualize` | `graph_visualize` | devuelve el PATH del HTML generado; `out` se resuelve contra `root`, se confina igual que `root` y tiene que terminar en `.html` |
 | `audit` | `audit_run` | |
 | `doctor` | `doctor_run` | exento de consentimiento (el diagnóstico siempre está permitido) |

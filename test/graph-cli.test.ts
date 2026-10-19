@@ -238,10 +238,13 @@ test("(GC-12) query --json: prints the graph.query output contract, flag kept ou
     for (const args of [["query", dir, "beta", "--json"], ["query", dir, "--json", "beta"]]) {
       const r = runCli(args);
       assert.equal(r.code, 0, `exit 0. stderr: ${r.stderr}`);
-      const out = JSON.parse(r.stdout) as { seeds: { label: string }[]; nodes: unknown[]; edges: unknown[] };
+      const out = JSON.parse(r.stdout) as { seeds: string[]; nodes: Record<string, unknown>[]; edges: unknown[] };
       // graphQueryOutputSchema: required seeds/nodes/edges arrays.
       for (const k of ["seeds", "nodes", "edges"] as const) assert.ok(Array.isArray(out[k]), `${k} is an array`);
-      assert.equal(out.seeds[0]?.label, "beta()", "same top seed as the text output");
+      // Compact shape: seeds are ids, the first nodes; every node is {id, label, kind, at}.
+      assert.equal(out.nodes[0]?.id, out.seeds[0]);
+      assert.equal(out.nodes[0]?.label, "beta()", "same top seed as the text output");
+      for (const n of out.nodes) assert.deepEqual(Object.keys(n).sort(), ["at", "id", "kind", "label"]);
       assert.match(text.stdout, new RegExp(`Subgraph: ${out.nodes.length} nodes, ${out.edges.length} edges`));
     }
   } finally {

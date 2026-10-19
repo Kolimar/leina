@@ -28,6 +28,7 @@ import { ShellProcessRunner } from "../../infrastructure/harness/exec.ts";
 import { HarnessGit } from "../../infrastructure/harness/git.ts";
 import { affected, queryGraph, shortestPath } from "../../application/graph/query.ts";
 import { resolutionInfo, resolveSeedQuery } from "../../application/graph/seed.ts";
+import { compactDependents, compactNode, compactPath, compactQuery } from "../../application/graph/payloads.ts";
 import { analyzeSymbolImpact } from "../../application/graph/impact.ts";
 import { graphStatus } from "../../application/graph/manifest.ts";
 import { searchMemory, getVerifiedContext } from "../../application/memory/query.ts";
@@ -285,13 +286,19 @@ function assertConsent(tool: string, root: string): void {
 // NOT exposed by design: `env exec` — the names-not-values contract injects secrets
 // process-to-process; an MCP tool result would pull the values into model context.
 const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
+  // The graph reads answer in the compact shapes of application/graph/payloads.ts: nodes
+  // `{id, label, kind, at}`, edges `{source, target, relation, at}` — no signatures or
+  // community ids, a `file:line` on everything (COMPACT_TOOLS: serialised unindented).
   graph_query: async (a) =>
     withFreshStore(rootOf(a), (s) =>
-      queryGraph(s, str(a, "question"), {
-        depth: intArg(a, "depth"),
-        maxNodes: intArg(a, "maxNodes"),
-        includeTests: a.includeTests === true,
-      }),
+      compactQuery(
+        s,
+        queryGraph(s, str(a, "question"), {
+          depth: intArg(a, "depth"),
+          maxNodes: intArg(a, "maxNodes"),
+          includeTests: a.includeTests === true,
+        }),
+      ),
     ),
   // Seeds resolve exactly like the CLI (seed.ts selectors, no substring fallback): an
   // unresolved selector returns `seed: null` + `suggestions`, an ambiguous one the best
@@ -301,18 +308,21 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       const res = resolveSeedQuery(s, str(a, "symbol"));
       if (!res.seed) return { seed: null, dependents: [], ...resolutionInfo(res) };
       return {
-        seed: { id: res.seed.id, label: res.seed.label },
+        seed: compactNode(s, res.seed),
         ...resolutionInfo(res),
-        dependents: affected(s, res.seed.id, intArg(a, "depth")),
+        dependents: compactDependents(s, affected(s, res.seed.id, intArg(a, "depth"))),
       };
     }),
   graph_path: async (a) =>
     withFreshStore(rootOf(a), (s) => {
       const from = resolveSeedQuery(s, str(a, "from"));
       const to = resolveSeedQuery(s, str(a, "to"));
-      const endpoints = { from: resolutionInfo(from), to: resolutionInfo(to) };
-      if (!from.seed || !to.seed) return { path: null, endpoints };
-      return { path: shortestPath(s, from.seed.id, to.seed.id), endpoints };
+      const info = { from: resolutionInfo(from), to: resolutionInfo(to) };
+      // Only an unresolved or ambiguous endpoint is worth reporting.
+      const endpoints = Object.keys(info.from).length + Object.keys(info.to).length > 0 ? { endpoints: info } : {};
+      if (!from.seed || !to.seed) return { path: null, ...endpoints };
+      const steps = shortestPath(s, from.seed.id, to.seed.id);
+      return { path: steps ? compactPath(s, from.seed, steps) : null, ...endpoints };
     }),
   graph_stats: async (a) => {
     // Ungated read, but never of a graph another call in this process is still building
@@ -337,7 +347,7 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
       // expects a node id and silently returned empty lists for a symbol name.
       const { seed, resolution, impacted } = analyzeSymbolImpact(s, str(a, "symbol"), intArg(a, "depth"));
       if (!seed) return { seed: null, impacted, ...resolutionInfo(resolution) };
-      return { seed: { id: seed.id, label: seed.label, sourceFile: seed.sourceFile }, ...resolutionInfo(resolution), impacted };
+      return { seed: compactNode(s, seed), ...resolutionInfo(resolution), impacted };
     }),
   memory_add: (a) =>
     withMemStore(rootOf(a), (s) => {
@@ -524,7 +534,7 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     required: ["symbol"],
     properties: {
       root: ROOT_PROP,
-      symbol: { type: "string", description: "symbol name, node id or file path" },
+      symbol: { type: "string", description: "symbol selector: name, Class.method, path/to/file.ts:name, node id or file path" },
       depth: intProp("depth", "dependency hops (default 3)"),
     },
   },
@@ -533,8 +543,8 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     required: ["from", "to"],
     properties: {
       root: ROOT_PROP,
-      from: { type: "string", description: "symbol name, node id or file path" },
-      to: { type: "string", description: "symbol name, node id or file path" },
+      from: { type: "string", description: "symbol selector: name, Class.method, path/to/file.ts:name, node id or file path" },
+      to: { type: "string", description: "symbol selector: name, Class.method, path/to/file.ts:name, node id or file path" },
     },
   },
   graph_stats: { type: "object", properties: { root: ROOT_PROP } },
@@ -544,7 +554,7 @@ const MCP_INPUT_OVERRIDES: Record<string, object> = {
     required: ["symbol"],
     properties: {
       root: ROOT_PROP,
-      symbol: { type: "string", description: "symbol name, node id or file path" },
+      symbol: { type: "string", description: "symbol selector: name, Class.method, path/to/file.ts:name, node id or file path" },
       depth: intProp("depth", "BFS hops in both directions (default 3)"),
     },
   },
@@ -704,6 +714,10 @@ function listTools(): { name: string; description: string; inputSchema: object }
   ];
 }
 
+// Tools whose (potentially large) answers are serialised without indentation: the model
+// reads JSON either way, and indentation was a third of a graph_query payload.
+const COMPACT_TOOLS: ReadonlySet<string> = new Set(["graph_query", "graph_affected", "graph_path", "impact_analyze"]);
+
 export async function handleMcp(_rest: string[]): Promise<void> {
   const server = new Server(
     { name: "leina", version: readPackageVersion() },
@@ -722,7 +736,8 @@ export async function handleMcp(_rest: string[]): Promise<void> {
       const args = (req.params.arguments ?? {}) as ToolArgs;
       assertConsent(name, rootOf(args));
       const result = await executor(args);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      const text = COMPACT_TOOLS.has(name) ? JSON.stringify(result) : JSON.stringify(result, null, 2);
+      return { content: [{ type: "text", text }] };
     } catch (err) {
       return {
         content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],

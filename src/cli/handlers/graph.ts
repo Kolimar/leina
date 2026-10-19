@@ -6,9 +6,10 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { isStale, readManifest } from "../../application/graph/manifest.ts";
 import { acquireForegroundBuildLock, buildLockPath } from "../background-build.ts";
 import { loadFreshnessConfig } from "../../infrastructure/config/freshness.ts";
-import { affected, queryGraph, shortestPath, type QueryResult } from "../../application/graph/query.ts";
+import { affected, queryGraph, shortestPath } from "../../application/graph/query.ts";
 import { ambiguityNote, noMatchMessage, resolveSeedQuery } from "../../application/graph/seed.ts";
-import { displayLabel, edgeAt, nodeAt } from "../../application/graph/present.ts";
+import { displayLabel, nodeAt } from "../../application/graph/present.ts";
+import { compactQuery, type CompactQuery } from "../../application/graph/payloads.ts";
 import type { GraphNode } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
 import { openGraphRepo as openStore, openFreshStore, openEventSink, buildDefaultRegistry } from "../wiring.ts";
@@ -260,35 +261,27 @@ export async function handleQuery(rest: string[]): Promise<void> {
   const includeTests = rest.includes("--include-tests");
   const question = rest.slice(1).filter((a) => !QUERY_FLAGS.has(a)).join(" ");
   const store = await openFreshStore(root);
-  const res = queryGraph(store, question, { includeTests });
-  if (asJson) {
-    store.close();
-    // The registry's graph.query output contract (graphQueryOutputSchema): the same
-    // QueryResult the MCP graph_query tool returns.
-    process.stdout.write(`${JSON.stringify(res)}\n`);
-    return;
-  }
-  const label = new Map(res.nodes.map((n) => [n.id, displayLabel(store, n)]));
+  // The compact shape (payloads.ts) is both the --json contract (graphQueryOutputSchema,
+  // identical to the MCP graph_query answer) and what the text output prints.
+  const res = compactQuery(store, queryGraph(store, question, { includeTests }));
   store.close();
-  printQueryText(res, label);
+  if (asJson) process.stdout.write(`${JSON.stringify(res)}\n`);
+  else printQueryText(res);
 }
 
 // Seeds, then every node with its kind and file:line, then the semantic edges with the
 // file:line where each happens — enough to open the right file without a second query.
-function printQueryText(res: QueryResult, label: Map<string, string>): void {
-  const name = (id: string): string => label.get(id) ?? id;
-  const seedIds = new Set(res.seeds.map((s) => s.id));
-  console.log(`Seeds: ${res.seeds.map((s) => `${name(s.id)} (${nodeAt(s)})`).join(", ") || "(none)"}`);
+function printQueryText(res: CompactQuery): void {
+  const byId = new Map(res.nodes.map((n) => [n.id, n]));
+  const name = (id: string): string => byId.get(id)?.label ?? id;
+  const seedIds = new Set(res.seeds);
+  console.log(`Seeds: ${res.seeds.map((id) => `${name(id)} (${byId.get(id)?.at ?? "?"})`).join(", ") || "(none)"}`);
   const hint = res.testsExcluded ? " (test/mock/fixture nodes left out; --include-tests to add them)" : "";
   console.log(`Subgraph: ${res.nodes.length} nodes, ${res.edges.length} edges${hint}`);
   if (res.nodes.length === 0) return;
   console.log("Nodes:");
-  for (const n of res.nodes) {
-    console.log(`  ${seedIds.has(n.id) ? "*" : " "} ${name(n.id)}  ${n.kind ?? "?"}  ${nodeAt(n)}`);
-  }
+  for (const n of res.nodes) console.log(`  ${seedIds.has(n.id) ? "*" : " "} ${n.label}  ${n.kind}  ${n.at}`);
   if (res.edges.length === 0) return;
   console.log("Edges:");
-  for (const e of res.edges) {
-    console.log(`  ${name(e.source)} --${e.relation}--> ${name(e.target)}  ${edgeAt(e)}`);
-  }
+  for (const e of res.edges) console.log(`  ${name(e.source)} --${e.relation}--> ${name(e.target)}  ${e.at}`);
 }

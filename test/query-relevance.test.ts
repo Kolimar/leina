@@ -60,6 +60,8 @@ test("(qrel-2) EN and ES stopwords and meta words are dropped; identifier tokens
   const ident = analyzeQuestion("where is openFreshStore called");
   assert.ok(ident.names.has("openfreshstore"));
   assert.deepEqual(analyzeQuestion("isStale").names, new Set(["isstale"]), "a one-word question is a name");
+  assert.deepEqual(analyzeQuestion("x").terms, ["x"], "a one-letter, one-word question still names x()");
+  assert.equal(analyzeQuestion("where is x set").terms.includes("x"), false, "one-letter words in a sentence are noise");
   assert.equal(analyzeQuestion("which function handles the code").terms.includes("function"), false);
 });
 
