@@ -624,6 +624,7 @@ export async function handleInit(rest: string[]): Promise<void> {
   }
   const harness = await bootstrapHarness(project, mode === "full" ? hosts : [], { preset: harnessPreset });
   written.push(...harness.written);
+  removed.push(...harness.removed);
   failures.push(...harness.failures);
 
   maybeActivationNudge();

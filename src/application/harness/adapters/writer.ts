@@ -16,7 +16,12 @@ import crypto from "node:crypto";
 import { HARNESS_DIR, harnessDir } from "../config-io.ts";
 import { readJsonIfExists, readTextIfExists } from "../io.ts";
 import { blockHandEdited, removeManagedBlock, sha256, upsertManagedBlock } from "./managed-block.ts";
-import { mergeCursorHooks, mergeOpencodeInstructions, type JsonMergeResult } from "./json-merge.ts";
+import {
+  mergeCursorHooks,
+  mergeOpencodeInstructions,
+  stripHarnessJsonEntries,
+  type JsonMergeResult,
+} from "./json-merge.ts";
 import { type FileSet, type GeneratedFile, type WriteKind } from "./types.ts";
 
 export interface LockfileArtifact {
@@ -187,7 +192,8 @@ async function finalizeStrippedFile(repoRoot: string, absolute: string, content:
   }
 }
 
-export type ApplyAction = "created" | "updated" | "unchanged" | "conflict" | "error";
+/** `removed` = an orphan deleted or stripped — reported apart, never as a write. */
+export type ApplyAction = "created" | "updated" | "removed" | "unchanged" | "conflict" | "error";
 
 export interface ApplyItem {
   path: string;
@@ -303,16 +309,6 @@ function applyOwned(
   };
 }
 
-/**
- * Orphan cleanup: artifacts recorded in the previous lockfile that no adapter
- * generates anymore (rule or platform removed). Owned files are deleted when
- * untouched; managed blocks are stripped from their host file when their
- * interior is untouched (hand-edits conflict, like owned files). json-merge
- * cleanup is inherent: the next merge strips stale entries. (A json-merge
- * artifact whose platform disappeared entirely — e.g. the origin's
- * .claude/settings.json hooks — is left for the owner to clean; stale
- * `harness hook` wiring is inert once the hook CLI answers it.)
- */
 /** Best-effort: prune now-empty parents left by a removed artifact. */
 async function pruneEmptyDirs(repoRoot: string, removedFile: string): Promise<void> {
   let dir = path.dirname(removedFile);
@@ -326,6 +322,16 @@ async function pruneEmptyDirs(repoRoot: string, removedFile: string): Promise<vo
   }
 }
 
+/**
+ * Orphan cleanup: artifacts recorded in the previous lockfile that no adapter
+ * generates anymore (rule or platform removed). Owned files are deleted when
+ * untouched; managed blocks are stripped from their host file when their
+ * interior is untouched (hand-edits conflict, like owned files); json-merge
+ * entries are stripped from the shared JSON file (user entries stay), so no
+ * harness wiring is left behind untracked. A json-merge artifact of an unknown
+ * strategy (e.g. the origin's .claude/settings.json hooks) is left for the
+ * owner to clean. Every removal is reported as `removed`, never as a write.
+ */
 async function cleanupOrphans(
   repoRoot: string,
   previous: Lockfile,
@@ -359,13 +365,7 @@ async function cleanupOrphans(
           await fs.rm(absolute);
           await pruneEmptyDirs(repoRoot, absolute);
         }
-        items.push({
-          path: stale.path,
-          adapter: stale.adapter,
-          kind: "owned",
-          action: "updated",
-          detail: "removed (orphaned artifact)",
-        });
+        items.push({ path: stale.path, adapter: stale.adapter, kind: "owned", action: "removed", detail: "orphaned artifact" });
       } else {
         retained.push(stale);
         items.push({
@@ -398,17 +398,44 @@ async function cleanupOrphans(
       const { content, removed } = removeManagedBlock(existing, blockId);
       if (removed) {
         if (!options.check) await finalizeStrippedFile(repoRoot, absolute, content);
-        items.push({
-          path: stale.path,
-          adapter: stale.adapter,
-          kind: "managed-block",
-          action: "updated",
-          detail: "removed orphaned block",
-        });
+        items.push({ path: stale.path, adapter: stale.adapter, kind: "managed-block", action: "removed", detail: "orphaned block" });
       }
+    } else {
+      const item = await stripOrphanedJsonEntries(repoRoot, absolute, stale, existing, options);
+      if (item?.action === "error") retained.push(stale); // once the file parses again, a later run strips it
+      if (item) items.push(item);
     }
   }
   return { items, retained };
+}
+
+/** json-merge orphan: strip the harness entries; undefined = nothing to do. */
+async function stripOrphanedJsonEntries(
+  repoRoot: string,
+  absolute: string,
+  stale: LockfileArtifact,
+  existing: string,
+  options: ApplyOptions,
+): Promise<ApplyItem | undefined> {
+  const stripped = stripHarnessJsonEntries(stale.adapter, existing);
+  if (stripped === undefined || (stripped.error === undefined && !stripped.changed)) return undefined;
+  const base = { path: stale.path, adapter: stale.adapter, kind: "json-merge" } as const;
+  if (stripped.error !== undefined) {
+    return { ...base, action: "error", detail: `${stripped.error} — orphaned harness entries left in place` };
+  }
+  if (!options.check) {
+    if (stripped.removeFile) {
+      await fs.rm(absolute);
+      await pruneEmptyDirs(repoRoot, absolute);
+    } else {
+      await writeFileAtomic(absolute, stripped.content);
+    }
+  }
+  return {
+    ...base,
+    action: "removed",
+    detail: stripped.removeFile ? "orphaned entries — the file held nothing else" : "orphaned harness entries",
+  };
 }
 
 export async function applyFileSets(

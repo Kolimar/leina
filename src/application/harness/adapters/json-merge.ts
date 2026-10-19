@@ -108,6 +108,45 @@ export function stripOpencodeInstructions(existingJson: string): JsonMergeResult
   return { content, changed: content !== existingJson };
 }
 
+/** The empty hooks skeleton the cursor strategy leaves when it created the file. */
+function isEmptyCursorHooksSkeleton(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    const keys = Object.keys(parsed).filter((k) => k !== "version");
+    return (
+      keys.length === 1 &&
+      keys[0] === "hooks" &&
+      typeof parsed.hooks === "object" &&
+      parsed.hooks !== null &&
+      Object.keys(parsed.hooks).length === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+export interface JsonStripResult extends JsonMergeResult {
+  /** Nothing but harness-born structure is left — the file itself can go. */
+  removeFile: boolean;
+}
+
+/**
+ * Inverse of a json-merge artifact (orphan cleanup in sync, and deinit). The
+ * lockfile records no merge strategy, so it is chosen by the adapter that
+ * wrote the entries; undefined = unknown strategy (e.g. the origin's
+ * claude-code settings hooks) → leave the file alone. opencode.json stays
+ * even when reduced to its $schema — the file itself is the platform marker
+ * other tools detect; only the cursor hooks skeleton is harness-born.
+ */
+export function stripHarnessJsonEntries(adapter: string, existingJson: string): JsonStripResult | undefined {
+  if (adapter === "cursor") {
+    const result = stripCursorHooks(existingJson);
+    return { ...result, removeFile: result.error === undefined && result.changed && isEmptyCursorHooksSkeleton(result.content) };
+  }
+  if (adapter === "opencode") return { ...stripOpencodeInstructions(existingJson), removeFile: false };
+  return undefined;
+}
+
 /**
  * opencode.json merge: guarantee the harness-generated rules file is listed in
  * the `instructions` array (set semantics), removing stale harness entries.

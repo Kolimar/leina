@@ -150,6 +150,54 @@ describe("deinitHarness (leina deinit inverse)", () => {
     assert.ok(await exists(".cursor/rules/harness-core.mdc"));
   });
 
+  it("(init-plat-1) init --hosts keeps the platforms a plain sync had auto-detected", async () => {
+    await repo.write(".cursor/rules/.keep", "");
+    await runSync(repo.root, {}); // auto-detect: cursor
+    assert.ok(await exists(".cursor/rules/harness-core.mdc"));
+
+    const result = await bootstrapHarness(repo.root, ["claude"]);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+    const config = JSON.parse(await read(".harness/config.json"));
+    assert.deepEqual(config.platforms, ["claude-code", "cursor"], "hosts first, then what was already synced");
+    assert.ok(await exists(".cursor/rules/harness-core.mdc"), "cursor rules survive init");
+    assert.match(await read(".cursor/hooks.json"), /harness hook cursor-stop/, "cursor hook wiring survives");
+    assert.deepEqual(result.removed, []);
+    assert.match(await read("CLAUDE.md"), /harness:begin/);
+  });
+
+  it("(init-plat-2) a config without platforms inherits lockfile + detected adapters, not just the hosts", async () => {
+    await repo.write(".harness/config.json", JSON.stringify({ strictness: "strict" }));
+    await repo.write(".cursor/rules/.keep", "");
+    await runSync(repo.root, {});
+
+    const result = await bootstrapHarness(repo.root, ["claude"]);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+    const config = JSON.parse(await read(".harness/config.json"));
+    assert.equal(config.strictness, "strict", "user keys kept");
+    assert.deepEqual(config.platforms, ["claude-code", "cursor"]);
+    assert.ok(await exists(".cursor/rules/harness-core.mdc"));
+  });
+
+  it("(init-plat-3) artifacts a bootstrap sync deletes are reported as removed, never as written", async () => {
+    await repo.write(".harness/config.json", JSON.stringify({ platforms: ["cursor"] }));
+    await repo.write(".cursor/hooks.json", JSON.stringify({ version: 1, hooks: { stop: [{ command: "my-hook" }] } }));
+    await runSync(repo.root, {});
+    assert.ok(await exists(".cursor/rules/harness-core.mdc"));
+    // The user drops cursor from the declared platforms, then re-inits.
+    await repo.write(".harness/config.json", JSON.stringify({ platforms: ["claude-code"] }));
+
+    const result = await bootstrapHarness(repo.root, ["claude"]);
+    assert.deepEqual(result.failures, [], result.failures.join("; "));
+    assert.equal(await exists(".cursor/rules/harness-core.mdc"), false);
+    assert.ok(result.removed.some((r) => r.includes(".cursor/rules/harness-core.mdc")), result.removed.join("; "));
+    assert.ok(!result.written.some((w) => w.includes(".cursor/")), result.written.join("; "));
+    // The orphaned json-merge wiring is stripped too — nothing untracked dangles.
+    const hooks = await read(".cursor/hooks.json");
+    assert.ok(!hooks.includes("harness hook"), hooks);
+    assert.deepEqual(JSON.parse(hooks).hooks.stop, [{ command: "my-hook" }], "user hook kept");
+    assert.ok(result.removed.some((r) => r.includes(".cursor/hooks.json")), result.removed.join("; "));
+  });
+
   it("reports a host with no harness adapter instead of silently dropping it", async () => {
     const result = await bootstrapHarness(repo.root, ["claude", "no-such-host"]);
     assert.ok(result.failures.some((f) => f.includes('host "no-such-host"')));

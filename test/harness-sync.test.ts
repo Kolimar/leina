@@ -201,7 +201,7 @@ describe("applyFileSets — orphan cleanup", () => {
     const outcome = await applyFileSets(repo.root, sets(owned("gen/a.md", "AAA\n")), { sourceHash: HASH });
     assert.equal(await exists("gen/b.md"), false, "orphan removed");
     const removal = outcome.items.find((i) => i.path === "gen/b.md");
-    assert.equal(removal?.action, "updated");
+    assert.equal(removal?.action, "removed", "a deletion is reported as removed, never as written");
     assert.match(removal?.detail ?? "", /orphaned/);
     const lock = await readLockfile(repo.root);
     assert.ok(!lock!.artifacts.some((a) => a.path === "gen/b.md"), "orphan leaves the lockfile");
@@ -223,7 +223,8 @@ describe("applyFileSets — orphan cleanup", () => {
       sourceHash: HASH,
     });
     const item = outcome.items.find((i) => i.path === "AGENTS.md");
-    assert.equal(item?.detail, "removed orphaned block");
+    assert.equal(item?.action, "removed");
+    assert.equal(item?.detail, "orphaned block");
     const content = await read("AGENTS.md");
     assert.ok(content.includes("# User heading"));
     assert.ok(!content.includes("ephemeral rules"));
@@ -236,7 +237,7 @@ describe("applyFileSets — orphan cleanup", () => {
       sourceHash: HASH,
     });
     const item = outcome.items.find((i) => i.path === "CLAUDE.md");
-    assert.equal(item?.detail, "removed orphaned block");
+    assert.equal(item?.action, "removed");
     assert.equal(await exists("CLAUDE.md"), false, "no 1-byte husk left behind");
   });
 
@@ -258,8 +259,62 @@ describe("applyFileSets — orphan cleanup", () => {
       force: true,
     });
     const forcedItem = forced.items.find((i) => i.path === "AGENTS.md");
-    assert.equal(forcedItem?.detail, "removed orphaned block");
+    assert.equal(forcedItem?.action, "removed");
     assert.ok(!(await read("AGENTS.md")).includes("MY NOTES"));
+  });
+
+  it("(orphan-json-1) an orphaned cursor hooks merge is stripped: user hooks kept, nothing left untracked", async () => {
+    await repo.write(".cursor/hooks.json", `${JSON.stringify({ version: 1, hooks: { stop: [{ command: "my-hook" }] } }, null, 2)}\n`);
+    const cursorHooks = {
+      path: ".cursor/hooks.json",
+      kind: "json-merge" as const,
+      mergeStrategy: "cursor-hooks" as const,
+      content: JSON.stringify({ stop: ["leina harness hook cursor-stop"] }),
+    };
+    await applyFileSets(repo.root, [{ adapter: "cursor", fileSet: { files: [cursorHooks], warnings: [] } }], {
+      sourceHash: HASH,
+    });
+    assert.match(await read(".cursor/hooks.json"), /harness hook/);
+
+    const outcome = await applyFileSets(repo.root, [], { sourceHash: HASH });
+    const item = outcome.items.find((i) => i.path === ".cursor/hooks.json");
+    assert.equal(item?.action, "removed");
+    const hooks = JSON.parse(await read(".cursor/hooks.json"));
+    assert.deepEqual(hooks.hooks.stop, [{ command: "my-hook" }]);
+    assert.ok(!(await read(".cursor/hooks.json")).includes("harness hook"));
+    assert.ok(!(await readLockfile(repo.root))!.artifacts.some((a) => a.path === ".cursor/hooks.json"));
+  });
+
+  it("(orphan-json-2) a harness-born hooks.json orphan is removed; an orphaned opencode entry is stripped", async () => {
+    await repo.write("opencode.json", `${JSON.stringify({ instructions: ["docs/style.md"] }, null, 2)}\n`);
+    await applyFileSets(
+      repo.root,
+      [
+        {
+          adapter: "cursor",
+          fileSet: {
+            files: [{ path: ".cursor/hooks.json", kind: "json-merge", mergeStrategy: "cursor-hooks", content: JSON.stringify({ stop: ["leina harness hook cursor-stop"] }) }],
+            warnings: [],
+          },
+        },
+        {
+          adapter: "opencode",
+          fileSet: {
+            files: [{ path: "opencode.json", kind: "json-merge", mergeStrategy: "opencode-instructions", content: ".harness/generated/opencode-rules.md" }],
+            warnings: [],
+          },
+        },
+      ],
+      { sourceHash: HASH },
+    );
+
+    const check = await applyFileSets(repo.root, [], { sourceHash: HASH, check: true });
+    assert.equal(check.driftCount, 2, "--check reports the pending strips");
+    assert.ok(await exists(".cursor/hooks.json"), "--check writes nothing");
+
+    await applyFileSets(repo.root, [], { sourceHash: HASH });
+    assert.equal(await exists(".cursor/hooks.json"), false, "held only harness entries");
+    assert.deepEqual(JSON.parse(await read("opencode.json")).instructions, ["docs/style.md"]);
   });
 
   it("(orphan-scope-1) orphanScope limits cleanup to the named adapters and carries the rest over", async () => {

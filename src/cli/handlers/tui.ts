@@ -627,12 +627,13 @@ async function harnessSyncFlow(root: string): Promise<void> {
   for (const e of result.errors) p.log.error(e);
   if (result.outcome) {
     const written = result.outcome.items.filter((i) => i.action === "created" || i.action === "updated").length;
+    const removed = result.outcome.items.filter((i) => i.action === "removed").length;
     const skipped = result.outcome.items.filter((i) => i.action === "unchanged").length;
     p.note(
       [
         ...result.outcome.items.map((i) => `${i.action.padEnd(9)} ${i.path} [${i.adapter}/${i.kind}]`),
         "",
-        `${written} escrito(s) · ${skipped} sin cambios · ${result.outcome.conflictCount} conflicto(s)/error(es)`,
+        `${written} escrito(s) · ${removed} eliminado(s) · ${skipped} sin cambios · ${result.outcome.conflictCount} conflicto(s)/error(es)`,
       ].join("\n"),
       "harness sync",
     );

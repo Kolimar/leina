@@ -6,9 +6,12 @@
 //      builtin rule suite (including the leina-* rules shipped enabled:true)
 //      governs by default; the file exists so the repo is visibly harnessed
 //      and so project overrides have a home.
+//      With --hosts it pins `platforms` — starting from what auto-detection
+//      and the lockfile already govern, so pinning never drops a platform.
 //   2. Runs the harness sync in-process (the SAME runSync as
 //      `leina harness sync`) to generate CLAUDE.md/AGENTS.md managed blocks +
-//      skills for whichever platforms are detected.
+//      skills for whichever platforms are detected; orphans it deletes are
+//      reported as removed.
 //
 // deinitHarness (sync — `leina deinit` and its TUI caller are synchronous):
 //   Removes ONLY sync-generated artifacts, driven by the committed lockfile —
@@ -32,7 +35,8 @@ import {
   type LockfileArtifact,
 } from "../harness/adapters/writer.ts";
 import { blockHandEdited, removeManagedBlock, sha256 } from "../harness/adapters/managed-block.ts";
-import { stripCursorHooks, stripOpencodeInstructions } from "../harness/adapters/json-merge.ts";
+import { stripHarnessJsonEntries } from "../harness/adapters/json-merge.ts";
+import { adapterById, detectAdapters } from "../harness/adapters/registry.ts";
 
 /** Content init seeds into .harness/config.json — builtin rules govern by default. */
 export const HARNESS_MINIMAL_CONFIG = "{}\n";
@@ -49,11 +53,12 @@ const HOST_TO_PLATFORM: Record<string, string> = {
 };
 
 /**
- * The platforms the bootstrap may target: the hosts the user named on the init
+ * The platforms the bootstrap adds: the hosts the user named on the init
  * command line, plus agentsmd only when the repo already carries an AGENTS.md.
  * Never inferred from anything else — the harness inherits init's stance that
- * leina does not choose an AI host for the user. A host with no harness
- * adapter is reported, never silently dropped.
+ * leina does not choose an AI host for the user (platforms already governed by
+ * evidence-based auto-detection are kept, see autoSelectedPlatforms). A host
+ * with no harness adapter is reported, never silently dropped.
  */
 function bootstrapPlatforms(
   project: string,
@@ -78,7 +83,28 @@ function errMsg(err: unknown): string {
 
 export interface HarnessBootstrapResult {
   written: string[];
+  /** Orphaned artifacts the bootstrap sync deleted or stripped — never reported as written. */
+  removed: string[];
   failures: string[];
+}
+
+/**
+ * The platforms a config WITHOUT `platforms` currently governs: auto-detection
+ * plus whatever the lockfile says was synced. Pinning an explicit list must
+ * start from these, or the first sync after `init --hosts` would orphan-delete
+ * every auto-detected platform's artifacts (and strand their hook wiring).
+ * Only registered adapter ids survive (an origin lockfile may name others).
+ */
+async function autoSelectedPlatforms(project: string): Promise<string[]> {
+  const lockPath = containedArtifactPath(project, LOCKFILE_REL);
+  const lock = lockPath !== undefined ? readLockfileSync(lockPath) : undefined;
+  const fromLock = (lock?.artifacts ?? []).map((a) => a.adapter).filter((id) => adapterById(id) !== undefined);
+  const detected = (await detectAdapters({ repoRoot: project })).map((a) => a.id);
+  return [...new Set([...fromLock, ...detected])];
+}
+
+function unionPlatforms(...lists: (readonly string[])[]): string[] {
+  return [...new Set(lists.flat())];
 }
 
 /**
@@ -87,12 +113,15 @@ export interface HarnessBootstrapResult {
  * platforms that the config does not record would make the very next plain
  * `harness sync` tear those artifacts back out as orphans (init/sync
  * ping-pong). Union, never replacement — the user's own platform list is
- * intent we extend, not state we own. Returns false when the config exists
- * but could not be honored (malformed / not an object): nothing is written.
+ * intent we extend, not state we own; and a config with no list yet (auto-
+ * detection) is pinned to hosts ∪ `inherited` (what auto-detection governs
+ * today), never to the hosts alone. Returns false when the config exists but
+ * could not be honored (malformed / not an object): nothing is written.
  */
 function persistPlatforms(
   configPath: string | undefined,
   platforms: readonly string[],
+  inherited: readonly string[],
   preset: RulePreset | undefined,
   ruleOverrides: Record<string, { enabled: false }>,
   written: string[],
@@ -108,14 +137,15 @@ function persistPlatforms(
     // Fresh seed only: platforms and/or a preset's rule overrides. `generic`
     // disables the leina-coupled builtin rules; `leina-native` (and no preset)
     // leaves the pristine `{}` so the full suite governs.
+    const seedPlatforms = platforms.length > 0 ? unionPlatforms(platforms, inherited) : [];
     const seedObj: Record<string, unknown> = {};
-    if (platforms.length > 0) seedObj.platforms = platforms;
+    if (seedPlatforms.length > 0) seedObj.platforms = seedPlatforms;
     if (overrideCount > 0) seedObj.rules = ruleOverrides;
     const seed =
       Object.keys(seedObj).length > 0 ? `${JSON.stringify(seedObj, null, 2)}\n` : HARNESS_MINIMAL_CONFIG;
     writeFileSync(configPath, seed);
     const parts: string[] = [];
-    if (platforms.length > 0) parts.push(`platforms: ${platforms.join(", ")}`);
+    if (seedPlatforms.length > 0) parts.push(`platforms: ${seedPlatforms.join(", ")}`);
     if (overrideCount > 0) parts.push(`preset ${preset} disables ${overrideCount} leina-* rule(s)`);
     written.push(
       parts.length > 0
@@ -148,7 +178,8 @@ function persistPlatforms(
   const existing = Array.isArray(config.platforms)
     ? (config.platforms as unknown[]).filter((p): p is string => typeof p === "string")
     : [];
-  const merged = [...existing, ...platforms.filter((p) => !existing.includes(p))];
+  const merged =
+    existing.length > 0 ? unionPlatforms(existing, platforms) : unionPlatforms(platforms, inherited);
   if (merged.length === existing.length) return true; // already recorded
   config.platforms = merged;
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -163,6 +194,7 @@ export async function bootstrapHarness(
   opts: { preset?: RulePreset } = {},
 ): Promise<HarnessBootstrapResult> {
   const written: string[] = [];
+  const removed: string[] = [];
   const failures: string[] = [];
   const platforms = bootstrapPlatforms(project, hosts, failures);
 
@@ -172,7 +204,8 @@ export async function bootstrapHarness(
 
   const configPath = containedArtifactPath(project, CONFIG_REL);
   try {
-    persistPlatforms(configPath, platforms, opts.preset, ruleOverrides, written, failures);
+    const inherited = platforms.length > 0 ? await autoSelectedPlatforms(project) : [];
+    persistPlatforms(configPath, platforms, inherited, opts.preset, ruleOverrides, written, failures);
   } catch (err) {
     failures.push(`.harness/config.json: ${errMsg(err)}`);
   }
@@ -185,22 +218,21 @@ export async function bootstrapHarness(
     for (const e of result.errors) failures.push(`harness sync: ${e}`);
     if (result.outcome) {
       const changed = result.outcome.items.filter((i) => i.action === "created" || i.action === "updated");
+      const orphans = result.outcome.items.filter((i) => i.action === "removed");
       for (const item of result.outcome.items) {
         if (item.action === "conflict" || item.action === "error") {
           failures.push(`harness sync: ${item.path} — ${item.detail ?? item.action}`);
         }
       }
-      written.push(
-        changed.length > 0
-          ? `harness sync: ${changed.map((i) => i.path).join(", ")}`
-          : "harness sync: artifacts up to date",
-      );
+      for (const item of orphans) removed.push(`${item.path} (harness sync: ${item.detail ?? "orphaned"})`);
+      if (changed.length > 0) written.push(`harness sync: ${changed.map((i) => i.path).join(", ")}`);
+      else if (orphans.length === 0) written.push("harness sync: artifacts up to date");
     }
   } catch (err) {
     failures.push(`harness sync: ${errMsg(err)}`);
   }
 
-  return { written, failures };
+  return { written, removed, failures };
 }
 
 export interface HarnessDeinitResult {
@@ -306,23 +338,6 @@ function removeArtifact(
   }
 }
 
-/** The empty hooks skeleton the cursor strategy leaves when it created the file. */
-function isEmptyCursorHooksSkeleton(content: string): boolean {
-  try {
-    const parsed = JSON.parse(content) as Record<string, unknown>;
-    const keys = Object.keys(parsed).filter((k) => k !== "version");
-    return (
-      keys.length === 1 &&
-      keys[0] === "hooks" &&
-      typeof parsed.hooks === "object" &&
-      parsed.hooks !== null &&
-      Object.keys(parsed.hooks).length === 0
-    );
-  } catch {
-    return false;
-  }
-}
-
 function stripJsonMergeArtifact(
   project: string,
   absolute: string,
@@ -331,23 +346,15 @@ function stripJsonMergeArtifact(
   removed: string[],
   failures: string[],
 ): void {
-  const strip =
-    artifact.adapter === "cursor"
-      ? stripCursorHooks
-      : artifact.adapter === "opencode"
-        ? stripOpencodeInstructions
-        : undefined;
-  if (!strip) return; // unknown strategy — leave the file alone
-  const result = strip(existing);
+  // Same strip the sync's orphan cleanup applies (strategy chosen by adapter).
+  const result = stripHarnessJsonEntries(artifact.adapter, existing);
+  if (result === undefined) return; // unknown strategy — leave the file alone
   if (result.error !== undefined) {
     failures.push(`${artifact.path}: ${result.error} — harness entries left in place`);
     return;
   }
   if (!result.changed) return;
-  // opencode.json stays even when reduced to its $schema — the file itself is
-  // the platform marker other tools detect; only the cursor hooks skeleton
-  // (harness-born wiring) is removed outright.
-  if (artifact.adapter === "cursor" && isEmptyCursorHooksSkeleton(result.content)) {
+  if (result.removeFile) {
     rmSync(absolute);
     pruneEmptyParents(project, absolute);
     removed.push(`${artifact.path} (file removed — held only harness entries)`);
