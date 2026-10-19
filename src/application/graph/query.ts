@@ -16,6 +16,7 @@ const AFFECTED_RELATIONS: ReadonlySet<Relation> = new Set<Relation>([
   "inherits",
   "extends",
   "implements",
+  "overrides",
   "uses",
 ]);
 
@@ -40,9 +41,26 @@ export interface AffectedHit {
   target: string;
   /** Where the dependency happens — the edge's own location (a call site), `file:line`. */
   site: string;
+  /**
+   * Set when the dependent does not reference this node directly but the interface member
+   * / base method it implements or overrides (`via`): code typed against a port calls
+   * `Port.m`, and every implementation of `Port.m` is what actually runs.
+   */
+  via?: GraphNode;
 }
 
-// Blast radius: who depends on this node? Walk INCOMING edges (BFS backward).
+// A member's contract: Impl.m --implements--> Port.m, Sub.m --overrides--> Base.m.
+const CONTRACT_RELATIONS: ReadonlySet<Relation> = new Set<Relation>(["implements", "overrides"]);
+
+// Type-level kinds: a class→interface `implements` edge is NOT a member contract (lifting
+// through it would make every reference to the interface type a dependent of the class).
+const TYPE_LEVEL_KINDS: ReadonlySet<string> = new Set([
+  "class", "interface", "module", "type", "type_alias", "enum", "struct", "trait", "namespace",
+]);
+
+// Blast radius: who depends on this node? Walk INCOMING edges (BFS backward), lifting
+// member nodes to the contract members they implement/override so callers that go
+// through an interface are counted (and labelled `via` that member).
 export function affected(
   store: GraphRepository,
   seedId: string,
@@ -53,17 +71,25 @@ export function affected(
   // walk with the transitive contains-closure so "what breaks if I touch this file"
   // reports the union of its members' blast radii instead of "(nothing depends on it)".
   const roots = memberClosure(store, seedId);
-  const seen = new Set<string>(roots);
-  const hits: AffectedHit[] = [];
+  const walk: AffectedWalk = { store, seen: new Set(roots), lifted: new Set(roots), hits: [] };
   let frontier: string[] = [...roots];
   for (let d = 1; d <= depth && frontier.length > 0; d++) {
     const next: string[] = [];
     for (const id of frontier) {
-      expandAffected(store, id, d, seen, hits, next);
+      expandAffected(walk, id, d, next);
     }
     frontier = next;
   }
-  return hits;
+  return walk.hits;
+}
+
+interface AffectedWalk {
+  store: GraphRepository;
+  /** Nodes already reported (or roots) — each dependent is reported once. */
+  seen: Set<string>;
+  /** Contract members whose callers were already collected. */
+  lifted: Set<string>;
+  hits: AffectedHit[];
 }
 
 // Structural edges that define membership: module→symbol is `contains`; class→member
@@ -88,22 +114,46 @@ function memberClosure(store: GraphRepository, seedId: string): Set<string> {
   return roots;
 }
 
-// Walk one node's incoming edges, recording newly-reached dependents.
-function expandAffected(
-  store: GraphRepository,
-  id: string,
-  depth: number,
-  seen: Set<string>,
-  hits: AffectedHit[],
-  next: string[],
-): void {
-  for (const e of store.inEdges(id)) {
-    const hit = affectedHitFor(store, e, depth, seen);
-    if (hit) {
-      hits.push(hit);
-      next.push(hit.node.id);
+// Walk one node's incoming edges — and those of the contract members it implements or
+// overrides — recording newly-reached dependents.
+function expandAffected(walk: AffectedWalk, id: string, depth: number, next: string[]): void {
+  const record = (hit: AffectedHit | null): void => {
+    if (!hit) return;
+    walk.hits.push(hit);
+    next.push(hit.node.id);
+  };
+  for (const e of walk.store.inEdges(id)) record(affectedHitFor(walk.store, e, depth, walk.seen));
+  for (const contract of liftToContracts(walk, id)) {
+    for (const e of walk.store.inEdges(contract.id)) {
+      // Sibling implementations of the same contract do not depend on this one.
+      if (CONTRACT_RELATIONS.has(e.relation)) continue;
+      const hit = affectedHitFor(walk.store, e, depth, walk.seen);
+      if (hit) hit.via = contract;
+      record(hit);
     }
   }
+}
+
+// The interface members / base methods `id` transitively implements or overrides
+// (Sub.m → Base.m → Port.m), not yet lifted in this walk. Member-level edges only, and
+// never through a guessed (AMBIGUOUS) edge.
+function liftToContracts(walk: AffectedWalk, id: string): GraphNode[] {
+  const out: GraphNode[] = [];
+  const queue = [id];
+  while (queue.length > 0) {
+    const cur = queue.pop()!;
+    if (TYPE_LEVEL_KINDS.has(walk.store.getNode(cur)?.kind ?? "")) continue;
+    for (const e of walk.store.outEdges(cur)) {
+      if (!CONTRACT_RELATIONS.has(e.relation) || e.confidence === "AMBIGUOUS") continue;
+      if (walk.lifted.has(e.target)) continue;
+      const contract = walk.store.getNode(e.target);
+      if (!contract || TYPE_LEVEL_KINDS.has(contract.kind ?? "")) continue;
+      walk.lifted.add(e.target);
+      out.push(contract);
+      queue.push(e.target);
+    }
+  }
+  return out;
 }
 
 // One incoming edge -> a hit, or null if it should be skipped. Marks seen.

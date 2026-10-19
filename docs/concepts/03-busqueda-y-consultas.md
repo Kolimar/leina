@@ -73,12 +73,22 @@ symbols the same way.
 Two rules make the result **trustworthy**:
 
 1. **Only certain relations propagate impact**: `calls`, `references`,
-   `imports`, `imports_from`, `inherits`, `extends`, `implements`, `uses`. A `contains` or
-   `method` edge (purely structural) doesn't count as "affects you".
+   `imports`, `imports_from`, `inherits`, `extends`, `implements`, `overrides`, `uses`. A
+   `contains` or `method` edge (purely structural) doesn't count as "affects you".
 2. **`AMBIGUOUS` edges do NOT propagate.** A blast radius has to be trustworthy; a guessed
    edge points at an arbitrary candidate, so it's ignored. (This is where distinguishing
    `EXTRACTED`/`INFERRED`/`AMBIGUOUS` at extraction time pays off — see
    [The graph](./02-grafo.md#el-edge-la-calle).)
+
+**Interfaces are followed.** In a hexagonal codebase most calls target a *port*
+(`MemoryRepository.search`), not the adapter that runs (`SQLiteMemoryRepository.search`).
+So when the walk reaches a method that `implements` an interface member — or `overrides` a
+base method, transitively — the callers of that member count as dependents at the same depth,
+tagged `via` the member (the CLI prints `[calls via MemoryRepository.search()]`). Sibling
+implementations of the same member are not dependents, and a class-level
+`class implements Interface` edge is not lifted (that would make every type reference to the
+interface depend on the class). The other direction comes for free: an interface member's
+incoming `implements` edges make its implementations dependents.
 
 Each hit reports the `node`, the `depth` at which it was reached, the `viaRelation`, the
 `target` it depends on and the `site` — the `file:line` of the edge itself (the call site),

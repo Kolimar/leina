@@ -69,7 +69,11 @@ Blast radius — what (transitively, up to `depth`, default 3) depends on `<symb
 [Selecting a symbol](#selecting-a-symbol-affected-path-impact-analyze)). **Run this before
 renaming or migrating a symbol.** Prints one line per dependent — its label (methods qualified
 as `Class.method()`), the relation, and the `file:line` where the dependency happens (the call
-site or reference, not the dependent's definition line).
+site or reference, not the dependent's definition line). Interfaces are followed: for a
+method that implements an interface member (or overrides a base method), the callers of that
+member are dependents too — code typed against the port runs the implementation — and are
+labelled `[calls via Port.method()]`; for an interface member, its implementations are
+listed (`[implements]`) along with their own callers.
 
 ### `path <dir> <from> <to>`
 Shortest dependency path between two symbols (both resolved like `affected`'s). Prints the

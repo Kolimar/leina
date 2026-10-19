@@ -71,7 +71,12 @@ Blast radius — qué depende (transitivamente, hasta `depth`, por defecto 3) de
 [Seleccionar un símbolo](#seleccionar-un-símbolo-affected-path-impact-analyze)). **Ejecutá esto
 antes de renombrar o migrar un símbolo.** Imprime una línea por dependiente — su label (los
 métodos calificados como `Clase.metodo()`), la relation y el `file:line` donde ocurre la
-dependencia (el call site o la referencia, no la línea donde se define el dependiente).
+dependencia (el call site o la referencia, no la línea donde se define el dependiente). Se
+siguen las interfaces: para un método que implementa un miembro de interfaz (o sobrescribe un
+método base), los llamadores de ese miembro también son dependientes — el código tipado contra
+el port ejecuta la implementación — y se etiquetan `[calls via Port.method()]`; para un
+miembro de interfaz se listan sus implementaciones (`[implements]`) junto con sus propios
+llamadores.
 
 ### `path <dir> <from> <to>`
 Camino de dependencia más corto entre dos símbolos (ambos resueltos como en `affected`).

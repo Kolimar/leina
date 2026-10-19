@@ -72,12 +72,23 @@ e `impact analyze` resuelven sus símbolos de la misma forma.
 Dos reglas hacen que el resultado sea **confiable**:
 
 1. **Solo ciertas relaciones propagan impacto**: `calls`, `references`,
-   `imports`, `imports_from`, `inherits`, `extends`, `implements`, `uses`. Un edge `contains` o
-   `method` (puramente estructural) no cuenta como "te afecta".
+   `imports`, `imports_from`, `inherits`, `extends`, `implements`, `overrides`, `uses`. Un edge
+   `contains` o `method` (puramente estructural) no cuenta como "te afecta".
 2. **Los edges `AMBIGUOUS` NO propagan.** Un blast radius tiene que ser de fiar; un edge
    adivinado apunta a un candidato arbitrario, así que se ignora. (Acá se paga el haber
    distinguido `EXTRACTED`/`INFERRED`/`AMBIGUOUS` en la extracción — ver
    [El grafo](./02-grafo.md#el-edge-la-calle).)
+
+**Se siguen las interfaces.** En un código hexagonal la mayoría de las llamadas apuntan a un
+*port* (`MemoryRepository.search`), no al adaptador que se ejecuta
+(`SQLiteMemoryRepository.search`). Así que cuando el recorrido llega a un método que
+`implements` un miembro de interfaz — u `overrides` un método base, transitivamente — los
+llamadores de ese miembro cuentan como dependientes a la misma profundidad, marcados `via` ese
+miembro (la CLI imprime `[calls via MemoryRepository.search()]`). Las implementaciones hermanas
+del mismo miembro no son dependientes, y un edge de clase `class implements Interface` no se
+eleva (haría que toda referencia de tipo a la interfaz dependa de la clase). La otra dirección
+sale gratis: los edges `implements` entrantes de un miembro de interfaz hacen dependientes a sus
+implementaciones.
 
 Cada hit reporta el `node`, la `depth` a la que se alcanzó, la `viaRelation`, el `target` del
 que depende y el `site` — el `file:line` del propio edge (el call site), que es lo que imprime

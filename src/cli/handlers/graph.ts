@@ -185,7 +185,9 @@ export async function handleAffected(rest: string[]): Promise<void> {
   // One line per dependent: its (owner-qualified) label, the relation, and WHERE the
   // dependency happens — the edge's call site, not the dependent's definition line.
   const lines = hits.map(
-    (h) => `  ${"  ".repeat(h.depth - 1)}${displayLabel(store, h.node)}  [${h.viaRelation}]  ${h.site}`,
+    (h) =>
+      `  ${"  ".repeat(h.depth - 1)}${displayLabel(store, h.node)}  ` +
+      `[${h.viaRelation}${h.via ? ` via ${displayLabel(store, h.via)}` : ""}]  ${h.site}`,
   );
   const title = `Blast radius of ${displayLabel(store, seed)} (${nodeAt(seed)}):`;
   store.close();
