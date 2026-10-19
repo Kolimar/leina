@@ -83,8 +83,19 @@ como mucho una vez por sesión.
 Un hook user-global no está fijado a un directorio. ¿Cómo sabe sobre qué repo opera?
 Lee la variable "project dir" que documenta el host — `CLAUDE_PROJECT_DIR` (Claude Code) o
 `DEVIN_PROJECT_DIR` (Devin), el mismo contrato bajo otro nombre, gana la primera no vacía— y cae
-al directorio actual si ninguna está seteada. Todo lo de
-abajo —el scope guard, los markers, la inyección— se ancla a ese root.
+al directorio actual si ninguna está seteada.
+
+Ese directorio puede ser un subdirectorio del proyecto o un worktree suyo (Claude Code pone los
+suyos bajo `.claude/worktrees/<nombre>`), así que el hook sube desde ahí:
+
+- **root del proyecto** — el ancestro más cercano con un flag `.leina/consent` (un flag
+  `disabled` más cercano le gana a un padre habilitado); un worktree enlazado en otro lugar se
+  mapea a su worktree principal, porque `.leina/` está en el gitignore y nunca viaja con un
+  checkout. El scope guard, los markers y la inyección se anclan acá.
+- **root del harness** — el ancestro más cercano con `.harness/` o `.git`: el checkout que
+  realmente se edita, con sus propias reglas. Hereda la confianza del root del proyecto solo
+  dentro del **mismo repositorio** (el repo, un subdirectorio o uno de sus worktrees); un clon
+  independiente anidado o un submódulo necesita su propia confianza (`leina init` ahí).
 
 ---
 

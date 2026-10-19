@@ -84,8 +84,19 @@ Code, it is bounded: never on a stop that a Stop hook already continued
 A user-global hook isn't pinned to a directory. How does it know which repo it's operating on?
 It reads the host's documented "project dir" variable — `CLAUDE_PROJECT_DIR` (Claude Code) or
 `DEVIN_PROJECT_DIR` (Devin), same contract under a different name, first non-blank wins — and
-falls back to `process.cwd()` if neither is set. Everything below —the scope guard,
-the markers, the injection— is anchored to that root.
+falls back to `process.cwd()` if neither is set.
+
+That directory can be a subdirectory of the project or a worktree of it (Claude Code puts its
+own under `.claude/worktrees/<name>`), so the hook walks up from it:
+
+- **project root** — the nearest ancestor with a `.leina/consent` flag (a nearer `disabled`
+  flag wins over an enabled parent); a linked worktree elsewhere maps to its main worktree,
+  since `.leina/` is gitignored and never travels with a checkout. The scope guard, the
+  markers and the injection are anchored here.
+- **harness root** — the nearest ancestor with `.harness/` or `.git`: the checkout actually
+  being edited, with its own rules. Its trust comes from the project root only within the
+  **same repository** (the repo itself, a subdirectory, or one of its worktrees); a nested
+  independent clone or a submodule must be trusted on its own (`leina init` there).
 
 ---
 

@@ -1,7 +1,7 @@
 // cli/handlers/system.ts — diagnostics, hook bridge, sidecar, capabilities, verify and root help.
 
 import { runDoctor, formatDoctor } from "../doctor.ts";
-import { parseAgentHookArgs, runAgentGate, runHarnessAgentGate, resolveHookProjectRoot } from "../agent-gate.ts";
+import { parseAgentHookArgs, runAgentGate, runHarnessAgentGate, resolveHookRoots } from "../agent-gate.ts";
 import { readPackageVersion } from "../../version.ts";
 import { readStdin } from "../io.ts";
 import { capabilities } from "../../application/capabilities/registry.ts";
@@ -46,11 +46,12 @@ export async function handleAgentHook(rest: string[]): Promise<never> {
   // Stop may BLOCK (exit 2 / decision:block). Guided mode without a contract leaves the
   // advisory behaviour below untouched, byte for byte, except for that integrity seal.
   const { event: eventName, host } = parseAgentHookArgs(rest, process.env);
-  // Resolve the project root from Devin's documented DEVIN_PROJECT_DIR env var (fallback to
-  // process.cwd()) — the hook payload itself never carries a cwd. See resolveHookProjectRoot.
+  // Resolve the roots from the host's documented CLAUDE_PROJECT_DIR / DEVIN_PROJECT_DIR env
+  // var (fallback to process.cwd()) — the hook payload itself never carries a cwd — walking
+  // up from subdirectories and worktrees. See resolveHookRoots.
   const rawStdin = readStdin();
-  const root = resolveHookProjectRoot(process.env, process.cwd());
-  const harness = await runHarnessAgentGate(rawStdin, root, eventName, host);
+  const { root, harnessRoot } = resolveHookRoots(process.env, process.cwd());
+  const harness = await runHarnessAgentGate(rawStdin, harnessRoot, eventName, host);
   if (harness.handled) process.exit(harness.exitCode);
   runAgentGate(rawStdin, root, eventName, {
     ...(harness.sessionContext !== undefined ? { harnessSessionContext: harness.sessionContext } : {}),

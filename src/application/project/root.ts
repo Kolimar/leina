@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 const CONSENT_REL = join(".leina", "consent");
 const GRAPH_DB_REL = join(".leina", "graph.db");
@@ -109,4 +109,55 @@ export function resolveGraphRoot(start: string): string {
     if (dir === top) break;
   }
   return top ?? abs;
+}
+
+/**
+ * The directory a hook was fired for. Claude Code documents `CLAUDE_PROJECT_DIR`, Devin
+ * documents `DEVIN_PROJECT_DIR` — same contract, different name; no hook stdin payload
+ * carries a cwd. First non-blank wins, else the process cwd (`fallbackCwd`). The result
+ * may be a subdirectory or a worktree: callers walk up from it (findConsentRoot,
+ * findHarnessRoot). Pure function of its inputs — no `process.*` access.
+ */
+export function resolveHookProjectRoot(env: NodeJS.ProcessEnv, fallbackCwd: string): string {
+  const claudeEnv = typeof env.CLAUDE_PROJECT_DIR === "string" ? env.CLAUDE_PROJECT_DIR.trim() : "";
+  if (claudeEnv.length > 0) return claudeEnv;
+  const fromEnv = typeof env.DEVIN_PROJECT_DIR === "string" ? env.DEVIN_PROJECT_DIR.trim() : "";
+  return fromEnv.length > 0 ? fromEnv : fallbackCwd;
+}
+
+/**
+ * The harness repo root for `start`: the nearest ancestor (inclusive) holding a
+ * `.harness/` dir or a `.git` entry, falling back to `start` itself (a bare
+ * directory can still hold rules/config). A worktree checkout carries its own
+ * `.harness/` rules, so it is its own harness root.
+ */
+export function findHarnessRoot(start: string): string {
+  for (const dir of ancestors(start)) {
+    if (existsSync(join(dir, ".harness")) || existsSync(join(dir, ".git"))) return dir;
+  }
+  return resolve(start);
+}
+
+function isWithin(child: string, parent: string): boolean {
+  return child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+}
+
+/**
+ * The directory whose workspace trust governs `dir` (typically a harness root):
+ * its consent root when that root belongs to the SAME repository — `dir` itself,
+ * an ancestor up to `dir`'s git toplevel, or the main worktree of the linked
+ * worktree `dir` lives in (nested under `.claude/worktrees/` or anywhere else).
+ * A nested independent clone or a submodule never inherits its parent's trust:
+ * for those, and without any consent root, the answer is `dir` itself.
+ */
+export function resolveTrustRoot(dir: string): string {
+  const abs = resolve(dir);
+  const consent = findConsentRoot(abs);
+  if (consent === undefined) return abs;
+  const top = findGitToplevel(abs);
+  if (top === undefined) return consent;
+  const real = realOrSelf(consent);
+  if (isWithin(real, realOrSelf(top))) return consent;
+  const main = linkedWorktreeMainRoot(top);
+  return main !== undefined && realOrSelf(main) === real ? consent : abs;
 }

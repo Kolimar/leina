@@ -38,9 +38,10 @@
 // polluting unrelated projects.
 //
 // Honest scope: this is a workflow NUDGE, not a security control and not an obstacle. The
-// project root is resolved by resolveHookProjectRoot(): it prefers Devin's documented
-// `DEVIN_PROJECT_DIR` env var (the contract for telling a hook its workspace root — no hook
-// stdin payload carries a cwd) and falls back to the process cwd when the var is absent.
+// roots are resolved by resolveHookRoots(): start from the host's documented
+// `CLAUDE_PROJECT_DIR` / `DEVIN_PROJECT_DIR` (no hook stdin payload carries a cwd; fallback
+// the process cwd), then walk up to the consent root (advisory gate) and to the checkout's
+// harness root (enforcement), so subdirectories and worktrees act on their project.
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -49,7 +50,8 @@ import { spawnDetachedBuild } from "./background-build.ts";
 import { graphDbPath } from "./wiring.ts";
 import { isStale } from "../application/graph/manifest.ts";
 import { readConsentFlag } from "../application/install/consent.ts";
-import { isWorkspaceTrusted } from "../application/install/trust.ts";
+import { isTrustedWorkspaceDir, isWorkspaceTrusted } from "../application/install/trust.ts";
+import { findConsentRoot, findHarnessRoot, resolveHookProjectRoot } from "../application/project/root.ts";
 import { type HookHost, type HookScope, isHookHost } from "../application/install/hook-command.ts";
 
 // Running any of these `leina memory <sub>` CLI commands counts as "project memory
@@ -109,23 +111,32 @@ export function isLeinaProject(cwd: string): boolean {
   }
 }
 
+// resolveHookProjectRoot (the host's CLAUDE_PROJECT_DIR / DEVIN_PROJECT_DIR, else the process
+// cwd) lives with the other pure root resolvers; re-exported here for existing callers.
+export { resolveHookProjectRoot };
+
+/** Where one hook invocation acts (see resolveHookRoots). */
+export interface HookRoots {
+  /** The directory the host handed us (resolveHookProjectRoot). */
+  start: string;
+  /** The leina project root: consent, trust, session markers, injected context. */
+  root: string;
+  /** The harness repo root: `.harness/` rules and contract of the checkout being edited. */
+  harnessRoot: string;
+}
+
 /**
- * Resolve the project root for a Devin hook invocation. Devin's documented contract sets the
- * workspace root in the `DEVIN_PROJECT_DIR` env var (Devin/Claude-compatible hooks docs); none
- * of the hook stdin payloads carry a cwd. We prefer that documented signal and fall back to the
- * process cwd (the historical behaviour) when the var is absent or blank. This is strictly
- * safer: correct when Devin exports the var, byte-for-byte identical to before when it doesn't.
- *
- * Pure function of its inputs — no `process.*` access — so it is fully unit-testable. The caller
- * (the `devin-hook` CLI branch) passes `process.env` and `process.cwd()`.
+ * Resolve the roots of a hook invocation. The host hands us its workspace dir (or the
+ * process cwd), which may be a subdirectory of the project or a worktree of it — nested
+ * under `.claude/worktrees/` or linked elsewhere. The advisory gate keys off the nearest
+ * consent root (`findConsentRoot`, which also maps a linked worktree to its main
+ * worktree); the harness keys off the checkout's own root (`findHarnessRoot`), whose trust
+ * is inherited from that consent root only within the same repository
+ * (`isTrustedWorkspaceDir`).
  */
-export function resolveHookProjectRoot(env: NodeJS.ProcessEnv, fallbackCwd: string): string {
-  // Host-neutral: Claude Code documents CLAUDE_PROJECT_DIR, Devin documents
-  // DEVIN_PROJECT_DIR — same contract, different name. First non-blank wins.
-  const claudeEnv = typeof env.CLAUDE_PROJECT_DIR === "string" ? env.CLAUDE_PROJECT_DIR.trim() : "";
-  if (claudeEnv.length > 0) return claudeEnv;
-  const fromEnv = typeof env.DEVIN_PROJECT_DIR === "string" ? env.DEVIN_PROJECT_DIR.trim() : "";
-  return fromEnv.length > 0 ? fromEnv : fallbackCwd;
+export function resolveHookRoots(env: NodeJS.ProcessEnv, fallbackCwd: string): HookRoots {
+  const start = resolveHookProjectRoot(env, fallbackCwd);
+  return { start, root: findConsentRoot(start) ?? start, harnessRoot: findHarnessRoot(start) };
 }
 
 /** Which host fired the hook and which copy of the wiring it ran (see hook-command.ts). */
@@ -736,7 +747,7 @@ export async function runHarnessAgentGate(
   fallbackEvent?: string,
   host: HookHost = "devin",
 ): Promise<HarnessAgentGateResult> {
-  if (!isWorkspaceTrusted(cwd)) return HARNESS_NOT_HANDLED;
+  if (!isTrustedWorkspaceDir(cwd)) return HARNESS_NOT_HANDLED;
 
   const payload = parseHookPayload(rawStdin, fallbackEvent);
   if (!payload) return HARNESS_NOT_HANDLED;

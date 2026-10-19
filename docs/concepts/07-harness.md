@@ -187,7 +187,9 @@ LIGHT) writes the record once consent is enabled and prints a `workspace trust` 
 `leina deinit` removes it, and `leina repair` deliberately never grants it. A workspace
 is trusted when its record exists and `.leina/consent` is not `disabled`. A committed
 `.leina/consent` grants nothing, and a moved or re-cloned repo is a different workspace:
-run `leina init` on it again on that machine.
+run `leina init` on it again on that machine. A subdirectory and the repo's own worktrees
+(nested under `.claude/worktrees/` or linked elsewhere) share the repo's trust; a nested
+independent clone or a submodule does not inherit it.
 
 In an untrusted workspace every automated path is a silent no-op, never an error:
 

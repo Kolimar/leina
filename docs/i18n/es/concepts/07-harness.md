@@ -194,7 +194,10 @@ escribe el registro una vez habilitado el consentimiento e imprime una línea
 `workspace trust`, `leina deinit` lo borra, y `leina repair` a propósito nunca lo otorga.
 Un workspace es de confianza cuando su registro existe y `.leina/consent` no está en
 `disabled`. Un `.leina/consent` commiteado no otorga nada, y un repo movido o vuelto a
-clonar es otro workspace: corré `leina init` de nuevo sobre él en esa máquina.
+clonar es otro workspace: corré `leina init` de nuevo sobre él en esa máquina. Un
+subdirectorio y los worktrees del propio repo (anidados bajo `.claude/worktrees/` o enlazados
+en otro lugar) comparten la confianza del repo; un clon independiente anidado o un submódulo
+no la heredan.
 
 En un workspace sin confianza, todo camino automático es un no-op silencioso, nunca un
 error:

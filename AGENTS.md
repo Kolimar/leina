@@ -234,9 +234,14 @@ user-global hook fires in every repo, so it must resolve the project at runtime)
 via `resolveHookProjectRoot(process.env, process.cwd())` (`src/cli/agent-gate.ts`): the first
 non-blank of Claude Code's documented `CLAUDE_PROJECT_DIR` and Devin's documented
 `DEVIN_PROJECT_DIR` — the hosts' contract for telling a hook its workspace root; no hook stdin
-payload carries a `cwd` — falling back to `process.cwd()` when both are absent/blank. Everything downstream of the hook keys off this root: the scope guard
-(`isLeinaProject` + `isWorkspaceTrusted`), the session markers, and `buildActiveContext`
-(project key + graph.db + freshness). No hook rebuilds the graph: the pre-3.0 Devin
+payload carries a `cwd` — falling back to `process.cwd()` when both are absent/blank. That
+directory may be a subdirectory or a worktree, so `resolveHookRoots` walks up from it
+(`src/application/project/root.ts`): the advisory gate keys off the consent root
+(`findConsentRoot` — the scope guard `isLeinaProject` + `isWorkspaceTrusted`, the session
+markers, and `buildActiveContext`), the harness off the checkout's own root
+(`findHarnessRoot`), trusted through `isTrustedWorkspaceDir` only within the same repository —
+a nested independent clone or submodule never inherits its parent's trust. `leina harness
+hook` and verify's project-gate policy use the same trust check. No hook rebuilds the graph: the pre-3.0 Devin
 PostToolUse `refresh <project>` entry (a full synchronous rebuild per agent edit) is no longer
 emitted, and the Devin writers still own its `^(edit|write)$` matcher so re-running
 `init`/`repair` strips it.

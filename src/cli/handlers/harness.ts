@@ -10,7 +10,6 @@
 // engine/config error. Handlers set process.exitCode (never process.exit) so
 // tests can drive them in-process.
 
-import { existsSync } from "node:fs";
 import path from "node:path";
 import { hasFlag } from "../args.ts";
 import { readStdin } from "../io.ts";
@@ -36,7 +35,8 @@ import {
   sessionStartContext,
   type HookPayload,
 } from "../../application/harness/hooks.ts";
-import { isWorkspaceTrusted } from "../../application/install/trust.ts";
+import { isTrustedWorkspaceDir } from "../../application/install/trust.ts";
+import { findHarnessRoot, resolveHookProjectRoot } from "../../application/project/root.ts";
 import { ShellProcessRunner } from "../../infrastructure/harness/exec.ts";
 import { HarnessGit } from "../../infrastructure/harness/git.ts";
 
@@ -58,13 +58,7 @@ export function makeHarnessPorts(): HarnessPorts {
  * cwd itself (a bare directory can still hold rules/config).
  */
 export function findHarnessRepoRoot(cwd: string = process.cwd()): string {
-  let dir = path.resolve(cwd);
-  for (;;) {
-    if (existsSync(path.join(dir, ".harness")) || existsSync(path.join(dir, ".git"))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) return path.resolve(cwd);
-    dir = parent;
-  }
+  return findHarnessRoot(cwd);
 }
 
 /**
@@ -443,7 +437,7 @@ export async function runHarnessHookEvent(event: string, rawPayload: string, rep
   // trusted (`leina init` → out-of-repo record) they are silent no-ops — no blocks, no
   // verify run, no contract/rule injection. Fail open: Cursor's shell hook still gets
   // its protocol answer.
-  if (!isWorkspaceTrusted(repoRoot)) {
+  if (!isTrustedWorkspaceDir(repoRoot)) {
     if (event === "cursor-shell") out(JSON.stringify({ permission: "allow" }));
     return;
   }
@@ -553,7 +547,10 @@ async function dispatchHarness(rest: string[]): Promise<void> {
         process.exitCode = 2;
         break;
       }
-      await runHarnessHookEvent(event, readStdin(), repoRoot);
+      // A hook runs wherever the host spawned it: start from the host's documented project
+      // dir (CLAUDE_PROJECT_DIR / DEVIN_PROJECT_DIR) like `agent-hook` does, then walk up.
+      const hookRoot = findHarnessRoot(resolveHookProjectRoot(process.env, process.cwd()));
+      await runHarnessHookEvent(event, readStdin(), hookRoot);
       break;
     }
     case undefined:

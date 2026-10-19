@@ -15,7 +15,7 @@ import {
   isPhase,
 } from "../../domain/harness/model.ts";
 import { type GitPort, type HarnessPorts } from "../../domain/harness/ports.ts";
-import { isWorkspaceTrusted } from "../install/trust.ts";
+import { isTrustedWorkspaceDir } from "../install/trust.ts";
 import { loadResolvedRules, filterRules } from "./resolver.ts";
 import { ensureStateDir, loadContract } from "./contract-io.ts";
 import { harnessDir } from "./config-io.ts";
@@ -155,7 +155,7 @@ export async function runVerify(repoRoot: string, options: VerifyOptions): Promi
   // out-of-repo trust store; a committed .leina/consent grants nothing) may
   // run them; otherwise the engine skips them with a visible result.
   // Builtin/user rules and non-executable gate types are unaffected.
-  const policy = { allowProjectExecutableGates: isWorkspaceTrusted(repoRoot) };
+  const policy = { allowProjectExecutableGates: isTrustedWorkspaceDir(repoRoot) };
   const results = await runGates(rules, ctx, resolution.config.verify.parallelism, policy);
   const report = buildReport(phases, startedAt, results);
 

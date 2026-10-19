@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { trustStoreDir } from "../../infrastructure/install/share-paths.ts";
+import { resolveTrustRoot } from "../project/root.ts";
 import { readConsentFlag } from "./consent.ts";
 
 export { trustStoreDir };
@@ -73,4 +74,19 @@ export function hasTrustRecord(root: string): boolean {
  */
 export function isWorkspaceTrusted(root: string): boolean {
   return hasTrustRecord(root) && readConsentFlag(root) !== "disabled";
+}
+
+/**
+ * Trust for a directory INSIDE a workspace — a subdirectory, a worktree nested
+ * under `.claude/worktrees/`, or a linked worktree elsewhere: the trust of the
+ * project root it resolves to (`resolveTrustRoot`), never across a repository
+ * boundary (a nested independent clone or a submodule must be trusted on its
+ * own). Used by every harness enforcement/execution path. Never throws.
+ */
+export function isTrustedWorkspaceDir(dir: string): boolean {
+  try {
+    return isWorkspaceTrusted(resolveTrustRoot(dir));
+  } catch {
+    return false;
+  }
 }
