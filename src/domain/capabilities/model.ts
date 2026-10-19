@@ -33,7 +33,8 @@ export interface Capability {
   outputSchema: JsonSchema;
   /**
    * Transports through which this capability is currently active.
-   * In v1 all capabilities are exposed through "cli" only.
+   * Every current capability declares ["cli", "mcp"]: the CLI dispatcher and the
+   * MCP server (`leina mcp`) are both live transports. "sdk" is reserved.
    */
   transports: ("cli" | "mcp" | "sdk")[];
   /**
@@ -41,14 +42,10 @@ export interface Capability {
    * Each capability versions independently; all start at 1 in v1.
    */
   schemaVersion: number;
-  /**
-   * Reference to the underlying use-case function.
-   * The first argument is always the port (MemoryRepository / GraphRepository / string),
-   * injected by the transport layer at invocation time.
-   * In v1 this field is NEVER invoked through the registry — it is a typed reference
-   * for future transport layers (MCP / SDK). CLI handlers call use cases directly.
-   */
-  fn: (...args: unknown[]) => unknown;
+  // NOTE: a `fn` use-case reference existed here in v1 but was never invoked through
+  // the registry (CLI handlers call use-cases directly; the MCP server keeps its own
+  // executor map in cli/handlers/mcp.ts), so it was removed. Capabilities are pure,
+  // serialisable metadata: dispatch is owned by each transport.
 }
 
 // ---------------------------------------------------------------------------
@@ -65,12 +62,12 @@ export interface CommandContract {
     flags?: string[];
   };
   /**
-   * MCP tool contract — optional, present only when the capability is intended
-   * for future MCP exposure. Declaring it here is advisory: no MCP transport is
-   * active in v1.
+   * MCP tool contract — optional, present when the capability is exposed over MCP.
+   * The MCP server (`leina mcp`, cli/handlers/mcp.ts) lists every declared tool in
+   * ListTools and dispatches it through its executor map.
    */
   mcp?: {
-    /** MCP tool name that will correspond to this capability. */
+    /** MCP tool name corresponding to this capability. */
     tool: string;
   };
 }

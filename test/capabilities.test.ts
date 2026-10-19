@@ -79,12 +79,17 @@ test("(cap-4) each capability has non-empty transports", () => {
   }
 });
 
-test("(cap-5) each capability has a non-null fn reference", () => {
+test("(cap-5) capability entries are pure serialisable metadata (no function fields)", () => {
+  // The v1 `fn` field was removed (never invoked through the registry); this guards
+  // against function-valued fields sneaking back into the data-only contract.
   for (const cc of capabilities) {
-    assert.ok(
-      typeof cc.capability.fn === "function",
-      `${cc.capability.id} must have a function fn`,
-    );
+    for (const [key, value] of Object.entries(cc.capability)) {
+      assert.notEqual(
+        typeof value,
+        "function",
+        `${cc.capability.id}.${key} must not be a function`,
+      );
+    }
   }
 });
 

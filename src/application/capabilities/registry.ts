@@ -1,15 +1,13 @@
 // application/capabilities/registry.ts — canonical capability registry.
 //
-// Single source of truth for the capabilities exposed by leina.
-// Consumed by CLI handlers and by the MCP server (`leina mcp`), which maps each
-// contract's mcp.tool to an executor that injects the ports fn expects.
+// Single source of truth for the capabilities exposed by leina: pure METADATA
+// (ids, descriptions, schemas, transports, CLI/MCP bindings). Consumed by
+// `capabilities list`, the AGENTS.md generator, and the MCP server's ListTools.
 //
-// Design decisions:
-//   D1: fn holds a REFERENCE to the use-case function with its port injected by the
-//       transport layer. In v1, fn is NEVER invoked through this registry — handlers
-//       call use cases directly. fn is a typed reference for future transports.
-//   D4: capabilities list serialisation omits fn by explicit projection (JSON.stringify
-//       cannot be relied upon to drop functions).
+// Dispatch is transport-owned, not registry-owned: CLI handlers call use-cases
+// directly and the MCP server keeps its own executor map (cli/handlers/mcp.ts).
+// A per-capability `fn` reference existed in v1 but was never invoked through the
+// registry, so it was removed — contracts here stay data-only and serialisable.
 //
 // Arch constraints:
 //   REQ-CR-3: ZERO imports from src/cli/. All deps are application/ or domain/.
@@ -17,8 +15,6 @@
 //                from both application/ and domain/ layers.
 
 import type { CommandContract } from "../../domain/capabilities/model.ts";
-import type { MemoryRepository } from "../../domain/memory/ports.ts";
-import type { ObservationInput, UpdateFields } from "../../domain/memory/model.ts";
 import {
   graphQueryOutputSchema,
   graphStatusOutputSchema,
@@ -34,25 +30,16 @@ import {
 } from "../../domain/contracts/schemas.ts";
 import { gatesOf, type TaskContract } from "../../domain/harness/model.ts";
 import { type GitPort } from "../../domain/harness/ports.ts";
-import { affected, queryGraph, resolveSeed, shortestPath } from "../graph/query.ts";
-import { analyzeImpact } from "../graph/impact.ts";
-import { buildGraph } from "../graph/build.ts";
-import { getVerifiedContext } from "../memory/query.ts";
-import { graphStatus } from "../graph/manifest.ts";
-import { searchMemory } from "../memory/query.ts";
-import { buildActiveContext } from "../context/active-context.ts";
-import { runAudit } from "../audit/run.ts";
-import { endContract, loadContract, saveContract, writeChecklist } from "../harness/contract-io.ts";
+import { loadContract, saveContract, writeChecklist } from "../harness/contract-io.ts";
 import { loadConfig } from "../harness/config-io.ts";
 import { loadResolvedRules } from "../harness/resolver.ts";
-import { runVerify } from "../harness/verify.ts";
 
 // ---------------------------------------------------------------------------
 // Harness use-cases — thin JSON-friendly wrappers over application/harness/*.
 // They exist here (not in cli/handlers/harness.ts) so BOTH transports — the CLI
 // group and the MCP executors — share one behaviour, and so the registry keeps
 // REQ-CR-3 (zero cli/ imports). Effects go through ports: the git port is
-// injected by the transport (D1), never composed here.
+// injected by the transport, never composed here.
 // ---------------------------------------------------------------------------
 
 export interface HarnessContractNewInput {
@@ -342,8 +329,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: graphQueryOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      // D1: fn is a typed reference; the transport injects `store` at call time.
-      fn: queryGraph as (...args: unknown[]) => unknown,
     },
     cli: {
       command: "query",
@@ -359,8 +344,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: graphStatusOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      // D2: graphStatus takes root (string), no port injection needed (filesystem only).
-      fn: graphStatus as (...args: unknown[]) => unknown,
     },
     cli: {
       command: "status",
@@ -376,9 +359,6 @@ export const capabilities: readonly CommandContract[] = [
       transports: ["cli", "mcp"],
       // v2: accepts the batch form (items[] + atomic) in addition to a single observation.
       schemaVersion: 2,
-      // D1: fn wraps store.save; transport injects the MemoryRepository.
-      fn: ((store: MemoryRepository, input: ObservationInput) =>
-        store.save(input)) as (...args: unknown[]) => unknown,
     },
     cli: {
       command: "memory save",
@@ -394,8 +374,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: memorySearchOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      // D1: fn is searchMemory; transport injects the MemoryRepository.
-      fn: searchMemory as (...args: unknown[]) => unknown,
     },
     cli: {
       command: "memory search",
@@ -411,8 +389,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: contextBuildOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      // REQ-RF-1: buildActiveContext was extracted to application layer for this reference.
-      fn: buildActiveContext as (...args: unknown[]) => unknown,
     },
     cli: {
       command: "agent-hook SessionStart",
@@ -427,8 +403,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: auditRunOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      // D3: runAudit was extracted to application layer; transport injects the GraphRepository.
-      fn: runAudit as (...args: unknown[]) => unknown,
     },
     cli: {
       command: "audit",
@@ -444,7 +418,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: affected as (...args: unknown[]) => unknown,
     },
     cli: { command: "affected" },
     mcp: { tool: "graph_affected" },
@@ -457,7 +430,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: shortestPath as (...args: unknown[]) => unknown,
     },
     cli: { command: "path" },
     mcp: { tool: "graph_path" },
@@ -470,8 +442,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      // fn is resolveSeed's sibling surface; the transport calls store.stats() directly.
-      fn: resolveSeed as (...args: unknown[]) => unknown,
     },
     cli: { command: "stats" },
     mcp: { tool: "graph_stats" },
@@ -484,7 +454,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: buildGraph as (...args: unknown[]) => unknown,
     },
     cli: { command: "build", flags: ["--json"] },
     mcp: { tool: "graph_build" },
@@ -497,7 +466,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: analyzeImpact as (...args: unknown[]) => unknown,
     },
     cli: { command: "impact analyze", flags: ["--json"] },
     mcp: { tool: "impact_analyze" },
@@ -510,7 +478,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: getVerifiedContext as (...args: unknown[]) => unknown,
     },
     cli: { command: "memory verified" },
     mcp: { tool: "memory_verified" },
@@ -523,7 +490,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: ((store: MemoryRepository) => store.recentContext()) as (...args: unknown[]) => unknown,
     },
     cli: { command: "memory context" },
     mcp: { tool: "memory_context" },
@@ -537,7 +503,6 @@ export const capabilities: readonly CommandContract[] = [
       transports: ["cli", "mcp"],
       // v2: accepts the batch form (ids[]) in addition to a single id.
       schemaVersion: 2,
-      fn: ((store: MemoryRepository, id: string) => store.get(id)) as (...args: unknown[]) => unknown,
     },
     cli: { command: "memory get" },
     mcp: { tool: "memory_get" },
@@ -550,8 +515,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: ((store: MemoryRepository, id: string, fields: UpdateFields) =>
-        store.update(id, fields)) as (...args: unknown[]) => unknown,
     },
     cli: { command: "memory update", flags: ["--title", "--content", "--type"] },
     mcp: { tool: "memory_update" },
@@ -564,8 +527,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: ((store: MemoryRepository, title: string, type: string) =>
-        store.suggestTopicKeyWithMatches(title, type)) as (...args: unknown[]) => unknown,
     },
     cli: { command: "memory suggest-topic", flags: ["--title", "--type"] },
     mcp: { tool: "memory_suggest_topic" },
@@ -578,8 +539,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: listOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: ((store: MemoryRepository, summary: string, opts?: { title?: string }) =>
-        store.saveSession(summary, opts)) as (...args: unknown[]) => unknown,
     },
     cli: { command: "memory session", flags: ["--content", "--title"] },
     mcp: { tool: "memory_session" },
@@ -592,8 +551,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: harnessContractNewOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      // D1: the git port (baseRef capture) is injected by the transport.
-      fn: harnessContractNew as (...args: unknown[]) => unknown,
     },
     cli: {
       command: "harness contract new",
@@ -609,7 +566,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: harnessContractShowOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: harnessContractShow as (...args: unknown[]) => unknown,
     },
     cli: { command: "harness contract show" },
     mcp: { tool: "harness_contract_show" },
@@ -622,7 +578,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: harnessContractEndOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: endContract as (...args: unknown[]) => unknown,
     },
     cli: { command: "harness contract end" },
     mcp: { tool: "harness_contract_end" },
@@ -635,8 +590,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: harnessVerifyOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      // D1: runVerify takes (repoRoot, { ports, ... }) — the transport wires proc+git.
-      fn: runVerify as (...args: unknown[]) => unknown,
     },
     cli: { command: "harness verify", flags: ["--json", "--phase", "--rule"] },
     mcp: { tool: "harness_verify" },
@@ -649,7 +602,6 @@ export const capabilities: readonly CommandContract[] = [
       outputSchema: harnessRulesListOutputSchema,
       transports: ["cli", "mcp"],
       schemaVersion: 1,
-      fn: harnessRulesList as (...args: unknown[]) => unknown,
     },
     cli: { command: "harness list", flags: ["--phase", "--tag", "--json"] },
     mcp: { tool: "harness_rules_list" },

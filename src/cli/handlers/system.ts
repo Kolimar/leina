@@ -240,7 +240,7 @@ export async function handleScip(rest: string[]): Promise<void> {
 // `leina capabilities list [--json]` (REQ-CR-5)
 // ---------------------------------------------------------------------------
 
-/** Serialisable projection of a Capability — fn is explicitly omitted (D4). */
+/** Serialisable projection of a Capability's metadata (schemas + transports). */
 function serializeCapability(c: Capability) {
   return {
     id: c.id,
@@ -341,7 +341,7 @@ export function printRootHelp(): void {
       `                          to prior installs, respects deinit, never touches DBs\n` +
       `  verify [dir] [--json]   re-run doctor with actionable exit code (exit 1 on fail)\n` +
       `  capabilities list [--json]\n` +
-      `                          list the system capabilities + schemas (json omits fn field)\n` +
+      `                          list the system capabilities + schemas\n` +
       `  status <dir>            freshness vs current sources + posture + last build\n` +
       `  stats <dir>             node/edge counts + confidence breakdown\n` +
       `  affected <dir> <symbol|file>  blast radius (who depends on it; a file\n` +

@@ -88,7 +88,6 @@ test("(ai-R4-format) formatCapabilityLine produces correct format with flags", (
       outputSchema: { type: "object" },
       transports: ["cli"],
       schemaVersion: 1,
-      fn: () => undefined,
     },
     cli: {
       command: "query",
@@ -111,7 +110,6 @@ test("(ai-R4-no-flags) formatCapabilityLine omits brackets when cli.flags absent
       outputSchema: { type: "object" },
       transports: ["cli"],
       schemaVersion: 1,
-      fn: () => undefined,
     },
     cli: {
       command: "status",
@@ -133,7 +131,6 @@ test("(ai-R4-empty-flags) formatCapabilityLine omits brackets when cli.flags is 
       outputSchema: { type: "object" },
       transports: ["cli"],
       schemaVersion: 1,
-      fn: () => undefined,
     },
     cli: {
       command: "x",
@@ -153,7 +150,6 @@ test("(ai-R4-multi-flags) formatCapabilityLine joins multiple flags with space",
       outputSchema: { type: "object" },
       transports: ["cli"],
       schemaVersion: 1,
-      fn: () => undefined,
     },
     cli: {
       command: "memory save",

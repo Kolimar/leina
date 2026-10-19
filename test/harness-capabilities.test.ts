@@ -1,6 +1,6 @@
 // harness-capabilities.test.ts — the harness.* entries of the capability
 // registry (etapa 4 of the harness absorption): declarative contracts (ids,
-// transports, mcp tool names, schemas) and the fn wiring exercised over
+// transports, mcp tool names, schemas) and the shared use-cases exercised over
 // throwaway git repos, mirroring harness-verify.test.ts fixtures.
 //
 // Run: node --no-warnings --experimental-strip-types --test test/harness-capabilities.test.ts
@@ -50,7 +50,7 @@ function cap(id: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Declarative contracts — ids, transports, schemas, tool names, fn wiring.
+// Declarative contracts — ids, transports, schemas, tool names.
 // ---------------------------------------------------------------------------
 
 test("(hcap-1) the 5 harness capabilities exist with cli+mcp transports and schemaVersion 1", () => {
@@ -58,7 +58,6 @@ test("(hcap-1) the 5 harness capabilities exist with cli+mcp transports and sche
     const cc = cap(id);
     assert.deepEqual(cc.capability.transports, ["cli", "mcp"], `${id} transports`);
     assert.equal(cc.capability.schemaVersion, 1, `${id} schemaVersion`);
-    assert.equal(typeof cc.capability.fn, "function", `${id} fn`);
     assert.ok(cc.capability.inputSchema, `${id} inputSchema`);
     assert.ok(cc.capability.outputSchema, `${id} outputSchema`);
     assert.equal(cc.capability.inputSchema.type, "object", `${id} input is an object schema`);
@@ -79,12 +78,12 @@ test("(hcap-3) cli declarations point at the existing `leina harness` transport"
   assert.equal(cap("harness.rules.list").cli.command, "harness list");
 });
 
-test("(hcap-4) fn references are the shared harness use-cases (both transports converge)", () => {
-  assert.strictEqual(cap("harness.contract.new").capability.fn, harnessContractNew);
-  assert.strictEqual(cap("harness.contract.show").capability.fn, harnessContractShow);
-  assert.strictEqual(cap("harness.contract.end").capability.fn, endContract);
-  assert.strictEqual(cap("harness.verify").capability.fn, runVerify);
-  assert.strictEqual(cap("harness.rules.list").capability.fn, harnessRulesList);
+test("(hcap-4) capability entries carry no function references (metadata only)", () => {
+  // The v1 `fn` field was removed — both transports converge on the shared
+  // use-cases behaviourally (exercised below), not through registry references.
+  for (const id of HARNESS_IDS) {
+    assert.ok(!("fn" in cap(id).capability), `${id} must not carry a fn field`);
+  }
 });
 
 test("(hcap-5) every harness input requires root except where MCP overrides it, goal required on contract.new", () => {
@@ -95,8 +94,9 @@ test("(hcap-5) every harness input requires root except where MCP overrides it, 
 });
 
 // ---------------------------------------------------------------------------
-// fn behaviour over a throwaway git repo (fixtures as in harness-verify.test.ts:
-// builtin toolchain gates disabled — the tmp repo has no npm/leina install).
+// Use-case behaviour over a throwaway git repo (fixtures as in
+// harness-verify.test.ts: builtin toolchain gates disabled — the tmp repo has
+// no npm/leina install).
 // ---------------------------------------------------------------------------
 
 const ports = { proc: new ShellProcessRunner(), git: new HarnessGit() };
@@ -151,7 +151,7 @@ afterEach(async () => {
   await repo.cleanup();
 });
 
-describe("harness capability fns (tmp repo)", () => {
+describe("harness capability use-cases (tmp repo)", () => {
   it("contract.new creates the contract with baseRef, refuses a second one, show/end round-trip", async () => {
     const created = await harnessContractNew(
       repo.root,
