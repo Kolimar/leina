@@ -97,6 +97,21 @@ describe("runVerify", () => {
     assert.ok(Array.isArray(persisted.results));
   });
 
+  it("(state-ignore-1) without `leina init`, the state dir ignores itself — the report never shows up as a change", async () => {
+    await repo.write(".harness/rules/ok.md", RULE_OK);
+    repo.git("add", ".");
+    repo.git("commit", "-m", "rule");
+    await runVerify(repo.root, { ports });
+
+    assert.equal(await fs.readFile(path.join(repo.root, ".harness", "state", ".gitignore"), "utf8"), "*\n");
+    const changed = (await ports.git.changedFiles(repo.root, undefined)) ?? [];
+    assert.deepEqual(
+      changed.filter((f) => f.startsWith(".harness/state/")),
+      [],
+      "verify-report.json (test output) must never reach the diff gates",
+    );
+  });
+
   it("exits 1 on a blocking failure and carries the failureMessage", async () => {
     await repo.write(".harness/rules/fail.md", RULE_FAIL);
     const outcome = await runVerify(repo.root, { ports });

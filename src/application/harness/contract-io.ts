@@ -17,6 +17,25 @@ export function stateDir(repoRoot: string): string {
   return path.join(harnessDir(repoRoot), "state", "current");
 }
 
+/**
+ * Create `.harness/state/current/` and make the whole state dir ignore itself
+ * (`.harness/state/.gitignore` = `*`). Task state — contracts, edit logs,
+ * verify reports carrying test output — must never be committed nor reach the
+ * diff gates as an untracked change, whether or not `leina init` added its
+ * gitignore block. Every harness path that creates the state dir goes through
+ * here; an existing ignore file (possibly user-tuned) is left alone.
+ */
+export async function ensureStateDir(repoRoot: string): Promise<string> {
+  const dir = stateDir(repoRoot);
+  await fs.mkdir(dir, { recursive: true });
+  try {
+    await fs.writeFile(path.join(path.dirname(dir), ".gitignore"), "*\n", { encoding: "utf8", flag: "wx" });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
+  return dir;
+}
+
 export function contractPath(repoRoot: string): string {
   return path.join(stateDir(repoRoot), "contract.json");
 }
@@ -42,7 +61,7 @@ export async function loadContract(repoRoot: string): Promise<LoadedContract> {
 }
 
 export async function saveContract(repoRoot: string, contract: TaskContract): Promise<void> {
-  await fs.mkdir(stateDir(repoRoot), { recursive: true });
+  await ensureStateDir(repoRoot);
   await fs.writeFile(contractPath(repoRoot), `${JSON.stringify(contract, null, 2)}\n`, "utf8");
 }
 
@@ -61,7 +80,7 @@ export async function writeChecklist(repoRoot: string, contract: TaskContract): 
     ...contract.criteria.map((c) => `- [${c.done ? "x" : " "}] ${c.text}`),
     "",
   ];
-  await fs.mkdir(stateDir(repoRoot), { recursive: true });
+  await ensureStateDir(repoRoot);
   await fs.writeFile(checklistPath(repoRoot), lines.join("\n"), "utf8");
 }
 
@@ -79,6 +98,7 @@ export async function endContract(repoRoot: string, now = new Date()): Promise<E
     return { ok: false, error: "no active contract" };
   }
   const stamp = now.toISOString().replaceAll(":", "-").replace(/\..+$/, "");
+  await ensureStateDir(repoRoot); // history/ lives under the same self-ignoring dir
   const historyDir = path.join(harnessDir(repoRoot), "state", "history");
   await fs.mkdir(historyDir, { recursive: true });
   // Second-resolution stamps can collide (two ends within a second) — suffix.

@@ -12,6 +12,7 @@ import {
   checklistPath,
   contractPath,
   endContract,
+  ensureStateDir,
   loadContract,
   saveContract,
   stateDir,
@@ -69,6 +70,26 @@ describe("contract persistence", () => {
     await repo.write(".harness/state/current/contract.json", JSON.stringify({ scope: ["src/**"] }));
     const loaded = await loadContract(repo.root);
     assert.ok(loaded.error?.includes("goal"));
+  });
+});
+
+describe("state dir is self-ignoring", () => {
+  it("(state-ignore-2) saveContract and writeChecklist drop `*` into .harness/state/.gitignore", async () => {
+    await saveContract(repo.root, CONTRACT);
+    const ignore = path.join(repo.root, ".harness", "state", ".gitignore");
+    assert.equal(await fs.readFile(ignore, "utf8"), "*\n");
+
+    // Idempotent and non-clobbering: a user-tuned file is left alone.
+    await fs.writeFile(ignore, "*\n!keep.md\n");
+    await writeChecklist(repo.root, CONTRACT);
+    assert.equal(await fs.readFile(ignore, "utf8"), "*\n!keep.md\n");
+  });
+
+  it("(state-ignore-3) ensureStateDir creates current/ and the ignore file", async () => {
+    const dir = await ensureStateDir(repo.root);
+    assert.equal(dir, stateDir(repo.root));
+    assert.ok((await fs.stat(dir)).isDirectory());
+    assert.equal(await fs.readFile(path.join(repo.root, ".harness", "state", ".gitignore"), "utf8"), "*\n");
   });
 });
 

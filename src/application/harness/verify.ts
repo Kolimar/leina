@@ -17,7 +17,7 @@ import {
 import { type HarnessPorts } from "../../domain/harness/ports.ts";
 import { isWorkspaceTrusted } from "../install/trust.ts";
 import { loadResolvedRules, filterRules } from "./resolver.ts";
-import { loadContract, stateDir } from "./contract-io.ts";
+import { ensureStateDir, loadContract } from "./contract-io.ts";
 import { harnessDir } from "./config-io.ts";
 import { readJsonIfExists } from "./io.ts";
 import { runGates } from "./gates/engine.ts";
@@ -137,8 +137,7 @@ async function readGeneratedPaths(repoRoot: string): Promise<string[]> {
 
 async function persistReport(repoRoot: string, report: VerifyReport, changedFiles: string[]): Promise<void> {
   try {
-    const dir = stateDir(repoRoot);
-    await fs.mkdir(dir, { recursive: true });
+    const dir = await ensureStateDir(repoRoot);
     // The persisted document carries `changedFiles` on top of the report so
     // the commit guard (hooks.ts readVerifySummary) can stat those files and
     // detect a report gone STALE — edited working tree after a green verify.

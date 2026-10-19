@@ -17,7 +17,7 @@ import { type HarnessPorts } from "../../domain/harness/ports.ts";
 import { matchesAny } from "../../domain/harness/glob.ts";
 import { trustStoreDir } from "../install/trust.ts";
 import { loadConfig, userHarnessDir } from "./config-io.ts";
-import { loadContract, stateDir } from "./contract-io.ts";
+import { ensureStateDir, loadContract, stateDir } from "./contract-io.ts";
 import { filterRules, loadResolvedRules } from "./resolver.ts";
 import { readJsonIfExists } from "./io.ts";
 import { runVerify } from "./verify.ts";
@@ -82,7 +82,7 @@ async function readRetries(repoRoot: string): Promise<number> {
 }
 
 async function writeRetries(repoRoot: string, count: number): Promise<void> {
-  await fs.mkdir(stateDir(repoRoot), { recursive: true });
+  await ensureStateDir(repoRoot);
   await fs.writeFile(retriesPath(repoRoot), `${JSON.stringify({ count })}\n`, "utf8");
 }
 
@@ -167,7 +167,7 @@ function repoRelative(repoRoot: string, filePath: string): string {
  */
 async function touchLastEdit(repoRoot: string): Promise<void> {
   try {
-    await fs.mkdir(stateDir(repoRoot), { recursive: true });
+    await ensureStateDir(repoRoot);
     await fs.writeFile(path.join(stateDir(repoRoot), "last-edit"), `${new Date().toISOString()}\n`, "utf8");
   } catch {
     // best-effort marker
@@ -695,7 +695,7 @@ export async function decideCursorShell(
 
 export async function recordCursorEdit(repoRoot: string, filePath: string | undefined): Promise<void> {
   if (filePath === undefined || filePath.length === 0) return;
-  await fs.mkdir(stateDir(repoRoot), { recursive: true });
+  await ensureStateDir(repoRoot);
   const entry = { file: repoRelative(repoRoot, filePath), at: new Date().toISOString() };
   await fs.appendFile(path.join(stateDir(repoRoot), "edit-log.jsonl"), `${JSON.stringify(entry)}\n`, "utf8");
 }
