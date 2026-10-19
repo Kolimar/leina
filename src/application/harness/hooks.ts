@@ -309,6 +309,27 @@ function basenameOf(program: string): string {
  * against accidents, not a sandbox against an adversarial agent — see
  * docs/concepts/07-harness.md.
  */
+/**
+ * Within a single shell segment, find the git subcommand (commit/push) if the
+ * segment invokes `git` directly. Skips git's own global flags (some consume a
+ * value); stops at the first non-flag token — that is the subcommand.
+ */
+function gitSubcommandOf(tokens: ShellToken[]): "commit" | "push" | undefined {
+  const gitIdx = tokens.findIndex((t) => !t.quoted && (t.text === "git" || t.text.endsWith("/git")));
+  if (gitIdx === -1) return undefined;
+  for (let i = gitIdx + 1; i < tokens.length; i += 1) {
+    const t = tokens[i]!;
+    if (!t.quoted && (t.text === "-c" || t.text === "-C" || t.text === "--git-dir" || t.text === "--work-tree")) {
+      i += 1; // these global flags consume a value
+      continue;
+    }
+    if (!t.quoted && t.text.startsWith("-")) continue; // other global flags
+    if (t.text === "commit" || t.text === "push") return t.text;
+    break; // some other subcommand — this segment is not a commit/push
+  }
+  return undefined;
+}
+
 function gitCommitOrPush(command: string, depth = 0): "commit" | "push" | undefined {
   if (depth > 3) return undefined;
   for (const tokens of shellSegments(command)) {
@@ -321,18 +342,8 @@ function gitCommitOrPush(command: string, depth = 0): "commit" | "push" | undefi
         if (inner !== undefined) return inner;
       }
     }
-    const gitIdx = tokens.findIndex((t) => !t.quoted && (t.text === "git" || t.text.endsWith("/git")));
-    if (gitIdx === -1) continue;
-    for (let i = gitIdx + 1; i < tokens.length; i += 1) {
-      const t = tokens[i]!;
-      if (!t.quoted && (t.text === "-c" || t.text === "-C" || t.text === "--git-dir" || t.text === "--work-tree")) {
-        i += 1; // these global flags consume a value
-        continue;
-      }
-      if (!t.quoted && t.text.startsWith("-")) continue; // other global flags
-      if (t.text === "commit" || t.text === "push") return t.text;
-      break; // some other subcommand — this segment is not a commit/push
-    }
+    const sub = gitSubcommandOf(tokens);
+    if (sub !== undefined) return sub;
   }
   return undefined;
 }
@@ -346,7 +357,7 @@ function gitCommitOrPush(command: string, depth = 0): "commit" | "push" | undefi
  * same honesty rule as gitCommitOrPush: this raises the bar for accidents,
  * it does not make the files unwritable for a determined agent.
  */
-const INTEGRITY_PATH_RE = /\.harness(?!\/state\b)(?:\/[\w./-]*)?/;
+const INTEGRITY_PATH_RE = /\.harness(?!\/state\b)[\w./-]*/;
 const WRITE_HINT_RE = /(?:>|\b(?:tee|sed|mv|cp|rm|dd|truncate|ln|install|rsync|chmod|chown|sponge)\b)/;
 
 function writesIntegrityPaths(command: string): string | undefined {

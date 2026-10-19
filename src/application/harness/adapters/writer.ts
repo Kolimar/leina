@@ -75,6 +75,21 @@ export async function readLockfile(repoRoot: string): Promise<Lockfile | undefin
   return parseLockfile(raw.value);
 }
 
+/**
+ * After a managed block is stripped: a file that held nothing but the harness
+ * block is a husk once the block is gone — remove it (and prune now-empty
+ * parents) rather than leaving a 1-byte shell; otherwise write the remaining
+ * content back.
+ */
+async function finalizeStrippedFile(repoRoot: string, absolute: string, content: string): Promise<void> {
+  if (content.trim() === "") {
+    await fs.rm(absolute);
+    await pruneEmptyDirs(repoRoot, absolute);
+  } else {
+    await fs.writeFile(absolute, content, "utf8");
+  }
+}
+
 export type ApplyAction = "created" | "updated" | "unchanged" | "conflict" | "error";
 
 export interface ApplyItem {
@@ -269,16 +284,7 @@ async function cleanupOrphans(
       }
       const { content, removed } = removeManagedBlock(existing, blockId);
       if (removed) {
-        if (!options.check) {
-          // A file that held nothing but the harness block is a husk once the
-          // block is gone — remove it rather than leaving a 1-byte shell.
-          if (content.trim() === "") {
-            await fs.rm(absolute);
-            await pruneEmptyDirs(repoRoot, absolute);
-          } else {
-            await fs.writeFile(absolute, content, "utf8");
-          }
-        }
+        if (!options.check) await finalizeStrippedFile(repoRoot, absolute, content);
         items.push({
           path: stale.path,
           adapter: stale.adapter,
