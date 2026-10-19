@@ -263,13 +263,9 @@ test("(devin-init-1) init --agent devin writes .devin/hooks.v1.json with all 4 m
     }
     // PreToolUse routes through the gate, tagged with its host:
     assert.match(hooks.PreToolUse[0].hooks[0].command, /agent-hook PreToolUse --host devin/);
-    // PostToolUse: freshness refresh + exec marker + native-nudge (Palanca C, ADR-1):
+    // PostToolUse: exec marker + native-nudge (Palanca C) — no per-edit graph refresh:
     const matchers = hooks.PostToolUse.map((m: { matcher: string }) => m.matcher).sort();
-    assert.deepEqual(matchers, [
-      "^(edit|write)$",
-      "^exec$",
-      "^(read|grep|glob)$",
-    ].sort());
+    assert.deepEqual(matchers, ["^exec$", "^(read|grep|glob)$"].sort());
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

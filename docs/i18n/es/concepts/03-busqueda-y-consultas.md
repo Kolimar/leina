@@ -207,10 +207,12 @@ de ~790 archivos: ~1.5 GB de memoria pico combinada en lugar de ~4.4 GB).
 El pesado stack de extracción se carga solo cuando hay que reconstruir: así, el camino común
 (mapa fresco) jamás lo paga, y por eso una `query` arranca en ~0.15s.
 
-> **El refresh por hook:** además de este gate, el hook `PostToolUse` dispara
-> `leina refresh` cuando el agente edita o escribe archivos — ver
-> [Hooks e inyección](./06-hooks-e-inyeccion.md). Entre el gate y el hook, el mapa se mantiene
-> al día sin que nadie lo piense.
+> **Sin rebuild por edición:** los hooks del agente nunca reconstruyen el grafo después de una
+> edición — un rebuild completo y sincrónico en cada `edit`/`write` (lo que hacían los hooks de
+> proyecto de Devin antes de 3.0) costaba segundos y cientos de MB por edición del agente. Este
+> gate refresca un mapa stale de forma perezosa, en la siguiente lectura, y el self-heal de
+> `SessionStart` construye en segundo plano un grafo faltante o stale (ver
+> [Hooks e inyección](./06-hooks-e-inyeccion.md)).
 
 ---
 

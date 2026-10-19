@@ -23,7 +23,7 @@ writers, and a single gate holds the decision logic.
 | `PostCompaction` | (all) | re-injects the context after a compaction |
 | `UserPromptSubmit` | (all) | on the first turn, injects context if it hasn't loaded yet |
 | `PreToolUse` | Devin `edit\|write\|exec`, `grep\|glob`; Claude Code `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash` | advisory tip (e.g. before `git commit` or `grep`); in a trusted workspace, the harness integrity seal, contract scope and commit guard |
-| `PostToolUse` | `edit\|write` → `refresh`; `exec` → gate | refreshes the graph; detects memory load/save |
+| `PostToolUse` | Devin `exec`, `read\|grep\|glob`; Claude Code `Bash\|Grep\|Read\|Glob` | detects memory load/save; one-time tip after a native search |
 | `Stop` | (all) | reminds you to persist the session if it wasn't saved |
 
 ---
@@ -158,9 +158,11 @@ Details per event:
   injection replaces it).
 - **PreToolUse**: with `git commit` it emits a tip to load memory; with `grep`/`rg`/`find` it
   emits a tip to use `leina query`/`affected`. If the load marker exists, it stays quiet.
-- **PostToolUse**: writes the load or save marker depending on the `exec` command; on
-  `edit`/`write` it triggers `leina refresh` to keep the graph up to date (see
-  [Search and queries](./03-busqueda-y-consultas.md#the-freshness-gate)).
+- **PostToolUse**: writes the load or save marker depending on the `exec` command. It never
+  rebuilds the graph: reads refresh a stale graph lazily (see
+  [Search and queries](./03-busqueda-y-consultas.md#the-freshness-gate)). Devin project files
+  written before 3.0 ran `leina refresh` on every `edit`/`write`; re-running `init` or
+  `repair` strips that entry.
 - **Stop**: if the save marker is missing, it emits the nudge via `stderr`. **stdout is always
   empty.** It never blocks (exit 0 on every branch).
 

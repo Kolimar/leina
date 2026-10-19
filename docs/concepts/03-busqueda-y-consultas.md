@@ -206,10 +206,11 @@ The `import()` of the build stack is **dynamic** and only happens on the `auto` 
 that way, the common path (fresh map) never loads the heavy extraction stack, and that's why a
 `query` starts up in ~0.15s.
 
-> **Refresh via hook:** besides this gate, the `PostToolUse` hook triggers
-> `leina refresh` when the agent edits or writes files — see
-> [Hooks and injection](./06-hooks-e-inyeccion.md). Between the gate and the hook, the map stays
-> up to date without anyone having to think about it.
+> **No rebuild per edit:** the agent hooks never rebuild the graph after an edit — a full
+> synchronous rebuild on every `edit`/`write` (which Devin project hooks did before 3.0) cost
+> seconds and hundreds of MB per agent edit. This gate refreshes a stale map lazily, on the
+> next read, and the `SessionStart` self-heal builds a missing or stale graph in the background
+> (see [Hooks and injection](./06-hooks-e-inyeccion.md)).
 
 ---
 

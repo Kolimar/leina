@@ -15,7 +15,7 @@
 
 import type { FileArtifact } from "../../domain/install/artifact.ts";
 import type { McpCommand } from "./protocol.ts";
-import { parseJsonRoot, shellJoin } from "./hooks-common.ts";
+import { parseJsonRoot } from "./hooks-common.ts";
 import { agentHookCommand, type HookScope } from "./hook-command.ts";
 
 // ---------------------------------------------------------------------------
@@ -73,6 +73,9 @@ const MANAGED_MATCHERS: Record<DevinHookEventName, readonly string[]> = {
   // ADR-1: existing string preserved verbatim (idempotency/merge-safety); new matcher added.
   PreToolUse: ["^(edit|write|exec)$", "^(grep|glob)$"],
   PostToolUse: [
+    // Pre-3.0 project files ran `leina refresh <project>` here after every edit/write: a full
+    // synchronous rebuild per agent edit. No longer emitted, still OWNED so a re-run of
+    // init/repair (or deactivate) strips it from existing files.
     "^(edit|write)$",
     // exec: the gate inspects the command line for `leina memory (context|search|verified)`
     // to flip the per-session memory-loaded marker (CLI-only — no MCP tool to key on).
@@ -89,19 +92,16 @@ const MANAGED_MATCHERS: Record<DevinHookEventName, readonly string[]> = {
 };
 
 /**
- * Build the full managed hooks block for the PROJECT file (includes freshness refresh).
- * Every gate entry names its host (`--host devin`) and, for the user-global copy, its scope
- * (`--scope user`) — see hook-command.ts.
+ * Build the managed hooks block. Every gate entry names its host (`--host devin`) and, for
+ * the user-global copy, its scope (`--scope user`) — see hook-command.ts. No entry rebuilds
+ * the graph: the read path (`query`/`affected`/`path`) refreshes a stale graph lazily, and the
+ * SessionStart self-heal covers the next session.
  */
-function buildManagedHooks(cli: McpCommand, project: string, scope: HookScope = "project"): DevinHooksFile {
+function buildManagedHooks(cli: McpCommand, scope: HookScope): DevinHooksFile {
   const gate = (event: DevinHookEventName): DevinHookEntry => ({
     type: "command",
     command: agentHookCommand(cli, event, "devin", scope),
   });
-  const refresh: DevinHookEntry = {
-    type: "command",
-    command: `${shellJoin([cli.command, ...cli.args])} refresh ${project}`,
-  };
 
   return {
     PreToolUse: [
@@ -110,8 +110,6 @@ function buildManagedHooks(cli: McpCommand, project: string, scope: HookScope = 
       { matcher: "^(grep|glob)$", hooks: [gate("PreToolUse")] },
     ],
     PostToolUse: [
-      // Freshness: rebuild the graph after a code edit.
-      { matcher: "^(edit|write)$", hooks: [refresh] },
       // Marker write: the gate inspects the exec command for `leina memory
       // (context|search|verified)` and flips the session gate when memory is loaded.
       { matcher: "^exec$", hooks: [gate("PostToolUse")] },
@@ -178,13 +176,9 @@ function asMatcherArray(value: unknown): DevinHookMatcher[] {
  * Build a `.devin/hooks.v1.json` artifact, merging into `existing` if given.
  * Idempotent on its own output; merge-safe with unmanaged event keys and matchers.
  */
-export function devinHooksJson(
-  cli: McpCommand,
-  project: string,
-  existing?: string | null,
-): FileArtifact {
+export function devinHooksJson(cli: McpCommand, existing?: string | null): FileArtifact {
   const root = parseRootObject(existing, ".devin/hooks.v1.json");
-  const managed = buildManagedHooks(cli, project);
+  const managed = buildManagedHooks(cli, "project");
 
   const out: Record<string, unknown> = { ...root };
   for (const event of DEVIN_MANAGED_EVENTS) {
@@ -227,17 +221,12 @@ export function devinUserConfigWithHooks(
 }
 
 /**
- * Build the user-global flavour of the managed hooks block — identical to the project block
- * MINUS the per-project freshness refresh (one global path can't be correct for every repo).
- * Gate entries (PreToolUse, PostToolUse marker, UserPromptSubmit, SessionStart) resolve the
- * marker from `cwd()` so they remain project-agnostic and safe to install globally.
+ * Build the user-global flavour of the managed hooks block — the project block tagged
+ * `--scope user`. The gate resolves the project at runtime (hook env / cwd), so the entries
+ * stay project-agnostic and safe to install globally.
  */
 export function buildUserGlobalHooks(cli: McpCommand): DevinHooksFile {
-  const project = buildManagedHooks(cli, "/unused", "user");
-  return {
-    ...project,
-    PostToolUse: project.PostToolUse.filter((m) => !m.matcher.startsWith("^(edit|write)")),
-  };
+  return buildManagedHooks(cli, "user");
 }
 
 /**

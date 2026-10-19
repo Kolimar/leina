@@ -22,7 +22,7 @@ escribe `init` (FULL).
 | `PostCompaction` | (todos) | re-inyecta el contexto tras una compactación |
 | `UserPromptSubmit` | (todos) | en el primer turno, inyecta contexto si aún no se cargó |
 | `PreToolUse` | Devin `edit\|write\|exec`, `grep\|glob`; Claude Code `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash` | consejo advisory (p. ej. ante `git commit` o `grep`); en un workspace de confianza, el sello de integridad, el scope del contract y el guard de commit del harness |
-| `PostToolUse` | `edit\|write` → `refresh`; `exec` → gate | refresca el grafo; detecta carga/guardado de memoria |
+| `PostToolUse` | Devin `exec`, `read\|grep\|glob`; Claude Code `Bash\|Grep\|Read\|Glob` | detecta carga/guardado de memoria; consejo único tras una búsqueda nativa |
 | `Stop` | (todos) | recuerda persistir la sesión si no se guardó |
 
 ---
@@ -157,9 +157,11 @@ Detalles por evento:
   reemplaza).
 - **PreToolUse**: con `git commit` emite un consejo de cargar memoria; con `grep`/`rg`/`find`
   emite un consejo de usar `leina query`/`affected`. Si el marker load existe, calla.
-- **PostToolUse**: escribe el marker load o save según el comando `exec`; en `edit`/`write`
-  dispara `leina refresh` para mantener el grafo al día (ver
-  [Búsqueda y consultas](./03-busqueda-y-consultas.md#el-freshness-gate)).
+- **PostToolUse**: escribe el marker load o save según el comando `exec`. Nunca reconstruye
+  el grafo: las lecturas refrescan un grafo stale de forma perezosa (ver
+  [Búsqueda y consultas](./03-busqueda-y-consultas.md#el-freshness-gate)). Los archivos de
+  proyecto de Devin escritos antes de 3.0 corrían `leina refresh` en cada `edit`/`write`; volver
+  a correr `init` o `repair` elimina esa entrada.
 - **Stop**: si falta el marker save, emite el nudge por `stderr`. **stdout siempre vacío.**
   Nunca bloquea (exit 0 en todas las ramas).
 

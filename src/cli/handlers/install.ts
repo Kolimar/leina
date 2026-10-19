@@ -346,7 +346,7 @@ function writeDevinHooks(
   try {
     mkdirSync(dirname(devinHooksPath), { recursive: true });
     const current = readIfExists(devinHooksPath);
-    const art = devinHooksJson(cliBase, project, current);
+    const art = devinHooksJson(cliBase, current);
     writeFileSync(devinHooksPath, art.content);
     written.push(art.path);
   } catch (err) {

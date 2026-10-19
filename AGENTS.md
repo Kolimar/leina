@@ -231,8 +231,10 @@ non-blank of Claude Code's documented `CLAUDE_PROJECT_DIR` and Devin's documente
 `DEVIN_PROJECT_DIR` — the hosts' contract for telling a hook its workspace root; no hook stdin
 payload carries a `cwd` — falling back to `process.cwd()` when both are absent/blank. Everything downstream of the hook keys off this root: the scope guard
 (`isLeinaProject` + `isWorkspaceTrusted`), the session markers, and `buildActiveContext`
-(project key + graph.db + freshness). The PostToolUse `refresh` hook is the exception — it
-carries the project dir baked at init time, so it is unaffected by the runtime root resolution.
+(project key + graph.db + freshness). No hook rebuilds the graph: the pre-3.0 Devin
+PostToolUse `refresh <project>` entry (a full synchronous rebuild per agent edit) is no longer
+emitted, and the Devin writers still own its `^(edit|write)$` matcher so re-running
+`init`/`repair` strips it.
 
 <!-- leina:protocol:start -->
 ## leina — code graph + project memory (use the CLI)
