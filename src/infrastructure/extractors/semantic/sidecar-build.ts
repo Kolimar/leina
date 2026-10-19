@@ -59,6 +59,19 @@ export function isSidecarBuilt(lang: SemanticLang): boolean {
   return existsSync(builtBinaryPath(lang));
 }
 
+/**
+ * The sidecar languages a build can use right now — built and cached, or configured through
+ * LEINA_<LANG>_SIDECAR — without spawning anything (the read path's staleness check calls it).
+ * Mirrors resolveSidecar in sidecar.ts.
+ */
+export function availableSidecars(): SemanticLang[] {
+  const langs: SemanticLang[] = ["csharp", "java"];
+  return langs.filter((lang) => {
+    const env = lang === "csharp" ? process.env.LEINA_CSHARP_SIDECAR : process.env.LEINA_JAVA_SIDECAR;
+    return (env !== undefined && env.trim().length > 0) || isSidecarBuilt(lang);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Toolchain detection
 // ---------------------------------------------------------------------------

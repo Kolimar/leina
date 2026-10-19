@@ -103,7 +103,7 @@ export class ScipExtractor implements GraphExtractor {
         edges: [],
         diagnostics: [],
         degraded: primary > 0
-          ? [`${this.lang}: ${primary} file(s) via tree-sitter (syntactic) — run \`leina scip install ${this.lang}\` for compiler-grade precision`]
+          ? [`${this.lang}: ${primary} file(s) via tree-sitter (syntactic) — run \`leina scip install ${this.lang}\`, then \`leina refresh\`, for compiler-grade precision`]
           : [],
         durationMs: 0,
         errors: [`scip indexer not found for ${this.lang}`],

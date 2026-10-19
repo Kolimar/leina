@@ -13,7 +13,10 @@
 //
 // It also records the git commit SHA the graph was built against, so memory
 // observations anchored to graph nodes can later be validated against a known snapshot,
-// and the reduced-precision paths the build fell back to (`degraded`, for `leina status`).
+// and the reduced-precision paths the build fell back to (`degraded`, for `leina status`)
+// together with the compiler sidecars it could use: a graph that fell back to tree-sitter
+// goes stale once a sidecar becomes available (`leina sidecar build`), so the next read
+// picks up the compiler-grade edges without a manual refresh.
 //
 // Pure (no SDK, no extractor imports) so it stays cheap to load and unit-test.
 
@@ -22,6 +25,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { safeGitOutput } from "../../infrastructure/install/safe-exec.ts";
 import { readPackageVersion } from "../../version.ts";
+import { availableSidecars } from "../../infrastructure/extractors/semantic/sidecar-build.ts";
 import { exceedsSourceCap, listConfigFiles, listProjectFiles } from "./sources.ts";
 
 // 2: per-file entries went from a bare mtime number to { mtime, hash }, commitSha added.
@@ -64,12 +68,15 @@ export interface BuildManifest {
   configs: Record<string, ManifestFileEntry>;
   /** Reduced-precision paths the build fell back to (BuildReport.degraded). */
   degraded: string[];
+  /** Compiler sidecars available to the build (availableSidecars); absent in older manifests. */
+  sidecars?: string[];
 }
 
 export interface StaleResult {
   stale: boolean;
   // "fresh" | "no-manifest" | "leina upgraded (…)" | "extractor changed (…)"
   // | "added:<rel>" | "removed:<rel>" | "touched:<rel>" | "config changed:<rel>"
+  // | "sidecar available:<lang,…>"
   reason: string;
 }
 
@@ -129,6 +136,7 @@ export function writeManifest(root: string, files: string[], opts: WriteManifest
     files: map,
     configs: fingerprint(r, opts.configs ?? listConfigFiles(root), false),
     degraded: opts.degraded ?? [],
+    sidecars: availableSidecars(),
   };
   const p = manifestPath(root);
   mkdirSync(dirname(p), { recursive: true });
@@ -198,6 +206,17 @@ function basisChange(raw: Partial<BuildManifest>): string | null {
     return `extractor changed (schema ${String(raw.extractorSchema)} → ${EXTRACTOR_SCHEMA_VERSION})`;
   }
   return null;
+}
+
+/**
+ * A compiler sidecar that became available after a build that fell back to tree-sitter, or
+ * null. Only a degraded build can gain from one, so a precise graph never pays the check.
+ */
+function sidecarChange(manifest: BuildManifest): StaleResult | null {
+  if (manifest.degraded.length === 0) return null;
+  const before = new Set(manifest.sidecars ?? []);
+  const added = availableSidecars().filter((lang) => !before.has(lang));
+  return added.length > 0 ? { stale: true, reason: `sidecar available:${added.join(",")}` } : null;
 }
 
 /** First resolution-config change (added/removed/edited) against the manifest, or null. */
@@ -274,6 +293,8 @@ export function isStale(root: string, files?: string[]): StaleResult {
   if (basis) return { stale: true, reason: basis };
   const manifest = asCurrent(raw);
   if (!manifest) return { stale: true, reason: "no-manifest" };
+  const tool = sidecarChange(manifest);
+  if (tool) return tool;
 
   const r = resolvePath(root);
   // ONE listing (one `git ls-files`) yields both the sources and the configs.

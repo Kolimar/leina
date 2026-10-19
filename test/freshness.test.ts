@@ -319,6 +319,31 @@ test("(basis-5) degraded notes are stamped and surface in graphStatus", () => {
   }
 });
 
+test("(basis-6) a degraded graph goes stale once a compiler sidecar becomes available", () => {
+  const degraded = freshRepo();
+  const precise = freshRepo();
+  const prev = process.env.LEINA_CSHARP_SIDECAR;
+  try {
+    delete process.env.LEINA_CSHARP_SIDECAR;
+    writeManifest(degraded, listSourceFiles(degraded), { degraded: ["csharp: 3 file(s) via tree-sitter (syntactic)"] });
+    writeManifest(precise, listSourceFiles(precise));
+    assert.equal(isStale(degraded).stale, false);
+
+    process.env.LEINA_CSHARP_SIDECAR = "fake-roslyn-graph";
+    assert.deepEqual(isStale(degraded), { stale: true, reason: "sidecar available:csharp" });
+    assert.equal(isStale(precise).stale, false, "a graph with nothing degraded never pays for it");
+
+    // The rebuild stamps the sidecar it had, so the graph is fresh again.
+    writeManifest(degraded, listSourceFiles(degraded));
+    assert.equal(isStale(degraded).stale, false);
+  } finally {
+    if (prev !== undefined) process.env.LEINA_CSHARP_SIDECAR = prev;
+    else delete process.env.LEINA_CSHARP_SIDECAR;
+    rmSync(degraded, { recursive: true, force: true });
+    rmSync(precise, { recursive: true, force: true });
+  }
+});
+
 // --- freshness config -------------------------------------------------------
 
 const ENV_KEY = "LEINA_FRESHNESS";

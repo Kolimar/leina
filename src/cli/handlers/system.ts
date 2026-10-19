@@ -201,6 +201,9 @@ async function scipInstall(arg: string | undefined): Promise<void> {
     // Detect + instruct — never auto-install without consent (SCIP indexers are
     // third-party binaries, unlike the leina-owned C#/Java sidecars).
     console.log(`${lang}: not installed. Run:\n  ${SCIP_INSTALL_HINT[lang]}`);
+    // leina cannot see a PATH install without spawning the indexer, which the read path's
+    // staleness check never does: graphs built without it stay syntactic until rebuilt.
+    console.log(`  then 'leina refresh' in each repo with ${lang} code, so its graph uses the indexer`);
   }
 }
 
