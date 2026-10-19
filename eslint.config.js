@@ -23,7 +23,8 @@ const HEAVY_EXTRACTOR_LIBS = [
 
 export default tseslint.config(
   {
-    ignores: ["dist/", "coverage/", "node_modules/", "assets/", "docs/", "test/fixtures/", "*.html"],
+    // .claude/: Claude Code creates whole checkouts (worktrees) there; they are not this tree's sources.
+    ignores: ["dist/", "coverage/", "node_modules/", "assets/", "docs/", "test/fixtures/", "*.html", ".claude/"],
   },
 
   eslint.configs.recommended,
