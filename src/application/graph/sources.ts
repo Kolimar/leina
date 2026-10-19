@@ -2,7 +2,7 @@
 // Extracted from build.ts so the freshness/manifest layer can list sources
 // without pulling in the heavy extractor stack (tree-sitter, ts-morph, sidecars).
 
-import { readdirSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join, resolve } from "node:path";
 import { detectLang } from "./detect.ts";
@@ -34,6 +34,48 @@ const MINIFIED_RE = /\.min\.[^.]+$/i;
 /** True for conventionally-named minified artifacts (`foo.min.js`, `lib.min.mjs`, …). */
 export function isMinifiedArtifact(name: string): boolean {
   return MINIFIED_RE.test(name);
+}
+
+// Per-file size cap. Extractors (tree-sitter, YAML, ts-morph) and the manifest hash read
+// each source whole; a multi-megabyte source is virtually always generated (parser
+// tables, unsuffixed bundles, data dumps) and costs memory and time out of proportion.
+// Files above the cap are skipped CONSISTENTLY: the build never extracts nor hashes them
+// (partitionBySize + writeManifest), and the freshness check neither counts an untracked
+// one as "added" nor ignores a tracked one that grew past it (manifest.ts). The walk
+// itself stays stat-free — the cap is checked where a stat already happens or only for
+// files the manifest does not track, so the read-path gate pays nothing extra.
+// 4 MiB matches the harness untracked-file cap (infrastructure/harness/git.ts) and keeps
+// the largest hand-written sources seen in real repos (TypeScript's checker.ts ≈ 3 MB).
+export const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
+
+/** True when a source of `bytes` bytes is above the per-file cap. */
+export function exceedsSourceCap(bytes: number): boolean {
+  return bytes > MAX_SOURCE_BYTES;
+}
+
+/**
+ * Split listed sources into the files to extract and the oversize ones (with their
+ * size, for the diagnostic). A file that vanished since the walk stays in `kept`: the
+ * extractors and writeManifest already tolerate that race.
+ */
+export function partitionBySize(files: string[]): {
+  kept: string[];
+  oversize: { file: string; bytes: number }[];
+} {
+  const kept: string[] = [];
+  const oversize: { file: string; bytes: number }[] = [];
+  for (const file of files) {
+    let bytes: number;
+    try {
+      bytes = statSync(file).size;
+    } catch {
+      kept.push(file);
+      continue;
+    }
+    if (exceedsSourceCap(bytes)) oversize.push({ file, bytes });
+    else kept.push(file);
+  }
+  return { kept, oversize };
 }
 
 /**

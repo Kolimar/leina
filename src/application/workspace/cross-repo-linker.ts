@@ -30,7 +30,7 @@ import { join, relative, sep } from "node:path";
 import type { GraphEdge, GraphNode } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
 import type { WorkspaceMember } from "../project/detect-key.ts";
-import { isMinifiedArtifact } from "../graph/sources.ts";
+import { exceedsSourceCap, isMinifiedArtifact } from "../graph/sources.ts";
 import { makeId, normalizeLabel } from "../../domain/shared/id.ts";
 
 export type PkgEvidence = "EXTRACTED" | "INFERRED" | "AMBIGUOUS";
@@ -177,6 +177,7 @@ function listSourceFiles(dir: string): string[] {
         walk(full);
       } else if (st.isFile()) {
         if (isMinifiedArtifact(entry)) continue; // vendored/dist bundles — keep in sync with graph/sources.ts
+        if (exceedsSourceCap(st.size)) continue; // same per-file size cap as the graph build
         const ext = entry.slice(entry.lastIndexOf("."));
         if (SOURCE_EXTS.has(ext)) result.push(full);
       }

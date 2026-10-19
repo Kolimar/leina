@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { safeGitOutput } from "../../infrastructure/install/safe-exec.ts";
-import { listSourceFiles } from "./sources.ts";
+import { exceedsSourceCap, listSourceFiles } from "./sources.ts";
 
 // Bumped to 2 when per-file entries went from a bare mtime number to { mtime, hash }
 // and commitSha was added. A manifest written by an older binary (version mismatch
@@ -66,8 +66,10 @@ export function writeManifest(root: string, files: string[]): void {
   const map: Record<string, ManifestFileEntry> = {};
   for (const abs of files) {
     try {
-      const mtime = statSync(abs).mtimeMs;
-      map[toRel(r, abs)] = { mtime, hash: sha256(abs) };
+      const st = statSync(abs);
+      // Never hash (or track) a source above the size cap — the build skips it too.
+      if (exceedsSourceCap(st.size)) continue;
+      map[toRel(r, abs)] = { mtime: st.mtimeMs, hash: sha256(abs) };
     } catch {
       // file vanished between listing and stat/read — skip it; next build re-syncs.
     }
@@ -148,13 +150,22 @@ export function isStale(root: string, files?: string[]): StaleResult {
   return { stale: false, reason: "fresh" };
 }
 
-// Added: a current source the manifest never recorded.
+// Added: a current source the manifest never recorded — unless it is above the size
+// cap, which the build skips (it is permanently untracked, not a pending addition).
+// Only untracked files are stat'ed here, so the common case costs nothing extra.
 function findAdded(
   currentRel: Map<string, string>,
   manifest: BuildManifest,
 ): StaleResult | null {
-  for (const rel of currentRel.keys()) {
-    if (!(rel in manifest.files)) return { stale: true, reason: `added:${rel}` };
+  for (const [rel, abs] of currentRel) {
+    if (rel in manifest.files) continue;
+    let oversize = false;
+    try {
+      oversize = exceedsSourceCap(statSync(abs).size);
+    } catch {
+      // vanished since the walk — report it like any other new file
+    }
+    if (!oversize) return { stale: true, reason: `added:${rel}` };
   }
   return null;
 }
@@ -168,11 +179,15 @@ function checkTrackedFile(
 ): StaleResult | null {
   if (!abs) return { stale: true, reason: `removed:${rel}` };
   let mtime: number;
+  let size: number;
   try {
-    mtime = statSync(abs).mtimeMs;
+    ({ mtimeMs: mtime, size } = statSync(abs));
   } catch {
     return { stale: true, reason: `removed:${rel}` };
   }
+  // Grew past the size cap since the build: its content changed, and the next build
+  // will drop it — stale, without hashing a file that may be arbitrarily large.
+  if (exceedsSourceCap(size)) return { stale: true, reason: `touched:${rel}` };
   // strict >: manifest mtimes are captured at/after read time, so equal is fresh.
   // When the mtime moved, confirm with the content hash — an mtime bump with
   // identical content (checkout, save-without-edit) is NOT a real change.

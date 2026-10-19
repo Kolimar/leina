@@ -14,13 +14,14 @@
 // cross-extractor/cross-file byte-idénticos al pipeline previo (REQ-ER-4).
 // Esta desviación es INTENCIONAL respecto a REQ-EP-3.
 
+import { relative, resolve, sep } from "node:path";
 import type { GraphEdge, GraphNode, ImportBinding, RawCall } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
 import type { GraphExtractor } from "../../domain/graph/extractor.ts";
 import { semanticLangOf } from "./detect.ts";
 import { resolve as resolveSymbols } from "./resolve.ts";
 import { dedup } from "./dedup.ts";
-import { listSourceFiles } from "./sources.ts";
+import { listSourceFiles, MAX_SOURCE_BYTES, partitionBySize } from "./sources.ts";
 import { writeManifest } from "./manifest.ts";
 import { detectCommunities } from "./community.ts";
 
@@ -31,6 +32,8 @@ export { listSourceFiles } from "./sources.ts";
 export interface BuildReport {
   filesScanned: number;
   filesExtracted: number;
+  /** Sources above MAX_SOURCE_BYTES, skipped (relative POSIX paths); not in filesScanned. */
+  oversizeSkipped: string[];
   semanticViaTreesitter: number; // C#/Java handled syntactically (sidecar would upgrade)
   nodes: number;
   edges: number;
@@ -131,7 +134,15 @@ export async function buildGraph(
   registry: GraphExtractor[],
 ): Promise<BuildReport> {
   const t0 = Date.now();
-  const files = listSourceFiles(root);
+  // Oversize sources are never extracted nor written to the manifest (sources.ts).
+  const { kept: files, oversize } = partitionBySize(listSourceFiles(root));
+  const oversizeSkipped = oversize.map((o) => relative(resolve(root), o.file).split(sep).join("/"));
+  oversize.forEach((o, i) => {
+    const mib = (o.bytes / (1024 * 1024)).toFixed(1);
+    console.error(
+      `  · [build] skipped ${oversizeSkipped[i]} (${mib} MiB > ${MAX_SOURCE_BYTES / (1024 * 1024)} MiB source size cap)`,
+    );
+  });
   const listMs = Date.now() - t0;
   const extractorTimings: BuildTimings["extractors"] = [];
   const acc: ExtractionAcc = {
@@ -190,6 +201,7 @@ export async function buildGraph(
   return {
     filesScanned: files.length,
     filesExtracted: acc.extracted,
+    oversizeSkipped,
     semanticViaTreesitter: acc.semanticViaTreesitter,
     nodes: clean.nodes.length,
     edges: clean.edges.length,
