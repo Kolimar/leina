@@ -1,16 +1,26 @@
 # Vendored parser grammar licenses
 
-The `.wasm` files in this directory are prebuilt tree-sitter grammar parsers, vendored
-from the [`tree-sitter-wasms`](https://www.npmjs.com/package/tree-sitter-wasms) npm
-package (v0.1.13) via `scripts/vendor-wasm.ts` (`npm run vendor:wasm`). See
-`checksums.json` for the sha256 of each file as vendored.
+The `.wasm` files in this directory are prebuilt tree-sitter grammar parsers, vendored via
+`scripts/vendor-wasm.ts` (`npm run vendor:wasm`) from two sources:
+
+- the 11 code grammars from the
+  [`tree-sitter-wasms`](https://www.npmjs.com/package/tree-sitter-wasms) npm package
+  (v0.1.13);
+- `tree-sitter-yaml.wasm` from the grammar's own npm package,
+  [`@tree-sitter-grammars/tree-sitter-yaml`](https://www.npmjs.com/package/@tree-sitter-grammars/tree-sitter-yaml)
+  (v0.7.1, the `tree-sitter-yaml.wasm` it ships, built with tree-sitter-cli 0.25). The
+  tree-sitter-wasms build of this grammar is not loadable by web-tree-sitter 0.25.
+
+See `checksums.json` for the sha256 of each file as vendored.
 
 ## Packaging license
 
 `tree-sitter-wasms` itself is released under the
 [Unlicense](https://unlicense.org/) (public domain dedication) — verified against the
 package's `LICENSE` file at vendor time. This covers the compiled `.wasm` artifacts as
-packaged and redistributed here.
+packaged and redistributed here. `@tree-sitter-grammars/tree-sitter-yaml` is released under
+the MIT license (its `LICENSE` file, reproduced in the per-grammar table and text below),
+which covers its prebuilt `tree-sitter-yaml.wasm`.
 
 ## Per-grammar upstream license
 
@@ -30,7 +40,7 @@ license (verified against each upstream repository's `LICENSE` file):
 | `tree-sitter-rust.wasm` | Rust | tree-sitter/tree-sitter-rust | MIT | (c) 2017 Maxim Sokolov |
 | `tree-sitter-ruby.wasm` | Ruby | tree-sitter/tree-sitter-ruby | MIT | (c) 2016 Rob Rix |
 | `tree-sitter-php.wasm` | PHP | tree-sitter/tree-sitter-php | MIT | (c) 2017 Josh Vera, GitHub; (c) 2019 Max Brunsfeld, Amaan Qureshi, Christian Frøystad, Caleb White |
-| `tree-sitter-yaml.wasm` | YAML (infra extractor fallback source) | tree-sitter-grammars/tree-sitter-yaml | MIT | (c) 2024 tree-sitter-grammars contributors; (c) 2019-2021 Ika |
+| `tree-sitter-yaml.wasm` | YAML (infra extractor) | tree-sitter-grammars/tree-sitter-yaml (npm `@tree-sitter-grammars/tree-sitter-yaml` 0.7.1) | MIT | (c) 2024 tree-sitter-grammars contributors; (c) 2019-2021 Ika |
 
 All are permissive licenses compatible with redistribution inside leina (MIT). No
 grammar in this set carries a copyleft or non-redistributable license; none was excluded.

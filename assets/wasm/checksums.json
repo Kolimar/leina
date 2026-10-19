@@ -10,5 +10,5 @@
   "tree-sitter-rust.wasm": "4409921a70d0aa5bec7d1d7ce809a557a8ee1cf6ace901e3ac6a76e62cfea903",
   "tree-sitter-tsx.wasm": "6aa3b2c70e76f5d48eafef1093e9c4de383e13f2fdde2f4e9b98a378f6a8f1b6",
   "tree-sitter-typescript.wasm": "8515404dceed38e1ed86aa34b09fcf3379fff1b4ff9dd3967bcd6d1eb5ac3d8f",
-  "tree-sitter-yaml.wasm": "5dea7cfff83d41d8f87fb8e434e1a5b292c0d670bfcdc42cb2af420ef490dde5"
+  "tree-sitter-yaml.wasm": "e752dc21c3591df9b45692fe417d101f45d1828c28c44d79005f4066dc7e4e91"
 }

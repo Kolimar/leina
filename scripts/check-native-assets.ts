@@ -20,6 +20,16 @@ if (!parserReport.ok) {
   process.exit(1);
 }
 
+// Present and checksum-clean is not enough for the YAML grammar: a wasm built against a
+// different tree-sitter runtime loads fine and throws on the first parse, which the extractor
+// absorbs by silently falling back to its line-based path. Parse a probe document for real.
+const { probeYamlGrammar } = await import("../src/infrastructure/extractors/yaml.ts");
+const yamlProblem = await probeYamlGrammar();
+if (yamlProblem !== null) {
+  console.error(`Leina parser-asset check failed: ${yamlProblem} (re-run \`npm run vendor:wasm\`).`);
+  process.exit(1);
+}
+
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const ignoredDirs = new Set([".git", ".leina", ".atl", "node_modules"]);
 const textExtensions = new Set([

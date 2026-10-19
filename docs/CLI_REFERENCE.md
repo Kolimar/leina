@@ -418,6 +418,12 @@ All extractors (ts-morph, the two sidecars, tree-sitter, and the YAML-infra extr
 a common extractor contract and each extraction returns a versioned result
 (`schemaVersion: 1`, with diagnostics, duration, and errors).
 
+The YAML-infra extractor (docker-compose services, CI jobs, generic config files) parses with
+tree-sitter, using the maintained `tree-sitter-yaml` grammar bundled under `assets/wasm/`. A file
+tree-sitter cannot parse cleanly — templated YAML such as Helm charts, syntax errors — falls back
+to a tolerant line-based reader, file by file. (Before 3.0.0 the bundled grammar could not be
+loaded by the tree-sitter runtime, so every YAML file silently took the line-based path.)
+
 ---
 
 ## SCIP commands (compiler-grade ingestion via third-party indexers)

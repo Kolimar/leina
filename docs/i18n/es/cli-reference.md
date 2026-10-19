@@ -441,6 +441,13 @@ opcionales de compilador bajo demanda. Sin sidecar, Java/C# igual se extraen ví
   falla espuria); con el toolchain presente corre una extracción normal y reporta `ok`/`fail`
   más un `VerificationCheck`.
 
+El extractor YAML-infra (servicios de docker-compose, jobs de CI, archivos de configuración
+genéricos) parsea con tree-sitter, usando la gramática mantenida `tree-sitter-yaml` incluida en
+`assets/wasm/`. Un archivo que tree-sitter no puede parsear limpio — YAML con plantillas como los
+charts de Helm, errores de sintaxis — cae, archivo por archivo, a un lector tolerante basado en
+líneas. (Antes de 3.0.0 el runtime de tree-sitter no podía cargar la gramática incluida, así que
+todo archivo YAML tomaba en silencio el camino basado en líneas.)
+
 ---
 
 ## Comandos SCIP (ingesta de precisión de compilador vía indexadores de terceros)

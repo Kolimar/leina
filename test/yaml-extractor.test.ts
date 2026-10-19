@@ -294,40 +294,119 @@ test("(yie-fixture) extractor procesa fixture mixed-repo: nodos service + config
 });
 
 // ---------------------------------------------------------------------------
-// REQ-D6: diagnóstico de fallback (tree-sitter → line-based) silencioso por defecto
+// tree-sitter path: the vendored grammar parses for real (no silent fallback)
 // ---------------------------------------------------------------------------
 
-test("(yie-d6a) sin -v/LEINA_VERBOSE, diagnostics viene vacío", async () => {
+test("(yie-ts-1) the vendored tree-sitter-yaml grammar loads and parses a valid document", async () => {
+  const { probeYamlGrammar } = await import("../src/infrastructure/extractors/yaml.ts");
+  assert.equal(await probeYamlGrammar(), null);
+});
+
+test("(yie-ts-2) flow-style compose (unreadable line by line) is extracted by tree-sitter", async () => {
+  const { YamlInfraExtractor } = await import("../src/infrastructure/extractors/yaml.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "yaml-ext-ts-flow-"));
+  const dcFile = join(tmp, "docker-compose.yml");
+  // Flow mappings, 4-space indentation, quoted keys and a long-form depends_on: the
+  // line-based fallback sees no service lines here; only a real YAML parse does.
+  writeFileSync(dcFile, `
+services: {web: {image: nginx, depends_on: ["api"]}}
+x-anchors: &defaults
+    restart: always
+`);
+  const dc2 = join(tmp, "compose.yaml");
+  writeFileSync(dc2, `
+services:
+    "api":
+        <<: *defaults
+        depends_on:
+            db:
+                condition: service_healthy
+    db:
+        image: postgres
+`);
+  try {
+    process.env.LEINA_VERBOSE = "1"; // a fallback would announce itself in diagnostics
+    const ext = new YamlInfraExtractor("test");
+    const flow = await ext.extract(tmp, [dcFile]);
+    assert.deepEqual(flow.diagnostics, [], `no fallback: ${JSON.stringify(flow.diagnostics)}`);
+    assert.deepEqual(flow.errors, []);
+    assert.deepEqual(flow.nodes.filter((n) => n.kind === "service").map((n) => n.label), ["web"]);
+    assert.equal(flow.edges.filter((e) => e.relation === "deploys").length, 1);
+
+    const block = await ext.extract(tmp, [dc2]);
+    assert.deepEqual(block.diagnostics, []);
+    assert.deepEqual(block.nodes.filter((n) => n.kind === "service").map((n) => n.label).sort(), ["api", "db"]);
+    const deploys = block.edges.filter((e) => e.relation === "deploys");
+    assert.equal(deploys.length, 1, "long-form depends_on yields one deploys edge (api → db)");
+  } finally {
+    delete process.env.LEINA_VERBOSE;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("(yie-ts-3) a file tree-sitter cannot parse cleanly (templated YAML) falls back per file", async () => {
+  const { YamlInfraExtractor } = await import("../src/infrastructure/extractors/yaml.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "yaml-ext-ts-helm-"));
+  const tpl = join(tmp, "deployment.yaml");
+  writeFileSync(tpl, `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "app.fullname" . }}
+{{- if .Values.extra }}
+  labels: {{ toYaml .Values.extra | nindent 4 }}
+{{- end }}
+`);
+  const ok = join(tmp, "ok.yaml");
+  writeFileSync(ok, "jobs:\n  build: {runs-on: x}\n");
+  try {
+    const ext = new YamlInfraExtractor("test");
+    const result = await ext.extract(tmp, [tpl, ok]);
+    assert.deepEqual(result.errors, []);
+    const labels = result.nodes.map((n) => n.label);
+    assert.ok(labels.includes("deployment.yaml"), "templated file still yields its config node");
+    assert.ok(labels.includes("build"), "a later clean file still takes the tree-sitter path");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// REQ-D6: an unusable grammar degrades to the line-based fallback, quietly by default
+// ---------------------------------------------------------------------------
+
+function brokenWasm(dir: string): string {
+  const p = join(dir, "not-a-grammar.wasm");
+  writeFileSync(p, "this is not wasm");
+  return p;
+}
+
+test("(yie-d6a) sin -v/LEINA_VERBOSE, diagnostics viene vacío (grammar sano o roto)", async () => {
   const { YamlInfraExtractor } = await import("../src/infrastructure/extractors/yaml.ts");
   const tmp = mkdtempSync(join(tmpdir(), "yaml-ext-d6-quiet-"));
   const cfgFile = join(tmp, "cfg.yaml");
   writeFileSync(cfgFile, "key: value\n");
   try {
     delete process.env.LEINA_VERBOSE;
-    const ext = new YamlInfraExtractor("test");
-    const result = await ext.extract(tmp, [cfgFile]);
-    assert.deepStrictEqual(result.diagnostics, []);
+    for (const ext of [new YamlInfraExtractor("test"), new YamlInfraExtractor("test", { wasmPath: brokenWasm(tmp) })]) {
+      const result = await ext.extract(tmp, [cfgFile]);
+      assert.deepStrictEqual(result.diagnostics, []);
+    }
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-test("(yie-d6b) con LEINA_VERBOSE=1, el diagnóstico aparece y cita 'external scanner' (no 'ABI')", async () => {
+test("(yie-d6b) con LEINA_VERBOSE=1 y un grammar que no carga, el diagnóstico nombra el fallback", async () => {
   const { YamlInfraExtractor } = await import("../src/infrastructure/extractors/yaml.ts");
   const tmp = mkdtempSync(join(tmpdir(), "yaml-ext-d6-verbose-"));
   const cfgFile = join(tmp, "cfg.yaml");
   writeFileSync(cfgFile, "key: value\n");
   try {
     process.env.LEINA_VERBOSE = "1";
-    const ext = new YamlInfraExtractor("test");
+    const ext = new YamlInfraExtractor("test", { wasmPath: brokenWasm(tmp) });
     const result = await ext.extract(tmp, [cfgFile]);
-    // The wasm's external scanner symbol is unresolved in this environment (verified
-    // independently of this test), so the fallback path — and its diagnostic — always
-    // fires here; this asserts the message content, not just its presence.
-    assert.ok(result.diagnostics.length >= 1, "esperaba al menos un diagnóstico con -v");
-    const joined = result.diagnostics.join("\n");
-    assert.match(joined, /external scanner/);
-    assert.doesNotMatch(joined, /ABI/);
+    assert.equal(result.diagnostics.length, 1);
+    assert.match(result.diagnostics[0]!, /failed to load .*line-based fallback/);
   } finally {
     delete process.env.LEINA_VERBOSE;
     rmSync(tmp, { recursive: true, force: true });
@@ -348,17 +427,20 @@ services:
     image: postgres
 `);
   try {
-    const ext = new YamlInfraExtractor("test");
+    const ext = new YamlInfraExtractor("test", { wasmPath: brokenWasm(tmp) });
     const quiet = await ext.extract(tmp, [dcFile]);
     process.env.LEINA_VERBOSE = "1";
     const verbose = await ext.extract(tmp, [dcFile]);
     delete process.env.LEINA_VERBOSE;
+    const healthy = await new YamlInfraExtractor("test").extract(tmp, [dcFile]);
 
     const svcNames = (r: typeof quiet) => r.nodes.filter((n) => n.kind === "service").map((n) => n.label).sort();
     assert.deepStrictEqual(svcNames(quiet), ["api", "db"]);
     assert.deepStrictEqual(svcNames(quiet), svcNames(verbose));
+    assert.deepStrictEqual(svcNames(quiet), svcNames(healthy), "fallback and tree-sitter agree on plain compose");
     const deploys = (r: typeof quiet) => r.edges.filter((e) => e.relation === "deploys").length;
     assert.strictEqual(deploys(quiet), deploys(verbose));
+    assert.strictEqual(deploys(quiet), deploys(healthy));
   } finally {
     delete process.env.LEINA_VERBOSE;
     rmSync(tmp, { recursive: true, force: true });

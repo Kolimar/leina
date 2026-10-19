@@ -4,17 +4,15 @@
 // Uses web-tree-sitter + tree-sitter-yaml.wasm — same wasm loader pattern as treesitter.ts.
 // No new npm dependencies.
 //
-// DEVIATION NOTE: tree-sitter-yaml.wasm (vendored from tree-sitter-wasms@0.1.13, see
-// scripts/vendor-wasm.ts) ships an external scanner symbol that the Emscripten runtime
-// bundled with web-tree-sitter@0.25.10 does not resolve (Language.load() and
-// setLanguage() succeed, but parser.parse() throws "resolved is not a function"). This is
-// NOT an ABI version mismatch — c_sharp.wasm from the same package has the same grammar
-// ABI (13) and parses fine; the difference is specific to yaml's external scanner. The
-// wasm IS loaded and tried (REQ-YIE-6), but when parse() throws we fall back to a
-// lightweight line-based YAML structure extractor that requires zero npm dependencies.
-// When a compatible wasm is available, tree-sitter takes over automatically. The
-// diagnostic below is debug-only (see isVerboseBuild) — the fallback is correct and this
-// is not actionable for end users.
+// Grammar: tree-sitter-yaml.wasm is the maintained @tree-sitter-grammars/tree-sitter-yaml
+// build (C external scanner, tree-sitter-cli 0.25, ABI 14), vendored by
+// scripts/vendor-wasm.ts. The earlier tree-sitter-wasms@0.1.13 build used a C++ scanner whose
+// libc++ imports web-tree-sitter 0.25's runtime does not export, so every parse() threw and
+// every YAML file silently took the line-based path. That path is kept as the per-file
+// fallback: for a file tree-sitter cannot parse cleanly (templated YAML such as Helm charts,
+// syntax errors) and for a grammar that fails to load or parse at all — extraction never
+// depends on the wasm being healthy. `probeYamlGrammar()` is the publish-time smoke check
+// (scripts/check-native-assets.ts).
 //
 // Bridge code↔infra: when a docker-compose service declares `build.context` or
 // `dockerfile` pointing to an actual code file in the project, emits a `reads` edge
@@ -39,47 +37,74 @@ const WTS_DIR = dirname(require.resolve("web-tree-sitter"));
 const WASMS_DIR = wasmAssetsDir();
 
 // ---------------------------------------------------------------------------
-// tree-sitter YAML initialization (best-effort — falls back if ABI mismatch)
+// tree-sitter YAML grammar (best-effort — the line-based fallback covers any failure)
 // ---------------------------------------------------------------------------
 
-let tsInitialized = false;
-let yamlLanguage: Language | null = null;
-let yamlWasmBroken = false; // true when parse() throws (external scanner symbol unresolved)
+type TsTree = import("web-tree-sitter").Tree;
 
-/** True when the user asked for verbose/profiling output — gates debug-only diagnostics
- *  that are expected/known-cause and not actionable (e.g. the yaml wasm fallback note). */
+/** One loaded grammar per wasm path. `reason` is set once it failed to load or a parse threw
+ *  (a wasm/runtime mismatch) — from then on every file takes the line-based path. */
+interface YamlGrammar {
+  parser: Parser | null;
+  reason: string | null;
+}
+
+let runtimeReady: Promise<void> | null = null;
+const grammars = new Map<string, Promise<YamlGrammar>>();
+
+/** True when the user asked for verbose/profiling output — gates debug-only diagnostics. */
 function isVerboseBuild(): boolean {
   return process.argv.includes("-v") || process.argv.includes("--profile") || process.env.LEINA_VERBOSE === "1";
 }
 
-async function tryGetYamlLanguage(): Promise<Language | null> {
-  if (yamlWasmBroken) return null;
-  if (yamlLanguage) return yamlLanguage;
+function defaultYamlWasmPath(): string {
+  return join(WASMS_DIR, YAML_WASM_FILE);
+}
+
+function loadYamlGrammar(wasmPath: string): Promise<YamlGrammar> {
+  let grammar = grammars.get(wasmPath);
+  if (!grammar) {
+    grammar = (async (): Promise<YamlGrammar> => {
+      try {
+        runtimeReady ??= Parser.init({ locateFile: (scriptName: string) => join(WTS_DIR, scriptName) });
+        await runtimeReady;
+        const language = await Language.load(readFileSync(wasmPath));
+        const parser = new Parser();
+        parser.setLanguage(language);
+        return { parser, reason: null };
+      } catch (err) {
+        return { parser: null, reason: `tree-sitter-yaml.wasm failed to load (${(err as Error).message})` };
+      }
+    })();
+    grammars.set(wasmPath, grammar);
+  }
+  return grammar;
+}
+
+/** Parse with tree-sitter; null when the grammar is unusable (the caller falls back). The
+ *  caller owns the returned tree and must delete() it — wasm memory is not GC-managed. */
+function parseYaml(grammar: YamlGrammar, content: string): TsTree | null {
+  if (grammar.reason !== null || !grammar.parser) return null;
   try {
-    if (!tsInitialized) {
-      await Parser.init({
-        locateFile: (scriptName: string) => join(WTS_DIR, scriptName),
-      });
-      tsInitialized = true;
-    }
-    const bytes = readFileSync(join(WASMS_DIR, YAML_WASM_FILE));
-    yamlLanguage = await Language.load(bytes);
-    return yamlLanguage;
-  } catch {
-    yamlWasmBroken = true;
+    return grammar.parser.parse(content);
+  } catch (err) {
+    grammar.reason = `tree-sitter-yaml parse failed (${(err as Error).message})`;
     return null;
   }
 }
 
-/** Try tree-sitter parse; returns null (and sets yamlWasmBroken) on ABI mismatch. */
-function tryParseWithTreeSitter(language: Language, content: string): import("web-tree-sitter").Tree | null {
+/**
+ * Smoke-check the vendored YAML grammar: load it and parse a small valid document. Returns
+ * null when tree-sitter parses it cleanly, else why it cannot (the extractor would fall back).
+ */
+export async function probeYamlGrammar(wasmPath: string = defaultYamlWasmPath()): Promise<string | null> {
+  const grammar = await loadYamlGrammar(wasmPath);
+  const tree = parseYaml(grammar, "services:\n  api:\n    depends_on: [db]\n");
+  if (!tree) return grammar.reason ?? "tree-sitter-yaml unavailable";
   try {
-    const parser = new Parser();
-    parser.setLanguage(language);
-    return parser.parse(content);
-  } catch {
-    yamlWasmBroken = true;
-    return null;
+    return tree.rootNode.hasError ? "tree-sitter-yaml reported errors on a valid probe document" : null;
+  } finally {
+    tree.delete();
   }
 }
 
@@ -172,7 +197,9 @@ function blockSequenceItems(node: TsNode): TsNode[] {
   const items: TsNode[] = [];
   for (const child of children(node)) {
     if (child.type !== "block_sequence_item") continue;
-    const valueNode = child.childForFieldName("value");
+    // The grammar gives `- <value>` no field name: the value is the item's first named
+    // child that is not a comment (the `-` marker is anonymous).
+    const valueNode = children(child).find((c) => c.isNamed && c.type !== "comment");
     if (valueNode) items.push(valueNode);
   }
   return items;
@@ -646,18 +673,6 @@ function ghEmitJob(content: string, configId: string, yamlRelPath: string, nodes
 // Per-file orchestration (shared by the extractor's main loop)
 // ---------------------------------------------------------------------------
 
-/** Record a diagnostic describing why tree-sitter is unavailable (load error vs external
- *  scanner symbol unresolved). Debug-only: silent unless isVerboseBuild(). */
-function pushLoadDiagnostic(language: Language | null, diagnostics: string[]): void {
-  if (!isVerboseBuild()) return;
-  if (!language && !yamlWasmBroken) {
-    // First load attempt failed — not the scanner issue, just a load error
-    diagnostics.push("yaml-infra: tree-sitter-yaml.wasm failed to load — using line-based fallback");
-  } else if (yamlWasmBroken) {
-    diagnostics.push("yaml-infra: tree-sitter-yaml wasm external scanner symbol unresolved — using line-based fallback");
-  }
-}
-
 /** Emit nodes/edges for a parsed root mapping according to its detected format. */
 function tsExtractByFormat(
   rootMapping: TsNode,
@@ -678,51 +693,45 @@ function tsExtractByFormat(
 }
 
 /**
- * Attempt the tree-sitter extraction path for one file.
- * Returns true when the file was handled (skip fallback); false to fall through to the fallback.
+ * Attempt the tree-sitter extraction path for one file. Returns true when the file was
+ * handled; false to fall through to the line-based extractor — the grammar is unusable, or
+ * the file does not parse cleanly (templated YAML, syntax errors), which the line-based path
+ * either reads tolerantly or reports (tab indentation).
  */
 function tryTreeSitterFile(
-  language: Language,
+  grammar: YamlGrammar,
   content: string,
   yamlRelPath: string,
   yamlAbsPath: string,
   root: string,
   nodes: GraphNode[],
   edges: GraphEdge[],
-  errors: string[],
-  diagnostics: string[],
 ): boolean {
-  const tree = tryParseWithTreeSitter(language, content);
-  if (!tree || yamlWasmBroken) {
-    // If tryParseWithTreeSitter returned null, yamlWasmBroken was set → fall through to fallback
-    if (yamlWasmBroken && isVerboseBuild()) {
-      diagnostics.push("yaml-infra: tree-sitter-yaml.wasm parse failed (external scanner symbol unresolved) — switching to line-based fallback");
+  const tree = parseYaml(grammar, content);
+  if (!tree) return false;
+  try {
+    if (tree.rootNode.hasError) return false;
+    const rootMapping = findFirstMapping(tree.rootNode);
+    if (!rootMapping) {
+      // Empty, comment-only or sequence-rooted document: a generic config node.
+      nodes.push({ id: makeId(yamlRelPath), label: yamlRelPath, fileType: "config", sourceFile: yamlRelPath, kind: "config" });
+      return true;
     }
-    return false;
-  }
-  if (tree.rootNode.hasError) {
-    errors.push(`yaml-infra: YAML syntax error in ${yamlRelPath} — skipping`);
+    tsExtractByFormat(rootMapping, yamlRelPath, yamlAbsPath, root, nodes, edges);
     return true;
+  } finally {
+    tree.delete();
   }
-  const rootMapping = findFirstMapping(tree.rootNode);
-  if (!rootMapping) {
-    diagnostics.push(`yaml-infra: ${yamlRelPath} has no root mapping, treated as generic config`);
-    nodes.push({ id: makeId(yamlRelPath), label: yamlRelPath, fileType: "config", sourceFile: yamlRelPath, kind: "config" });
-    return true;
-  }
-  tsExtractByFormat(rootMapping, yamlRelPath, yamlAbsPath, root, nodes, edges);
-  return true;
 }
 
-/** Extract a single YAML file via tree-sitter (when available) or the line-based fallback. */
+/** Extract a single YAML file via tree-sitter (when usable) or the line-based fallback. */
 function extractYamlFile(
   file: string,
   root: string,
-  language: Language | null,
+  grammar: YamlGrammar,
   nodes: GraphNode[],
   edges: GraphEdge[],
   errors: string[],
-  diagnostics: string[],
 ): void {
   const yamlRelPath = relative(root, file);
   let content: string;
@@ -733,12 +742,7 @@ function extractYamlFile(
     return;
   }
 
-  // ------ Tree-sitter path (when wasm works) ------
-  if (language && !yamlWasmBroken) {
-    if (tryTreeSitterFile(language, content, yamlRelPath, file, root, nodes, edges, errors, diagnostics)) {
-      return;
-    }
-  }
+  if (tryTreeSitterFile(grammar, content, yamlRelPath, file, root, nodes, edges)) return;
 
   // ------ Line-based fallback path ------
   const fileErrors = fallbackExtract(content, yamlRelPath, file, root, nodes, edges);
@@ -749,12 +753,19 @@ function extractYamlFile(
 // YamlInfraExtractor
 // ---------------------------------------------------------------------------
 
+export interface YamlInfraExtractorOptions {
+  /** Grammar wasm to load instead of the vendored assets/wasm/tree-sitter-yaml.wasm (tests). */
+  wasmPath?: string;
+}
+
 export class YamlInfraExtractor implements GraphExtractor {
   readonly id = "yaml-infra";
   readonly version: string;
+  private readonly wasmPath: string;
 
-  constructor(version?: string) {
+  constructor(version?: string, opts: YamlInfraExtractorOptions = {}) {
     this.version = version ?? readPackageVersion();
+    this.wasmPath = opts.wasmPath ?? defaultYamlWasmPath();
   }
 
   supports(filePath: string): boolean {
@@ -768,13 +779,14 @@ export class YamlInfraExtractor implements GraphExtractor {
     const errors: string[] = [];
     const diagnostics: string[] = [];
 
-    // Attempt to load the tree-sitter YAML language (REQ-YIE-6).
-    // Falls back transparently if the wasm has an ABI incompatibility.
-    const language = await tryGetYamlLanguage();
-    pushLoadDiagnostic(language, diagnostics);
-
+    const grammar = await loadYamlGrammar(this.wasmPath);
     for (const file of files) {
-      extractYamlFile(file, root, language, nodes, edges, errors, diagnostics);
+      extractYamlFile(file, root, grammar, nodes, edges, errors);
+    }
+    // Set by a failed load, or by the first parse that threw: every file after it (and with a
+    // failed load, every file) took the line-based path.
+    if (grammar.reason !== null && files.length > 0 && isVerboseBuild()) {
+      diagnostics.push(`yaml-infra: ${grammar.reason} — using the line-based fallback`);
     }
 
     return {
