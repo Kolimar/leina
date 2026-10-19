@@ -368,6 +368,17 @@ function fmtBytes(n: number): string {
   return `${n} B`;
 }
 
+// Right-hand side of the compact size line. While another process still reads an older
+// snapshot, VACUUM's pages wait in the WAL and the on-disk size has temporarily grown —
+// say when the space comes back instead of printing that inflated number.
+function compactSizeOutcome(r: CompactReport): string {
+  if (r.dryRun) return "(unchanged — dry run)";
+  if (r.reclaimPending === true) {
+    return "-> space is reclaimed once the other leina processes using the memory db close";
+  }
+  return `-> ${fmtBytes(r.dbBytesAfter)}`;
+}
+
 // memory compact <dir> [--keep N] [--sessions-older-than DAYS] [--dry-run]
 // GC this project's superseded snapshot rows (every topic's LIVE row is always kept;
 // --keep N retains the N most recent snapshots per topic, default 0 = drop them all),
@@ -405,11 +416,7 @@ function memCompact(rest: string[], dir: string): void {
     `compact: ${verb} ${r.supersededRemoved} superseded snapshot(s), ` +
       `${r.anchorsRemoved} anchor row(s)${sessionsNote}`,
   );
-  console.log(
-    r.dryRun
-      ? `db size: ${fmtBytes(r.dbBytesBefore)} (unchanged — dry run)`
-      : `db size: ${fmtBytes(r.dbBytesBefore)} -> ${fmtBytes(r.dbBytesAfter)}`,
-  );
+  console.log(`db size: ${fmtBytes(r.dbBytesBefore)} ${compactSizeOutcome(r)}`);
   // The removals above are committed; only the space reclaim failed — report, don't hide.
   if (r.vacuumError !== undefined) {
     process.stderr.write(

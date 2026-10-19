@@ -43,9 +43,19 @@ export interface CompactReport {
   sessionsRemoved: number;
   /** On-disk size (db + WAL sidecar) before compaction, in bytes. */
   dbBytesBefore: number;
-  /** On-disk size after VACUUM + checkpoint; equals dbBytesBefore on dry runs. */
+  /**
+   * On-disk size after VACUUM + checkpoint; equals dbBytesBefore on dry runs. Not the
+   * final size when `reclaimPending` is set (VACUUM's pages still sit in the WAL).
+   */
   dbBytesAfter: number;
   dryRun: boolean;
+  /**
+   * True when the post-VACUUM checkpoint could not fold the WAL back into the main file
+   * because another connection was still reading an older snapshot: the space is given
+   * back once those other processes close, so dbBytesAfter (which then includes the
+   * rewritten pages in the WAL) must not be presented as the result.
+   */
+  reclaimPending?: boolean;
   /**
    * Set when the GC committed but VACUUM could not run (e.g. another process grabbed the
    * db in between). The removals above stand and the db is consistent; only the disk

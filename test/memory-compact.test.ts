@@ -551,6 +551,48 @@ test("(compact-15) CLI: a VACUUM failure prints the removal report first, then t
   }
 });
 
+test("(compact-17) a concurrent reader blocks the WAL fold-back: reported as pending, not as a grown db", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-compact-reader-home-"));
+  const repoDir = mkdtempSync(join(tmpdir(), "leina-compact-reader-"));
+  const savedHome = process.env.LEINA_HOME;
+  process.env.LEINA_HOME = home;
+  const out: string[] = [];
+  const log = mock.method(console, "log", (...a: unknown[]) => { out.push(a.join(" ")); });
+  const dbPath = join(home, "memory.db");
+  const seed = new MemoryStore(dbPath, deriveProjectKey(repoDir).key);
+  for (let i = 1; i <= 30; i++) {
+    seed.save({ title: `Rev ${i}`, content: `${"payload ".repeat(200)}${i}`, type: "manual", topicKey: "t/reader" });
+  }
+  // Another leina process mid-read: an open read transaction pins the pre-VACUUM snapshot.
+  const reader = new DatabaseSync(dbPath);
+  try {
+    reader.exec("BEGIN");
+    reader.prepare("SELECT COUNT(*) AS n FROM observations").get();
+    const report = seed.compact();
+    assert.equal(report.supersededRemoved, 29);
+    assert.equal(report.reclaimPending, true, "the TRUNCATE checkpoint could not complete");
+
+    seed.save({ title: "Rev 31", content: "next", type: "manual", topicKey: "t/reader" });
+    await handleMemory(["compact", repoDir]);
+    const sizeLine = out.find((l) => l.startsWith("db size:")) ?? "";
+    assert.match(sizeLine, /reclaimed once/, `pending reclaim is reported: ${sizeLine}`);
+    assert.doesNotMatch(sizeLine, /->\s*[\d.]+ [KM]?B/, "no inflated after-size");
+
+    reader.exec("COMMIT");
+    const settled = seed.compact();
+    assert.equal(settled.reclaimPending, false, "with the reader gone the WAL folds back");
+    assert.ok(settled.dbBytesAfter <= report.dbBytesBefore, "and the size report is honest again");
+  } finally {
+    log.mock.restore();
+    reader.close();
+    seed.close();
+    if (savedHome === undefined) delete process.env.LEINA_HOME;
+    else process.env.LEINA_HOME = savedHome;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
 test("(compact-16) CLI: a write-locked db fails compact (even --dry-run) with an actionable message, no stack trace", async () => {
   const home = mkdtempSync(join(tmpdir(), "leina-compact-locked-home-"));
   const repoDir = mkdtempSync(join(tmpdir(), "leina-compact-locked-"));

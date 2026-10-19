@@ -1511,8 +1511,10 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   //     addresses documents BY rowid. After every VACUUM the index is therefore rebuilt
   //     from scratch over live rows only (all projects — the FTS table is global),
   //     mirroring schema.ts migrateV3toV4. Skipped in LIKE mode (no obs_fts).
-  //   · VACUUM runs OUTSIDE any transaction (SQLite requires it) after the GC commit;
-  //     busy_timeout=5000 lets it wait for concurrent readers. If it still fails
+  //   · VACUUM runs OUTSIDE any transaction (SQLite requires it) after the GC commit.
+  //     In WAL mode concurrent READERS never block it (its output lands in the WAL;
+  //     only the later TRUNCATE checkpoint waits on them — see reclaimPending), while
+  //     busy_timeout=5000 lets it wait for a concurrent WRITER. If it still fails
   //     (another process holds the db), the GC is already committed and NO rowids were
   //     renumbered (VACUUM is atomic), so the FTS index is still valid — the report
   //     keeps the removal counts and carries `vacuumError`; re-running compact later
@@ -1660,10 +1662,22 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     // so the rowid-addressed FTS index must be rebuilt. Skipped in LIKE mode (no obs_fts).
     if (this.fts5) this._rebuildFtsIndex();
 
-    // Fold the WAL back into the main file so the reported after-size is honest.
-    try { this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);"); } catch { /* size reporting only */ }
+    // Fold the WAL back into the main file so the reported after-size is honest. A
+    // connection still reading an older snapshot (another leina process) blocks the
+    // TRUNCATE checkpoint past busy_timeout: the row then reports busy=1 and/or fewer
+    // frames checkpointed than logged, and VACUUM's rewritten pages stay in the WAL —
+    // the file has temporarily GROWN. That is flagged as reclaimPending instead of being
+    // reported as the result; the last connection to close checkpoints and drops the WAL.
+    let reclaimPending: boolean;
+    try {
+      const ck = this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as unknown as
+        { busy: number; log: number; checkpointed: number } | undefined;
+      reclaimPending = ck?.busy !== 0 || ck.log !== ck.checkpointed;
+    } catch {
+      reclaimPending = true; // size reporting only — the compaction itself is done
+    }
 
-    return { ...removed, dbBytesBefore, dbBytesAfter: this.dbSizeOnDisk(), dryRun: false };
+    return { ...removed, dbBytesBefore, dbBytesAfter: this.dbSizeOnDisk(), dryRun: false, reclaimPending };
   }
 
 
