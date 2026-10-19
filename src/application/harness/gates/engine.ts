@@ -45,8 +45,10 @@ function withTimeout(promise: Promise<GateOutcome>, ms: number): Promise<GateOut
   return Promise.race([
     promise.finally(() => clearTimeout(timer)),
     new Promise<GateOutcome>((resolve) => {
+      // NOT unref'd: a gate stuck on a promise that never settles holds no handle,
+      // so an unref'd timer would let the event loop drain and the process exit
+      // before the timeout is reported (fail-open). finally() above clears it.
       timer = setTimeout(() => resolve({ status: "timeout", detail: `gate timed out after ${ms}ms` }), ms);
-      timer.unref?.();
     }),
   ]);
 }
