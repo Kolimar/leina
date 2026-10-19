@@ -19,6 +19,21 @@ import { DEVIN_MANAGED_EVENTS } from "../src/application/install/devin-hooks.ts"
 import { serializeSelection } from "../src/application/install/catalog.ts";
 import { shareSelectionFile } from "../src/infrastructure/install/share-paths.ts";
 import { trustWorkspace, untrustWorkspace } from "../src/application/install/trust.ts";
+import { claudeHooksJson } from "../src/application/install/claude-hooks.ts";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+/** The CLI entry this checkout runs — what hooks written by this install launch. */
+const THIS_CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
+
+/** Consent enabled + trusted + Claude Code project hooks: what injection needs to fire. */
+function makeReadyForInjection(root: string, cli = THIS_CLI): void {
+  mkdirSync(join(root, ".leina"), { recursive: true });
+  writeFileSync(join(root, ".leina", "consent"), "enabled");
+  trustWorkspace(root);
+  mkdirSync(join(root, ".claude"), { recursive: true });
+  writeFileSync(join(root, ".claude", "settings.json"), claudeHooksJson({ command: process.execPath, args: [cli] }, null)!);
+}
 
 function withTmpHome<T>(fn: (homeDir: string) => T): T {
   const home = mkdtempSync(join(tmpdir(), "leina-doctor-"));
@@ -350,6 +365,7 @@ test("(NG6-1a) injection readiness ok: global memory.db + resolvable project key
     const leinaDir = join(root, ".leina");
     mkdirSync(leinaDir, { recursive: true });
     writeFileSync(join(leinaDir, "graph.db"), "");
+    makeReadyForInjection(root);
 
     const report = runDoctor("0.8.0-test", root);
     const check = find(report.results, "project", "injection readiness");
@@ -370,6 +386,7 @@ test("(NG6-1b) injection readiness warn: global memory.db present + project key 
     const memDir = join(home, ".leina");
     mkdirSync(memDir, { recursive: true });
     writeFileSync(join(memDir, "memory.db"), "");
+    makeReadyForInjection(root);
 
     const report = runDoctor("0.8.0-test", root);
     const check = find(report.results, "project", "injection readiness");
@@ -469,5 +486,102 @@ test("(doc-ri-c) runDoctor: DoctorReport serializable como JSON con repoIdentity
     const parsed = JSON.parse(json!) as typeof report;
     assert.ok(Array.isArray(parsed.results), "results presente tras round-trip JSON");
     assert.ok(typeof parsed.exitCode === "number", "exitCode presente tras round-trip JSON");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Agent-hook wiring: which install the hooks launch, per-host wiring, injection gate,
+// and the committable .leina files a bare ignore line would hide.
+// ---------------------------------------------------------------------------
+
+test("(doc-hooks-1) hook launch: ok on this install, warn on another install or a missing CLI", () => {
+  withTmpHome((home) => {
+    const root = join(home, "proj");
+    mkdirSync(root, { recursive: true });
+    makeReadyForInjection(root);
+    let check = find(runDoctor("0.8.0-test", root).results, "hooks", "hooks (claude-project)");
+    assert.equal(check?.status, "ok", check?.detail);
+    assert.match(check?.detail ?? "", /5 managed entries → this install/);
+
+    const other = join(home, "other-install");
+    mkdirSync(join(other, "dist", "cli"), { recursive: true });
+    writeFileSync(join(other, "package.json"), "{}");
+    writeFileSync(join(other, "dist", "cli", "index.js"), "");
+    makeReadyForInjection(root, join(other, "dist", "cli", "index.js"));
+    check = find(runDoctor("0.8.0-test", root).results, "hooks", "hooks (claude-project)");
+    assert.equal(check?.status, "warn");
+    assert.match(check?.detail ?? "", /hooks run another leina install \(.*other-install, running .*\) — run leina activate \/ leina repair/);
+
+    makeReadyForInjection(root, join(home, "gone", "dist", "cli", "index.js"));
+    check = find(runDoctor("0.8.0-test", root).results, "hooks", "hooks (claude-project)");
+    assert.equal(check?.status, "warn");
+    assert.match(check?.detail ?? "", /missing CLI/);
+  });
+});
+
+test("(doc-hooks-2) a selected host with no hooks anywhere warns while consent is enabled", () => {
+  withTmpHome((home) => {
+    mkdirSync(join(home, ".leina", "share"), { recursive: true });
+    writeFileSync(shareSelectionFile(), serializeSelection({ skills: null, agents: null, hosts: ["claude"] }));
+    const root = join(home, "proj");
+    mkdirSync(join(root, ".leina"), { recursive: true });
+    writeFileSync(join(root, ".leina", "consent"), "enabled");
+    trustWorkspace(root);
+    let report = runDoctor("0.8.0-test", root);
+    assert.equal(find(report.results, "hooks", "claude hooks")?.status, "warn");
+    const readiness = find(report.results, "project", "injection readiness");
+    if (readiness?.status !== "fail") assert.match(readiness?.detail ?? "", /no agent hooks wired/);
+
+    // User-global Claude Code hooks count as wiring.
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", "settings.json"), claudeHooksJson({ command: process.execPath, args: [THIS_CLI] }, null, "user")!);
+    report = runDoctor("0.8.0-test", root);
+    const wired = find(report.results, "hooks", "claude hooks");
+    assert.equal(wired?.status, "ok");
+    assert.match(wired?.detail ?? "", /claude-user/);
+  });
+});
+
+test("(doc-hooks-3) injection readiness needs consent, trust and wiring before it can be ok", () => {
+  withTmpHome((home) => {
+    mkdirSync(join(home, ".leina"), { recursive: true });
+    writeFileSync(join(home, ".leina", "memory.db"), "");
+    const root = join(home, "proj");
+    mkdirSync(root, { recursive: true });
+    assert.equal(find(runDoctor("0.8.0-test", root).results, "project", "injection readiness")?.status, "info", "no consent");
+    makeReadyForInjection(root);
+    untrustWorkspace(root);
+    const untrusted = find(runDoctor("0.8.0-test", root).results, "project", "injection readiness");
+    assert.equal(untrusted?.status, "warn");
+    assert.match(untrusted?.detail ?? "", /not trusted/);
+  });
+});
+
+test("(doc-hooks-4) a committable .leina file hidden by a bare .leina/ line warns, naming the rule", () => {
+  withTmpHome((home) => {
+    const root = join(home, "repo");
+    mkdirSync(root, { recursive: true });
+    if (spawnSync("git", ["init", "-q"], { cwd: root }).status !== 0) return; // no git on this machine
+    mkdirSync(join(root, ".leina"), { recursive: true });
+    writeFileSync(join(root, ".leina", "config.json"), '{"name":"x"}\n');
+    writeFileSync(join(root, ".gitignore"), `.leina/\n${GITIGNORE_START}\n.leina/*\n!.leina/config.json\n!.leina/memory-export.jsonl\n# leina:ignore:end\n`);
+    const hidden = find(runDoctor("0.8.0-test", root).results, "project", ".leina/config.json");
+    assert.equal(hidden?.status, "warn");
+    assert.match(hidden?.detail ?? "", /git-ignored \(\.gitignore:1:\.leina\/\)/);
+
+    writeFileSync(join(root, ".gitignore"), `.leina/*\n${GITIGNORE_START}\n.leina/*\n!.leina/config.json\n!.leina/memory-export.jsonl\n# leina:ignore:end\n`);
+    assert.equal(find(runDoctor("0.8.0-test", root).results, "project", ".leina/config.json"), undefined, "re-included → no warning");
+  });
+});
+
+test("(doc-hooks-5) a pre-3.0 Devin refresh entry is named", () => {
+  withTmpHome((home) => {
+    const root = join(home, "proj");
+    mkdirSync(join(root, ".devin"), { recursive: true });
+    const legacy = { PostToolUse: [{ matcher: "^(edit|write)$", hooks: [{ type: "command", command: `${process.execPath} ${THIS_CLI} refresh ${root}` }] }] };
+    writeFileSync(join(root, ".devin", "hooks.v1.json"), JSON.stringify(legacy));
+    const check = find(runDoctor("0.8.0-test", root).results, "hooks", "hooks (devin-project)");
+    assert.equal(check?.status, "warn");
+    assert.match(check?.detail ?? "", /pre-3\.0 'refresh' entry/);
   });
 });

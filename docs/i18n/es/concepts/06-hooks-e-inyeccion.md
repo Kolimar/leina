@@ -231,7 +231,11 @@ Detalles por evento:
 
 `leina doctor` chequea la *injection-readiness*: que existan la memoria global y el
 `graph.db`, para detectar un estado degradado donde la inyección
-activa funcionaría a medias. Una invariante clave: **doctor nunca abre SQLite** — todos los
+activa funcionaría a medias — y que algo dispare: consent habilitado, workspace de confianza y
+hooks cableados para al menos un host. Su grupo **hooks** dice, por archivo de hooks, si cada
+entrada gestionada lanza la instalación que estás corriendo (una reinstalación o un cambio de
+version manager las puede dejar apuntando a otra o a nada — `leina repair` las reescribe), y
+avisa cuando un host elegido no tiene hooks en ningún lugar que carga. Una invariante clave: **doctor nunca abre SQLite** — todos los
 chequeos son solo de filesystem (stat, leer texto/JSON). Eso evita efectos colaterales (WAL/SHM)
 y lo mantiene rápido y seguro. Su chequeo **workspace trust** dice si el gate puede actuar acá
 siquiera: un warning cuando el consent es `enabled` pero esta máquina no tiene el registro de

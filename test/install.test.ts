@@ -90,6 +90,33 @@ test(".gitignore merge does not treat a path containing the marker text as the m
   assert.equal(merged.split("\n").filter((l) => l.trim() === GITIGNORE_START).length, 1);
 });
 
+test("(gitignore-bare-1) a bare .leina line before the block becomes .leina/* so the negations work", () => {
+  for (const bare of [".leina", ".leina/", "/.leina", "/.leina/", "  .leina/  "]) {
+    const user = `node_modules/\n${bare}\ndist/\n`;
+    const once = mergeGitignore(user);
+    const lines = once.split("\n");
+    assert.ok(!lines.some((l) => [".leina", ".leina/", "/.leina", "/.leina/"].includes(l.trim())), `${bare} rewritten`);
+    assert.deepEqual(lines.slice(0, 3), ["node_modules/", ".leina/*", "dist/"], "rewritten in place");
+    assert.equal(mergeGitignore(once), once, "idempotent");
+  }
+  // Also when the managed block already exists below it (the usual hand-edited repo).
+  const withBlock = mergeGitignore(`.leina/\n${GITIGNORE_START}\nold\n${GITIGNORE_END}\n`);
+  assert.equal(withBlock.split("\n")[0], ".leina/*");
+});
+
+test("(gitignore-bare-2) a bare .leina line AFTER the block is dropped (it would re-hide config.json)", () => {
+  const merged = mergeGitignore(`${GITIGNORE_START}\nold\n${GITIGNORE_END}\n.leina/\nbuild/\n`);
+  const afterEnd = merged.split(GITIGNORE_END)[1]!.split("\n").map((l) => l.trim()).filter(Boolean);
+  assert.deepEqual(afterEnd, ["build/"]);
+  assert.ok(merged.split("\n").includes("!.leina/config.json"), "the block still re-includes config.json");
+});
+
+test("(gitignore-bare-3) look-alike rules and comments are left alone", () => {
+  const user = "# .leina/\n.leinarc\nsub/.leina/\n.leina/*.db\n";
+  const merged = mergeGitignore(user);
+  for (const l of ["# .leina/", ".leinarc", "sub/.leina/", ".leina/*.db"]) assert.ok(merged.split("\n").includes(l), l);
+});
+
 test(".gitignore merge refuses malformed managed sections", () => {
   assert.throws(() => mergeGitignore(`${GITIGNORE_START}\nmissing end\n`), /malformed|managed section/i);
 });

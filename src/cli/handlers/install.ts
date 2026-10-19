@@ -732,6 +732,36 @@ function hasInitEvidence(project: string): boolean {
   return agents?.includes("leina:protocol:start") ?? false;
 }
 
+// Hook wiring the project ALREADY carries is refreshed whatever the host selection or the
+// init mode says: its baked CLI path may point at another (or a removed) leina install
+// (doctor: "hooks run another leina install"). `covered` lists the hosts whose project
+// files the init writers just rewrote, so they are not written twice.
+function refreshExistingHookWiring(
+  project: string,
+  cliBase: CliBase,
+  covered: HostId[],
+  written: string[],
+  failures: string[],
+): void {
+  if (!covered.includes("devin") && existsSync(join(project, ".devin", "hooks.v1.json"))) {
+    writeDevinHooks(project, cliBase, written, failures);
+  }
+  if (!covered.includes("claude") && hasClaudeHookWiring(project)) {
+    writeClaudeHooksStep(project, cliBase, written, failures);
+  }
+}
+
+function hasClaudeHookWiring(project: string): boolean {
+  return readIfExists(join(project, ".claude", "settings.json"))?.includes(AGENT_HOOK_MARK) ?? false;
+}
+
+function printRepairProject(label: string, written: string[], failures: string[]): void {
+  console.log(label);
+  for (const w of written) console.log(`  + ${w}`);
+  for (const f of failures) console.log(`  ✖ ${f}`);
+  if (failures.length > 0) process.exitCode = 1;
+}
+
 // PROJECT phase of repair: re-wire only over a previous init, never against an opt-out.
 function repairProjectPhase(project: string): void {
   const consent = readConsentFlag(project);
@@ -747,28 +777,34 @@ function repairProjectPhase(project: string): void {
   // It must NOT prompt for --hosts or `fail()` the way `init` does: with init evidence but no
   // persisted host on this machine there is nothing to faithfully re-wire, so skip fail-open
   // (advisory) and let the rest of repair — shell-wrapper, doctor — still run.
-  const persistedHosts = persistedHostsRaw();
-  if (persistedHosts === undefined) {
-    console.log(
-      `project: initialized, but no host selection is persisted on this machine — skipped\n` +
-        `  (run 'leina init ${project} --hosts <host>' to re-wire it; known hosts: ${knownHostIds()})`,
-    );
-    return;
-  }
   const cliBase = deriveCliCommand({
     cliEntry: resolvePath(process.argv[1] ?? "."),
     execPath: process.execPath,
   });
+  const persistedHosts = persistedHostsRaw();
+  if (persistedHosts === undefined) {
+    // Nothing to faithfully re-wire per host — but the host-neutral .gitignore block and
+    // the hook files this repo already carries are safe to refresh.
+    const written: string[] = [];
+    const failures: string[] = [];
+    writeGitignoreStep(project, written, failures);
+    refreshExistingHookWiring(project, cliBase, [], written, failures);
+    printRepairProject(
+      `project: initialized, but no host selection is persisted on this machine — existing wiring refreshed only\n` +
+        `  (run 'leina init ${project} --hosts <host>' to re-wire it; known hosts: ${knownHostIds()})`,
+      written,
+      failures,
+    );
+    return;
+  }
   // Preserve the original profile: the capabilities section marks a Windsurf init.
   const agents = readIfExists(join(project, "AGENTS.md"));
   const profile = agents?.includes("leina:capabilities:start") ? WINDSURF_PROFILE : DEVIN_PROFILE;
   const written: string[] = [];
   const failures: string[] = [];
   const mode = writeInitArtifacts(project, profile, cliBase, persistedHosts, written, failures);
-  console.log(`project [${mode.toUpperCase()}] re-wired:`);
-  for (const w of written) console.log(`  + ${w}`);
-  for (const f of failures) console.log(`  ✖ ${f}`);
-  if (failures.length > 0) process.exitCode = 1;
+  refreshExistingHookWiring(project, cliBase, mode === "full" ? persistedHosts : [], written, failures);
+  printRepairProject(`project [${mode.toUpperCase()}] re-wired:`, written, failures);
 }
 
 // Git Bash shim FIX (opt-in): --write-shell-wrapper writes the ~/.bashrc wrapper that

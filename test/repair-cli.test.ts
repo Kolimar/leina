@@ -166,12 +166,43 @@ test("(rep-e) init evidence but no persisted host: repair skips the re-wire fail
 
     const { status, stdout } = runCli(env, "repair", dir);
     // Graceful skip, not the `init`-style hard `--hosts is required` abort.
-    assert.match(stdout, /no host selection is persisted on this machine — skipped/);
+    assert.match(stdout, /no host selection is persisted on this machine — existing wiring refreshed only/);
     // Proof it did NOT abort mid-command: repair ran through to the doctor summary.
     assert.match(stdout, /still failing/);
     assert.equal(status, 1, "exit driven by doctor, not by an abort");
     // The re-wire was skipped — repair wrote no host artifacts.
     assert.ok(!existsSync(join(dir, ".devin", "hooks.v1.json")), "hooks NOT written");
+  } finally {
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(rep-f) repair points stale hook wiring at this install and un-hides the committable .leina files", () => {
+  const { env, cleanup } = makeSandbox();
+  const dir = tmpProject();
+  try {
+    assert.equal(runCli(env, "activate").status, 0, "activate ok (devin)");
+    assert.equal(runCli(env, "init", "--project", dir).status, 0, "init ok");
+    const stale = "/old/install/dist/cli/index.js";
+    const devinHooks = join(dir, ".devin", "hooks.v1.json");
+    writeFileSync(devinHooks, readFileSync(devinHooks, "utf8").split(CLI).join(stale));
+    assert.ok(readFileSync(devinHooks, "utf8").includes(stale), "fixture: hooks now launch the stale install");
+    // Claude Code project wiring outside the devin-only selection (init --claude-hooks).
+    mkdirSync(join(dir, ".claude"), { recursive: true });
+    writeFileSync(
+      join(dir, ".claude", "settings.json"),
+      JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: `/usr/bin/node ${stale} agent-hook Stop` }] }] } }),
+    );
+    const gi = join(dir, ".gitignore");
+    writeFileSync(gi, `.leina/\n${readFileSync(gi, "utf8")}`);
+
+    runCli(env, "repair", dir);
+    assert.ok(!readFileSync(devinHooks, "utf8").includes(stale), "Devin project hooks rewritten");
+    const claude = readFileSync(join(dir, ".claude", "settings.json"), "utf8");
+    assert.ok(!claude.includes(stale), "Claude Code project hooks rewritten");
+    assert.match(claude, /agent-hook Stop --host claude/);
+    assert.equal(readFileSync(gi, "utf8").split("\n")[0], ".leina/*", "bare .leina/ line rewritten");
   } finally {
     cleanup();
     rmSync(dir, { recursive: true, force: true });

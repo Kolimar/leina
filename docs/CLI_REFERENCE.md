@@ -810,7 +810,16 @@ normalised absolute path; `normalizedRemote` is the `host/org/repo` canonical fo
 changes its exit code (it is informational). The project group includes a **workspace trust**
 check: ok when trusted on this machine; warn when consent is `enabled` but there is no trust
 record (hint: re-run `leina init <root>`); info when consent is `disabled` or the repo was
-never initialized.
+never initialized. The **hooks** group checks every managed entry in the four hook files
+(`.devin/hooks.v1.json`, `.claude/settings.json`, `~/.config/devin/config.json`,
+`~/.claude/settings.json`): warn when an entry launches a missing CLI or another leina install
+than the one running doctor ("hooks run another leina install (X, running Y) — run leina
+activate / leina repair"), or when a pre-3.0 Devin `refresh` entry remains; and, per selected
+host, warn when consent is enabled but no hooks are wired anywhere that host loads them.
+**injection readiness** is ok only with consent enabled, a trusted workspace and hooks wired
+for at least one host (plus memory.db, a resolvable key and graph.db). A committable
+`.leina/config.json` / `.leina/memory-export.jsonl` that exists but is git-ignored warns,
+naming the rule.
 
 ### `verify [dir] [--json]`
 Re-run the same checks as `doctor` but with an **actionable exit code** — exit `1` if any check
@@ -827,7 +836,9 @@ never installs something the user never asked for:
 - **Project** (`AGENTS.md` / `.gitignore` / `.devin/*` wiring / consent): only when init
   evidence exists (consent flag, managed hooks file, or `AGENTS.md` protocol block) **and**
   consent is not `disabled` — a `deinit` opt-out is always respected. The original profile
-  (Devin/Windsurf) is preserved.
+  (Devin/Windsurf) is preserved. Hook files the repo already carries are rewritten for this
+  install even outside the host selection, and the `.gitignore` writer turns a bare `.leina/`
+  line (which hides the committable `.leina` files) into `.leina/*`.
 
 Never touches `graph.db` / `memory.db`, and deliberately never grants workspace trust (only
 an explicit `init` does). Ends by re-running doctor; remaining failures drive a non-zero exit.

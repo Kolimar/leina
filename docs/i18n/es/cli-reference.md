@@ -862,7 +862,17 @@ strategy, confidence: "high"|"medium"|"low", pathHash, rootCommit?, normalizedRe
 cambia su exit code. El grupo de proyecto incluye un chequeo **workspace trust**: ok cuando
 hay confianza en esta máquina; warn cuando el consent es `enabled` pero no hay registro de
 confianza (pista: volvé a correr `leina init <root>`); info cuando el consent es `disabled`
-o el repo nunca se inicializó.
+o el repo nunca se inicializó. El grupo **hooks** revisa cada entrada gestionada en los cuatro
+archivos de hooks (`.devin/hooks.v1.json`, `.claude/settings.json`,
+`~/.config/devin/config.json`, `~/.claude/settings.json`): warn cuando una entrada lanza un CLI
+inexistente u otra instalación de leina distinta de la que corre doctor ("hooks run another
+leina install (X, running Y) — run leina activate / leina repair"), o cuando queda una entrada
+`refresh` de Devin anterior a 3.0; y, por host elegido, warn cuando el consent está habilitado
+pero no hay hooks cableados en ningún lugar que ese host carga. **injection readiness** es ok
+solo con consent habilitado, workspace de confianza y hooks cableados para al menos un host
+(además de memory.db, una key resoluble y graph.db). Un `.leina/config.json` /
+`.leina/memory-export.jsonl` commiteable que existe pero está en el gitignore da warn,
+nombrando la regla.
 
 ### `verify [dir] [--json]`
 Vuelve a correr los mismos checks que `doctor` pero con un **exit code accionable** — sale
@@ -880,7 +890,10 @@ una instalación previa** — nunca instala algo que el usuario nunca pidió:
 - **Project** (wiring de `AGENTS.md` / `.gitignore` / `.devin/*` / consent): solo cuando
   existe evidencia de init (consent flag, archivo de hooks gestionado, o bloque de protocolo
   `AGENTS.md`) **y** el consent no es `disabled` — un opt-out de `deinit` siempre se
-  respeta. El profile original (Devin/Windsurf) se preserva.
+  respeta. El profile original (Devin/Windsurf) se preserva. Los archivos de hooks que el repo
+  ya tiene se reescriben para esta instalación aunque estén fuera de la selección de hosts, y
+  el writer del `.gitignore` convierte una línea `.leina/` suelta (que oculta los archivos
+  commiteables de `.leina`) en `.leina/*`.
 
 Nunca toca `graph.db` / `memory.db`, y a propósito nunca otorga la confianza del workspace
 (solo un `init` explícito lo hace). Termina volviendo a correr doctor; los fails restantes

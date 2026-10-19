@@ -41,6 +41,13 @@ import { DEVIN_MANAGED_EVENTS } from "../application/install/devin-hooks.ts";
 import { readConsentFlag } from "../application/install/consent.ts";
 import { isWorkspaceTrusted } from "../application/install/trust.ts";
 import { readPackageVersion } from "../version.ts";
+import {
+  anyHooksWired,
+  checkCommittableLeinaFiles,
+  checkHookLaunch,
+  checkHostsWired,
+  collectHookWiring,
+} from "./doctor-hooks.ts";
 import { deriveProjectKey, AmbiguousProjectError } from "../application/project/detect-key.ts";
 import { buildRepoIdentity } from "../application/project/identity.ts";
 import type { RepoIdentity } from "../domain/project/identity.ts";
@@ -357,8 +364,10 @@ function checkProject(out: CheckResult[], root: string): void {
   // AGENTS.md managed protocol block.
   checkAgentsMd(out, g, root);
 
-  // .gitignore managed block (keeps .leina/ runtime data out of git).
+  // .gitignore managed block (keeps .leina/ runtime data out of git), and the committable
+  // .leina/ files it must not hide.
   checkGitignore(out, g, root);
+  checkCommittableLeinaFiles(out, g, root);
 
   // Out-of-repo workspace trust (gates harness hooks / automated verify).
   checkWorkspaceTrust(out, g, root);
@@ -366,14 +375,21 @@ function checkProject(out: CheckResult[], root: string): void {
   // .devin/config.json and .devin/hooks.v1.json are Devin-specific — only check them when
   // the user actually selected the devin host (same host-neutral pattern as checkSymlinks
   // via inspectHostLinks). A Claude-Code-only project must not see `.devin/*` warnings.
+  const wiring = collectHookWiring(root);
   if (activeHosts().includes("devin")) {
     // .devin/config.json presence/validity (Devin integration is hooks-based; this file
     // carries the Exec(leina) grant).
     checkDevinConfig(out, g, join(root, ".devin", "config.json"));
 
     // .devin/hooks.v1.json managed events.
-    checkDevinHooks(out, g, join(root, ".devin", "hooks.v1.json"));
+    const devinUserWired = wiring.some((w) => w.source === "devin-user" && w.commands.length > 0);
+    checkDevinHooks(out, g, join(root, ".devin", "hooks.v1.json"), devinUserWired);
   }
+
+  // Agent-hook wiring: which install every managed entry launches, and whether each
+  // selected host is wired anywhere it loads hooks from.
+  checkHookLaunch(out, "hooks", wiring, resolveCliEntry());
+  checkHostsWired(out, "hooks", wiring, activeHosts(), readConsentFlag(root) === "enabled");
 
   // Global memory DB presence (no PRAGMA read — would create WAL side effects).
   checkGlobalMemory(out, g);
@@ -382,7 +398,7 @@ function checkProject(out: CheckResult[], root: string): void {
   checkProjectKey(out, g, root);
 
   // Injection readiness: signals needed for active additionalContext injection (FS-only, no DB).
-  checkInjectionReadiness(out, g, root);
+  checkInjectionReadiness(out, g, root, anyHooksWired(wiring));
 }
 
 // Graph freshness (reads manifest + stats files; never opens the DB).
@@ -472,14 +488,15 @@ function checkGlobalMemory(out: CheckResult[], g: string): void {
   });
 }
 
-// Injection readiness: verifies the three FS signals required for active additionalContext
+// Injection readiness: verifies the signals required for active additionalContext
 // injection at UserPromptSubmit/SessionStart/PostCompaction. FS-only — NEVER opens a SQLite
 // connection (invariant: doctor NEVER creates WAL/SHM side effects).
 //
-// ok   = globalMemoryPath exists + deriveProjectKey resolvable + graph.db present
-// warn = globalMemoryPath exists + key ok + graph.db absent (partial injection capability)
+// ok   = memory.db + resolvable key + consent enabled + trusted + hooks wired + graph.db
+// info = consent not enabled here (the hooks stay silent by design)
+// warn = untrusted, no hooks wired for any host, or graph.db absent (partial injection)
 // fail = globalMemoryPath absent OR deriveProjectKey throws AmbiguousProjectError
-function checkInjectionReadiness(out: CheckResult[], g: string, root: string): void {
+function checkInjectionReadiness(out: CheckResult[], g: string, root: string, hooksWired: boolean): void {
   // Signal 1: global memory.db must exist (holds project observations to inject).
   if (!existsSync(globalMemoryPath())) {
     out.push({
@@ -507,7 +524,14 @@ function checkInjectionReadiness(out: CheckResult[], g: string, root: string): v
     // Other errors (fs failure, etc.) — fall through to warn-level check; injection may still work.
   }
 
-  // Signal 3: graph.db presence (provides structural context for injection).
+  // Signals 3-5: the hooks only fire, and only speak, in a consented, trusted, wired repo.
+  const gate = injectionGateProblem(root, hooksWired);
+  if (gate !== undefined) {
+    out.push({ group: g, label: "injection readiness", ...gate });
+    return;
+  }
+
+  // Signal 6: graph.db presence (provides structural context for injection).
   const graphDb = join(root, ".leina", "graph.db");
   if (existsSync(graphDb)) {
     out.push({
@@ -524,6 +548,20 @@ function checkInjectionReadiness(out: CheckResult[], g: string, root: string): v
       detail: "graph.db absent — partial injection (memory observations only, no graph stats); run leina refresh to build",
     });
   }
+}
+
+/** Why the hooks would not inject here (consent / trust / wiring), or undefined when they would. */
+function injectionGateProblem(root: string, hooksWired: boolean): Pick<CheckResult, "status" | "detail"> | undefined {
+  if (readConsentFlag(root) !== "enabled") {
+    return { status: "info", detail: "consent not enabled — the hooks stay silent here ('leina init' opts in)" };
+  }
+  if (!isWorkspaceTrusted(root)) {
+    return { status: "warn", detail: `workspace not trusted on this machine — the hooks stay silent; re-run 'leina init ${resolvePath(root)}'` };
+  }
+  if (!hooksWired) {
+    return { status: "warn", detail: "no agent hooks wired for any host — nothing fires to inject; run leina repair or leina activate --hosts <host>" };
+  }
+  return undefined;
 }
 
 function checkProjectKey(out: CheckResult[], g: string, root: string): void {
@@ -569,12 +607,13 @@ function checkDevinConfig(out: CheckResult[], g: string, path: string): void {
   }
 }
 
-function checkDevinHooks(out: CheckResult[], g: string, path: string): void {
+function checkDevinHooks(out: CheckResult[], g: string, path: string, userWired: boolean): void {
   if (!existsSync(path)) {
     // Under blanket mode, init takes the LIGHT path and never writes this file — the
     // hooks live machine-wide in ~/.config/devin/config.json. Absence is expected, not
-    // a problem; suggesting "run init" would send the user in a circle.
-    if (isBlanketActive()) {
+    // a problem; suggesting "run init" would send the user in a circle. Same when
+    // activate already wired Devin's user-global hooks.
+    if (isBlanketActive() || userWired) {
       out.push({
         group: g,
         label: ".devin/hooks.v1.json",

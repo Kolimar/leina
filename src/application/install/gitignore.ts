@@ -20,6 +20,25 @@ export const GITIGNORE_END = "# leina:ignore:end";
 export const GITIGNORE_BODY =
   ".leina/*\n!.leina/config.json\n!.leina/memory-export.jsonl\n.harness/state/";
 
+/** A user line that ignores the whole `.leina` dir — which no later negation can undo. */
+const BARE_LEINA_LINES = new Set([".leina", ".leina/", "/.leina", "/.leina/"]);
+
+function isBareLeinaLine(line: string): boolean {
+  return BARE_LEINA_LINES.has(line.trim());
+}
+
+/**
+ * Fix bare `.leina` ignore lines OUTSIDE our block. Git never re-includes a file whose parent
+ * directory is excluded, so a bare `.leina/` (a common hand-written line) silently hides the
+ * committable `.leina/config.json` and `.leina/memory-export.jsonl` despite the block's
+ * negations. Before the block such a line becomes `.leina/*` (same runtime-data ignore,
+ * negations work again); after the block it is dropped — there a `.leina/*` would re-hide
+ * what the block re-includes, and the block already ignores the rest.
+ */
+function fixBareLeinaLines(before: string[], after: string[]): [string[], string[]] {
+  return [before.map((l) => (isBareLeinaLine(l) ? ".leina/*" : l)), after.filter((l) => !isBareLeinaLine(l))];
+}
+
 export function mergeGitignore(existing: string | null): string {
   const section = `${GITIGNORE_START}\n${GITIGNORE_BODY}\n${GITIGNORE_END}`;
 
@@ -38,10 +57,10 @@ export function mergeGitignore(existing: string | null): string {
     if (t === GITIGNORE_END) ends.push(i);
   }
 
-  // No managed section yet — append, keeping all existing content intact.
+  // No managed section yet — append, keeping the existing content (bare `.leina` lines fixed).
   if (starts.length === 0 && ends.length === 0) {
     const sep = existing.endsWith("\n") ? "\n" : "\n\n";
-    return `${existing}${sep}${section}\n`;
+    return `${fixBareLeinaLines(lines, [])[0].join("\n")}${sep}${section}\n`;
   }
 
   // Exactly one well-formed pair — replace it in place. Anything else (orphaned, reversed or
@@ -53,8 +72,7 @@ export function mergeGitignore(existing: string | null): string {
     );
   }
 
-  const before = lines.slice(0, starts[0]);
-  const after = lines.slice(ends[0]! + 1);
+  const [before, after] = fixBareLeinaLines(lines.slice(0, starts[0]), lines.slice(ends[0]! + 1));
   return [...before, section, ...after].join("\n");
 }
 

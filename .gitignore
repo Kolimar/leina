@@ -11,7 +11,7 @@ coverage/
 site/
 
 # leina runtime artifacts (per-project graph db + manifest)
-.leina/
+.leina/*
 
 # npm pack artifacts
 *.tgz

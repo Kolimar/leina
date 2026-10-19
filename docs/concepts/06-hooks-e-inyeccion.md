@@ -232,7 +232,12 @@ Details per event:
 ## doctor: is it ready to inject?
 
 `leina doctor` checks *injection-readiness*: that the global memory database and the `graph.db`
-exist, in order to detect a degraded state where active injection would only work halfway. One
+exist, in order to detect a degraded state where active injection would only work halfway — and
+that anything fires at all: consent enabled, the workspace trusted, and hooks wired for at least
+one host. Its **hooks** group says, per hook file, whether every managed entry launches the
+install you are running (a reinstall or a version-manager switch can leave them pointing at
+another one or at nothing — `leina repair` rewrites them), and warns when a selected host has no
+hooks anywhere it loads them. One
 key invariant: **doctor never opens SQLite** — all checks are filesystem-only (stat, reading
 text/JSON). This avoids side effects (WAL/SHM) and keeps it fast and safe. Its
 **workspace trust** check says whether the gate may act here at all: a warning when consent
