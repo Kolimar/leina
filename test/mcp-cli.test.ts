@@ -441,6 +441,39 @@ test("(mcps-10) impact_analyze resolves the symbol like the CLI and honours dept
   }
 });
 
+test("(mcps-11) memory_verified honours the type filter like memory_search", async () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-mcp-home11-"));
+  const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo11-"));
+  const env = sandboxEnv(home);
+  try {
+    await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "memory_add", arguments: { root: dir, atomic: true, items: [
+        { title: "widget pipeline decision", content: "widget choice", type: "decision" },
+        { title: "widget crash bugfix", content: "widget fix", type: "bugfix" },
+      ] } } },
+    ]);
+    const responses = await driveMcp(dir, env, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "memory_verified", arguments: { root: dir, query: "widget" } } },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "memory_verified", arguments: { root: dir, query: "widget", type: "bugfix" } } },
+    ]);
+    const byId = new Map(responses.map((r) => [r.id, r]));
+    interface Verified { usable: { type: string }[]; warning: { type: string }[]; doNotUse: { type: string }[] }
+    const typesOf = (id: number): string[] => {
+      const v = JSON.parse(byId.get(id)?.result?.content?.[0]?.text ?? "{}") as Verified;
+      return [...v.usable, ...v.warning, ...v.doNotUse].map((i) => i.type).sort();
+    };
+    assert.deepEqual(typesOf(2), ["bugfix", "decision"], "unfiltered: both hits");
+    assert.deepEqual(typesOf(3), ["bugfix"], "type filter applied");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("(mcps-6) harness tools: parseable schemas and contract new → show → verify → list → end over stdio", async () => {
   const home = mkdtempSync(join(tmpdir(), "leina-mcp-home6-"));
   const dir = mkdtempSync(join(tmpdir(), "leina-mcp-repo6-"));

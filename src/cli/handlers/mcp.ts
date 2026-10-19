@@ -338,7 +338,10 @@ const EXECUTORS: Record<string, (a: ToolArgs) => unknown> = {
     ),
   memory_verified: (a) =>
     withMemStore(rootOf(a), (mem) =>
-      getVerifiedContext(mem.store, str(a, "query"), mem.verifyNode, { limit: optNum(a, "limit") }),
+      getVerifiedContext(mem.store, str(a, "query"), mem.verifyNode, {
+        type: optStr(a, "type") as ObservationType | undefined,
+        limit: optNum(a, "limit"),
+      }),
     ),
   memory_context: (a) =>
     withMemStore(rootOf(a), (s) => {
