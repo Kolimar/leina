@@ -398,6 +398,20 @@ describe("leina harness hook (transport)", () => {
     assert.equal(JSON.parse(allow.stdout).permission, "allow");
   });
 
+  it("(cursor-parity-1) cursor-shell makes the same strict decision as pre-bash", async () => {
+    await repo.write(".harness/config.json", JSON.stringify({ ...JSON.parse(FIXTURE_CONFIG), strictness: "strict" }));
+    const commit = { command: "git commit -am x", tool_input: { command: "git commit -am x" } };
+    assert.equal((await runHook("pre-bash", commit)).code, 2, "pre-bash: strict + no report → block");
+    const shell = JSON.parse((await runHook("cursor-shell", commit)).stdout);
+    assert.equal(shell.permission, "deny");
+    assert.match(shell.agentMessage, /no verify report found and strictness is "strict"/);
+    assert.match(shell.userMessage, /blocked until `leina harness verify` passes/);
+
+    const write = JSON.parse((await runHook("cursor-shell", { command: "echo x > .harness/config.json" })).stdout);
+    assert.equal(write.permission, "deny");
+    assert.match(write.userMessage, /shell write to harness rules\/config/);
+  });
+
   it("stop blocks with a machine decision while gates fail, then yields at the retry cap", async () => {
     await repo.write(
       ".harness/rules/fail.md",

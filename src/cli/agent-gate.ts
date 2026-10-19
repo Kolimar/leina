@@ -451,9 +451,10 @@ function emitInjectedContext(
   const { text, delivered } = buildActiveContext(cwd);
   // Harness contract context (active contract + intake rules) rides in the SAME
   // additionalContext payload — two separate JSON objects on stdout would break
-  // the host's hook-output parsing. Present only when a harness contract is
-  // active (see runHarnessAgentGate below); undefined otherwise, leaving the
-  // advisory output byte-for-byte identical to the pre-harness behaviour.
+  // the host's hook-output parsing. Present only when the full harness branch
+  // applies (active contract, or strict — see runHarnessAgentGate below);
+  // undefined otherwise, leaving the advisory output byte-for-byte identical
+  // to the pre-harness behaviour.
   const combined = harnessSessionContext ? `${harnessSessionContext}\n\n${text}` : text;
   const out = {
     hookSpecificOutput: {
@@ -492,23 +493,29 @@ function emitStopNudge(saveMarkerPath: string): void {
 // HARNESS ENFORCEMENT BRANCH — PRODUCT INVARIANT (non-negotiable):
 //
 //   The agent gate may return a BLOCKING decision (PreToolUse edit/bash exit 2,
-//   Stop {"decision":"block"}) ONLY when BOTH hold:
-//     1. the repo has an ACTIVE harness contract
-//        (.harness/state/current/contract.json exists), AND
-//     2. the WORKSPACE IS TRUSTED (isWorkspaceTrusted: the out-of-repo record
-//        `leina init` writes under $LEINA_HOME/trust/, and consent not
-//        "disabled"). Contract, rules and even `.leina/consent` can all be
-//        committed by a hostile clone; the trust record cannot.
+//   Stop {"decision":"block"}) ONLY in a TRUSTED WORKSPACE (isWorkspaceTrusted:
+//   the out-of-repo record `leina init` writes under $LEINA_HOME/trust/, and
+//   consent not "disabled"). Contract, rules and even `.leina/consent` can all
+//   be committed by a hostile clone; the trust record cannot. Untrusted → no
+//   block, no verify run, no SessionStart injection of contract or rule bodies.
 //
-//   WITHOUT an active contract the pre-existing ADVISORY behaviour must not
-//   change BY A SINGLE BYTE: runHarnessAgentGate returns { handled: false }
-//   and the caller falls through to runAgentGate exactly as before. The same
-//   applies in an untrusted workspace — no block, no verify run, and no
-//   SessionStart injection of the contract goal or rule bodies.
+//   In a trusted workspace — the same decisions `leina harness hook` makes
+//   for Cursor/OpenCode, so hosts do not drift apart:
+//     - the INTEGRITY SEAL (edits and shell writes to harness rules, config,
+//       lockfile, the user-level harness and the trust store) applies in every
+//       strictness mode, contract or not;
+//     - the FULL branch (contract scope, commit guard, stop gate, SessionStart
+//       context) applies with an ACTIVE contract
+//       (.harness/state/current/contract.json), in strictness "strict" even
+//       without one, and when the config cannot be read (fail closed).
+//   Guided mode without a contract is otherwise untouched: every event that is
+//   not an integrity write returns { handled: false } and the caller falls
+//   through to runAgentGate exactly as before.
 //
 //   Covered explicitly by test/harness-agent-gate.test.ts (with contract →
-//   blocks; without contract → never blocks; consent disabled or untrusted
-//   → never blocks nor injects).
+//   blocks; strict without contract → blocks; guided without contract →
+//   only the integrity seal; consent disabled or untrusted → never blocks
+//   nor injects).
 //
 // The decision logic itself lives in application/harness/hooks.ts (shared with
 // `leina harness hook <event>`); this wrapper maps host payloads to those
@@ -544,9 +551,11 @@ export function hasActiveHarnessContract(cwd: string): boolean {
 // (edit/write/exec) and Claude Code capitalized (Edit/Write/MultiEdit/
 // NotebookEdit/Bash). Deliberately NOT added to HOST_TOOL_ALIASES: that map
 // feeds the ADVISORY decision, and widening it would change advisory behaviour
-// in repos without a contract — forbidden by the invariant above.
+// in guided repos without a contract — forbidden by the invariant above.
 const HARNESS_EDIT_TOOLS = new Set(["edit", "write", "Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const HARNESS_BASH_TOOLS = new Set(["exec", "Bash"]);
+/** Events the enforcement branch acts on besides PreToolUse. */
+const HARNESS_EVENTS = new Set(["Stop", "UserPromptSubmit", "SessionStart"]);
 
 type HooksModule = typeof import("../application/harness/hooks.ts");
 
@@ -586,6 +595,22 @@ async function harnessPreToolUse(
   return HARNESS_NOT_HANDLED;
 }
 
+/** The integrity seal alone (guided mode, no contract): edits and shell writes to what defines the gates. */
+async function harnessIntegritySeal(
+  cwd: string,
+  payload: AgentHookPayload,
+  hooks: HooksModule,
+): Promise<HarnessAgentGateResult> {
+  const raw = payload as unknown as Record<string, unknown>;
+  const tool = payload.tool_name ?? "";
+  const decision = HARNESS_EDIT_TOOLS.has(tool)
+    ? await hooks.decideIntegrityEdit(cwd, hooks.payloadFilePath(raw))
+    : hooks.decideIntegrityBash(hooks.payloadCommand(raw));
+  if (!decision.block) return HARNESS_NOT_HANDLED;
+  process.stderr.write(`${decision.message}\n`);
+  return { handled: true, exitCode: 2 };
+}
+
 async function harnessStop(
   cwd: string,
   payload: AgentHookPayload,
@@ -622,14 +647,21 @@ export async function runHarnessAgentGate(
   fallbackEvent?: string,
 ): Promise<HarnessAgentGateResult> {
   if (!isWorkspaceTrusted(cwd)) return HARNESS_NOT_HANDLED;
-  if (!hasActiveHarnessContract(cwd)) return HARNESS_NOT_HANDLED;
 
   const payload = parseHookPayload(rawStdin, fallbackEvent);
   if (!payload) return HARNESS_NOT_HANDLED;
+  const event = payload.hook_event_name;
+  const tool = payload.tool_name;
+  const harnessTool = tool !== undefined && (HARNESS_EDIT_TOOLS.has(tool) || HARNESS_BASH_TOOLS.has(tool));
+  // Events the harness never acts on skip the engine import entirely.
+  if (event === "PreToolUse" ? !harnessTool : !HARNESS_EVENTS.has(event ?? "")) return HARNESS_NOT_HANDLED;
 
   try {
     const hooks = await import("../application/harness/hooks.ts");
-    const event = payload.hook_event_name;
+    if (!hasActiveHarnessContract(cwd) && !(await hooks.enforcesWithoutContract(cwd))) {
+      // Guided, no contract: only the integrity seal — the rest stays advisory.
+      return event === "PreToolUse" ? await harnessIntegritySeal(cwd, payload, hooks) : HARNESS_NOT_HANDLED;
+    }
     if (event === "PreToolUse") return await harnessPreToolUse(cwd, payload, hooks);
     if (event === "Stop") return await harnessStop(cwd, payload, hooks);
     if (event === "UserPromptSubmit") {

@@ -39,11 +39,12 @@ export async function handleAgentHook(rest: string[]): Promise<never> {
   // PostCompaction (re-injects memory + graph context after compaction),
   // Stop (advisory nudge to persist session memory when session.memory-saved is absent).
   //
-  // HARNESS ENFORCEMENT BRANCH (product invariant — see runHarnessAgentGate): when the repo
-  // has an ACTIVE harness contract (.harness/state/current/contract.json) and the workspace
-  // is trusted (`leina init` → out-of-repo trust record), PreToolUse edit/bash and Stop may
-  // BLOCK (exit 2 / decision:block).
-  // Without a contract the advisory behaviour below is untouched, byte for byte.
+  // HARNESS ENFORCEMENT BRANCH (product invariant — see runHarnessAgentGate): only in a
+  // trusted workspace (`leina init` → out-of-repo trust record). There, writes to the
+  // harness rules/config are always refused, and with an ACTIVE harness contract
+  // (.harness/state/current/contract.json) or strictness "strict", PreToolUse edit/bash and
+  // Stop may BLOCK (exit 2 / decision:block). Guided mode without a contract leaves the
+  // advisory behaviour below untouched, byte for byte, except for that integrity seal.
   const eventName = rest[0];
   // Resolve the project root from Devin's documented DEVIN_PROJECT_DIR env var (fallback to
   // process.cwd()) — the hook payload itself never carries a cwd. See resolveHookProjectRoot.

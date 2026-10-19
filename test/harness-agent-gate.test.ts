@@ -1,14 +1,16 @@
 // harness-agent-gate.test.ts — the HARNESS ENFORCEMENT branch of the
 // host-neutral agent gate (runHarnessAgentGate) and its PRODUCT INVARIANT:
 //
-//   con contrato activo (+ workspace confiado)   → PreToolUse edit/bash y Stop
-//                                                  PUEDEN bloquear;
-//   sin contrato activo                          → JAMÁS bloquea (handled:false,
-//                                                  el advisory queda intacto);
+//   con contrato activo, o strict (+ workspace confiado) → PreToolUse edit/bash
+//                                                  y Stop PUEDEN bloquear;
+//   guided sin contrato activo                   → solo el sello de integridad
+//                                                  (rules/config/lockfile); todo
+//                                                  lo demás handled:false, el
+//                                                  advisory queda intacto;
 //   consent disabled / workspace no confiado     → JAMÁS bloquea ni inyecta.
 //
-// Matrix: {sin contrato, con contrato, consent disabled, no confiado} ×
-//         {pre-edit, pre-bash, stop, session-start}.
+// Matrix: {sin contrato, strict sin contrato, con contrato, consent disabled,
+//          no confiado} × {pre-edit, pre-bash, stop, session-start}.
 //
 // Run: node --no-warnings --experimental-strip-types --test test/harness-agent-gate.test.ts
 
@@ -567,6 +569,67 @@ describe("harness agent gate — WITHOUT active contract", () => {
     const run = await gate(BASH_COMMIT);
     assert.equal(run.result.handled, false);
     assert.equal(run.stderr, "");
+  });
+
+  it("(seal-nocontract-1) guided: the integrity seal still applies — edits and shell writes", async () => {
+    for (const payload of [
+      { hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: ".harness/config.json" } },
+      { hook_event_name: "PreToolUse", tool_name: "write", tool_input: { file_path: ".harness/rules/x.md" } },
+      { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "echo {} > .harness/config.json" } },
+      {
+        hook_event_name: "PreToolUse",
+        tool_name: "Write",
+        tool_input: { file_path: path.join(leinaHome, "harness", "config.json") },
+      },
+    ]) {
+      const run = await gate(payload);
+      assert.deepEqual(run.result, { handled: true, exitCode: 2 }, JSON.stringify(payload.tool_input));
+      assert.match(run.stderr, /agent-read-only/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// strict SIN contrato → misma decisión que `leina harness hook` (Cursor/
+// OpenCode): sin contrato se bloquea, el commit guard y el stop gate aplican.
+// ---------------------------------------------------------------------------
+
+describe("harness agent gate — strict, no contract (host parity)", () => {
+  beforeEach(async () => {
+    await setConsent("enabled");
+    await repo.write(".harness/config.json", JSON.stringify({ ...JSON.parse(FIXTURE_CONFIG), strictness: "strict" }));
+  });
+
+  it("(strict-parity-1) an edit without a contract is blocked, as `harness hook pre-edit` does", async () => {
+    const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: "src/app.ts" } });
+    assert.deepEqual(run.result, { handled: true, exitCode: 2 });
+    assert.match(run.stderr, /no active task contract and strictness is "strict"/);
+  });
+
+  it("(strict-parity-2) git commit without a verify report is blocked", async () => {
+    const run = await gate(BASH_COMMIT);
+    assert.deepEqual(run.result, { handled: true, exitCode: 2 });
+    assert.match(run.stderr, /no verify report found and strictness is "strict"/);
+  });
+
+  it("(strict-parity-3) the stop gate runs verify and blocks on failure", async () => {
+    await writeFailingRule();
+    const run = await gate(STOP);
+    assert.deepEqual(run.result, { handled: true, exitCode: 0 });
+    assert.equal(JSON.parse(run.stdout).decision, "block");
+  });
+
+  it("(strict-parity-4) session-start injects the harness context (it tells the agent to declare a contract)", async () => {
+    const run = await gate(SESSION_START);
+    assert.equal(run.result.handled, false);
+    assert.match(run.result.sessionContext ?? "", /No active task contract/);
+  });
+
+  it("(strict-parity-5) an unreadable config fails closed without a contract too", async () => {
+    await repo.write(".harness/config.json", "{ nope");
+    const run = await gate({ hook_event_name: "PreToolUse", tool_name: "Edit", tool_input: { file_path: "src/app.ts" } });
+    assert.deepEqual(run.result, { handled: true, exitCode: 2 });
+    assert.match(run.stderr, /harness config is invalid/);
   });
 });
 

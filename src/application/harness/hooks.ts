@@ -159,7 +159,12 @@ export async function sessionStartContext(repoRoot: string): Promise<string> {
 // transport must refuse the tool call (exit 2 + stderr on Claude Code).
 // ---------------------------------------------------------------------------
 
-export type PreDecision = { block: false } | { block: true; message: string };
+/**
+ * `kind` says WHY a call is refused: "integrity" (a write to what defines the
+ * gates) or "gate" (scope, contract, commit guard, config) — transports with a
+ * separate user-facing line (Cursor) word it accordingly.
+ */
+export type PreDecision = { block: false } | { block: true; kind: "integrity" | "gate"; message: string };
 
 const ALLOW: PreDecision = { block: false };
 
@@ -172,6 +177,7 @@ const ALLOW: PreDecision = { block: false };
 function invalidConfigBlock(errors: string[]): PreDecision {
   return {
     block: true,
+    kind: "gate",
     message:
       `BLOCKED: the harness config is invalid, so its enforcement cannot be evaluated: ${errors.join("; ")}. ` +
       "A human must fix it (.harness/config.json, .harness/config.local.json or the user config under " +
@@ -212,13 +218,36 @@ async function userIntegrityHit(abs: string): Promise<string | undefined> {
   return undefined;
 }
 
-export async function decidePreEdit(repoRoot: string, filePath: string | undefined): Promise<PreDecision> {
+/**
+ * Whether the FULL hook enforcement applies to a repo with no active contract:
+ * in strict mode (working without a contract is itself what strict forbids),
+ * or when the config cannot be read (fail closed — the strictness is unknown).
+ * Otherwise only the integrity seal applies. Used by the agent gate, whose
+ * harness branch is otherwise keyed on an active contract.
+ */
+export async function enforcesWithoutContract(repoRoot: string): Promise<boolean> {
+  const { config, errors } = await loadConfig(repoRoot);
+  return errors.length > 0 || config.strictness === "strict";
+}
+
+/**
+ * The integrity seal for the Edit/Write tool path, on its own: rules, config
+ * and lockfile define the gates themselves. Weakening them to get past a gate
+ * is the obvious escape hatch, so these are agent-read-only in EVERY
+ * strictness mode, with or without a contract — the CLI (`leina harness` /
+ * the TUI), driven by a human, is the writing path. The user-level harness and
+ * trust store get the same seal. Coverage honesty: this seals the Edit/Write
+ * tool path; the Bash path is guarded best-effort by decideIntegrityBash.
+ * Together they raise the bar against accidents — they are not a sandbox.
+ */
+export async function decideIntegrityEdit(repoRoot: string, filePath: string | undefined): Promise<PreDecision> {
   if (filePath === undefined || filePath.length === 0) return ALLOW;
 
   const userHit = await userIntegrityHit(path.resolve(repoRoot, filePath));
   if (userHit !== undefined) {
     return {
       block: true,
+      kind: "integrity",
       message:
         `BLOCKED: ${filePath} is under ${userHit} (user-level harness rules/config or workspace ` +
         "trust) and is agent-read-only. Change it through `leina` commands driven by a human. " +
@@ -227,33 +256,34 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
   }
 
   const rel = repoRelative(repoRoot, filePath);
-  if (rel.startsWith("..")) return ALLOW; // outside the repo — not ours to police
-
-  const [{ config, errors: configErrors }, { contract }] = await Promise.all([
-    loadConfig(repoRoot),
-    loadContract(repoRoot),
-  ]);
-
-  // Task state is always writable — plan.md, checklists, contract amendments.
-  if (matchesAny(rel, [".harness/state/**"])) return ALLOW;
-
-  // Enforcement integrity: rules, config and lockfile define the gates
-  // themselves. Weakening them to get past a gate is the obvious escape
-  // hatch, so these are agent-read-only in EVERY strictness mode — the CLI
-  // (`leina harness` / the TUI), driven by a human, is the writing path.
-  // Coverage honesty: this seals the Edit/Write tool path; the Bash path is
-  // guarded best-effort by decidePreBash (writesIntegrityPaths). Together
-  // they raise the bar against accidents — they are not a sandbox.
   const integrity = [".harness/rules/**", ".harness/config.json", ".harness/config.local.json", ".harness/harness.lock.json"];
-  if (matchesAny(rel, integrity)) {
+  if (!rel.startsWith("..") && matchesAny(rel, integrity)) {
     return {
       block: true,
+      kind: "integrity",
       message:
         `BLOCKED: ${rel} defines the harness gates and is agent-read-only. ` +
         "Rules and config change through `leina harness` commands driven by a human. " +
         "Do not modify the harness to get past a gate.",
     };
   }
+  return ALLOW;
+}
+
+export async function decidePreEdit(repoRoot: string, filePath: string | undefined): Promise<PreDecision> {
+  const sealed = await decideIntegrityEdit(repoRoot, filePath);
+  if (sealed.block || filePath === undefined || filePath.length === 0) return sealed;
+
+  const rel = repoRelative(repoRoot, filePath);
+  if (rel.startsWith("..")) return ALLOW; // outside the repo — not ours to police
+
+  // Task state is always writable — plan.md, checklists, contract amendments.
+  if (matchesAny(rel, [".harness/state/**"])) return ALLOW;
+
+  const [{ config, errors: configErrors }, { contract }] = await Promise.all([
+    loadConfig(repoRoot),
+    loadContract(repoRoot),
+  ]);
 
   if (configErrors.length > 0) return invalidConfigBlock(configErrors);
 
@@ -261,6 +291,7 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
   if (matchesAny(rel, [".harness/**"]) && config.strictness === "strict") {
     return {
       block: true,
+      kind: "gate",
       message:
         `BLOCKED: ${rel} is harness-managed and strictness is "strict". ` +
         "Do not modify the harness to get past a gate.",
@@ -271,6 +302,7 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
     if (config.strictness === "strict") {
       return {
         block: true,
+        kind: "gate",
         message:
           'BLOCKED: no active task contract and strictness is "strict". Declare one first:\n' +
           '  leina harness contract new --goal "<goal>" --type <type> --scope "<glob>"',
@@ -282,6 +314,7 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
   if (contract.scope.length > 0 && !matchesAny(rel, contract.scope)) {
     return {
       block: true,
+      kind: "gate",
       message:
         `BLOCKED: ${rel} is outside the declared contract scope [${contract.scope.join(", ")}]. ` +
         "Stay in scope, or amend the contract first with " +
@@ -294,6 +327,7 @@ export async function decidePreEdit(repoRoot: string, filePath: string | undefin
   if (contract.outOfScope.length > 0 && matchesAny(rel, contract.outOfScope)) {
     return {
       block: true,
+      kind: "gate",
       message:
         `BLOCKED: ${rel} matches the contract's outOfScope [${contract.outOfScope.join(", ")}]. ` +
         "This area was explicitly declared off-limits for this task.",
@@ -374,6 +408,20 @@ async function readVerifySummary(repoRoot: string, git: GitPort): Promise<Verify
   };
 }
 
+/** The integrity seal for the shell path (see decideIntegrityEdit), on its own. */
+export function decideIntegrityBash(command: string | undefined): PreDecision {
+  const integrityHit = command !== undefined ? writesIntegrityPaths(command) : undefined;
+  if (integrityHit === undefined) return ALLOW;
+  return {
+    block: true,
+    kind: "integrity",
+    message:
+      `BLOCKED: this command appears to write to ${integrityHit} — harness rules, config and ` +
+      "lockfile are agent-read-only (they define the gates). Change them through " +
+      "`leina harness` commands driven by a human. Task state under .harness/state/ stays writable.",
+  };
+}
+
 export async function decidePreBash(
   repoRoot: string,
   command: string | undefined,
@@ -381,16 +429,8 @@ export async function decidePreBash(
 ): Promise<PreDecision> {
   if (command === undefined) return ALLOW;
 
-  const integrityHit = writesIntegrityPaths(command);
-  if (integrityHit !== undefined) {
-    return {
-      block: true,
-      message:
-        `BLOCKED: this command appears to write to ${integrityHit} — harness rules, config and ` +
-        "lockfile are agent-read-only (they define the gates). Change them through " +
-        "`leina harness` commands driven by a human. Task state under .harness/state/ stays writable.",
-    };
-  }
+  const sealed = decideIntegrityBash(command);
+  if (sealed.block) return sealed;
 
   const action = gitCommitOrPush(command);
   if (action === undefined) return ALLOW;
@@ -405,6 +445,7 @@ export async function decidePreBash(
   if (summary && typeof summary.blockingFailures === "number" && summary.blockingFailures > 0) {
     return {
       block: true,
+      kind: "gate",
       message:
         `BLOCKED: git ${action} while ${summary.blockingFailures} blocking gate(s) are failing. ` +
         "Run `leina harness verify`, fix the failing gates, and only then commit.",
@@ -414,6 +455,7 @@ export async function decidePreBash(
   if (!present && config.strictness === "strict") {
     return {
       block: true,
+      kind: "gate",
       message: stale
         ? "BLOCKED: the verify report is stale — the working tree changed after it was written. " +
           "Run `leina harness verify` again before committing."
@@ -528,40 +570,26 @@ export type CursorShellDecision =
   | { permission: "allow" }
   | { permission: "deny"; agentMessage: string; userMessage: string };
 
+/**
+ * Cursor's shell permission is the SAME decision as decidePreBash — integrity
+ * seal, commit guard with its freshness and strictness rules, config errors —
+ * mapped to Cursor's protocol, so the two hosts cannot drift apart.
+ */
 export async function decideCursorShell(
   repoRoot: string,
   command: string | undefined,
   git: GitPort,
 ): Promise<CursorShellDecision> {
-  if (command === undefined) return { permission: "allow" };
-
-  const integrityHit = writesIntegrityPaths(command);
-  if (integrityHit !== undefined) {
-    return {
-      permission: "deny",
-      agentMessage:
-        `write to ${integrityHit} denied: harness rules/config are agent-read-only. ` +
-        "Change them through `leina harness` commands driven by a human.",
-      userMessage: "harness: blocked a shell write to harness rules/config",
-    };
-  }
-
-  const action = gitCommitOrPush(command);
-  if (action === undefined) return { permission: "allow" };
-
-  // readVerifySummary yields no summary for a STALE report — same "treat as
-  // absent" rule as decidePreBash, so an outdated verdict never decides.
-  const { summary } = await readVerifySummary(repoRoot, git);
-  if (summary && typeof summary.blockingFailures === "number" && summary.blockingFailures > 0) {
-    return {
-      permission: "deny",
-      agentMessage:
-        `git ${action} denied: ${summary.blockingFailures} blocking harness gate(s) are failing. ` +
-        "Run `leina harness verify`, fix every failing gate using its report, and commit only when it exits 0.",
-      userMessage: "harness: commit blocked while verification gates are failing",
-    };
-  }
-  return { permission: "allow" };
+  const decision = await decidePreBash(repoRoot, command, git);
+  if (!decision.block) return { permission: "allow" };
+  return {
+    permission: "deny",
+    agentMessage: decision.message,
+    userMessage:
+      decision.kind === "integrity"
+        ? "harness: blocked a shell write to harness rules/config"
+        : "harness: git commit/push blocked until `leina harness verify` passes",
+  };
 }
 
 export async function recordCursorEdit(repoRoot: string, filePath: string | undefined): Promise<void> {
