@@ -48,6 +48,7 @@ y este proyecto sigue [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 - `impact_analyze` por MCP siempre devolvía vacío para un nombre de símbolo; `memory_verified` ignoraba `type`.
 - Los archivos fuente de más de 4 MiB se omiten de forma consistente en el build y en el chequeo de freshness.
 - El retrofit del índice NOCASE de labels ya no bloquea una lectura cuando otro proceso tiene el lock de escritura.
+- Un gate js trabado en una promesa que nunca resuelve se informa como timeout en lugar de dejar que verify termine antes de tiempo (visto en Node 22).
 - `memory compact` informa una db bloqueada o un `VACUUM` fallido sin stack trace y no informa una db más grande mientras otro proceso la tiene abierta.
 - `env set`/`unset` matchean las claves que acepta el parser (`KEY =valor`) y colapsan duplicados.
 - Harness: la detección de commits y el guard de integridad manejan `&`, subshells y backticks; el modo strict y el sello de integridad ahora también aplican en Claude Code/Devin, y el hook de shell de Cursor toma la misma decisión que pre-bash; el plugin de OpenCode bloquea solo con exit status 2; `.harness/state/` se ignora solo; `hookCommand` tiene que ser una forma de lanzar leina; la TUI escribe los overrides de rules recién cuando se confirma el contract; deinit preserva el JSON del usuario tal cual y escribe de forma atómica.
