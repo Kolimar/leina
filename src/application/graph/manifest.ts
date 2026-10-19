@@ -35,8 +35,12 @@ export const MANIFEST_VERSION = 3;
  * (new node/edge kinds, id scheme, resolution rules, a re-vendored grammar). Unlike the
  * package version, it also moves for a working-copy (`npm link`) install, whose version does
  * not change per commit. A mismatch makes the graph stale and forces a full extraction.
+ *
+ * 2: TypeScript — distinct ids for case-colliding declarations; type/enum/variable/accessor
+ *    nodes; member-level implements/overrides; module→module imports; calls through
+ *    destructured dynamic imports and local renames.
  */
-export const EXTRACTOR_SCHEMA_VERSION = 1;
+export const EXTRACTOR_SCHEMA_VERSION = 2;
 
 export interface ManifestFileEntry {
   mtime: number; // mtimeMs captured at build time
