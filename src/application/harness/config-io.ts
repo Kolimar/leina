@@ -53,7 +53,8 @@ interface RawLayer {
   local: boolean;
 }
 
-export async function loadConfig(repoRoot: string): Promise<LoadedConfig> {
+/** `committedOnly`: project config.json alone, no user/local layers (what `harness sync` compiles). */
+export async function loadConfig(repoRoot: string, opts: { committedOnly?: boolean } = {}): Promise<LoadedConfig> {
   const errors: string[] = [];
   const layers: RawLayer[] = [];
 
@@ -62,7 +63,7 @@ export async function loadConfig(repoRoot: string): Promise<LoadedConfig> {
     { file: path.join(userHarnessDir(), "config.json"), local: true },
     { file: path.join(harnessDir(repoRoot), "config.json"), local: false },
     { file: path.join(harnessDir(repoRoot), "config.local.json"), local: true },
-  ];
+  ].filter((c) => !opts.committedOnly || !c.local);
 
   for (const { file, local } of candidates) {
     const parsed = await readJsonIfExists(file);

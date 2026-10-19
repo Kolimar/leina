@@ -51,11 +51,18 @@ function withOverride(rule: Rule, override: RuleOverride | undefined): Rule {
   };
 }
 
-export async function loadResolvedRules(repoRoot: string): Promise<Resolution> {
+/**
+ * `committedOnly` resolves the committed layers alone (builtin + project rules,
+ * project config.json) — what `harness sync` compiles into shared files.
+ */
+export async function loadResolvedRules(
+  repoRoot: string,
+  opts: { committedOnly?: boolean } = {},
+): Promise<Resolution> {
   const warnings: string[] = [];
   const [{ rules: rawRules, errors: ruleErrors }, loadedConfig] = await Promise.all([
-    loadAllRules(repoRoot),
-    loadConfig(repoRoot),
+    loadAllRules(repoRoot, opts),
+    loadConfig(repoRoot, opts),
   ]);
   const errors = [...ruleErrors, ...loadedConfig.errors];
   const { config, projectRuleOverrides, localRuleOverrides } = loadedConfig;

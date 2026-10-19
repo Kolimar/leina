@@ -67,13 +67,17 @@ async function loadRulesFromDir(dir: string, layer: RuleLayer): Promise<LoadedRu
 /**
  * Load rules from every layer, in replace-precedence order (builtin, project,
  * user). No merging here — the resolver owns precedence and enforcement
- * invariants.
+ * invariants. `committedOnly` skips the personal user layer (what `harness
+ * sync` compiles into committed files).
  */
-export async function loadAllRules(repoRoot: string): Promise<LoadedRules> {
+export async function loadAllRules(
+  repoRoot: string,
+  opts: { committedOnly?: boolean } = {},
+): Promise<LoadedRules> {
   const layers: { dir: string; layer: RuleLayer }[] = [
     { dir: builtinRulesDir(), layer: "builtin" },
     { dir: projectRulesDir(repoRoot), layer: "project" },
-    { dir: userRulesDir(), layer: "user" },
+    ...(opts.committedOnly ? [] : [{ dir: userRulesDir(), layer: "user" as const }]),
   ];
   const rules: Rule[] = [];
   const errors: string[] = [];

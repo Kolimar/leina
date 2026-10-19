@@ -9,6 +9,7 @@
 
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import path from "node:path";
 import {
   type Recipe,
@@ -46,6 +47,7 @@ import {
   selectAdapters,
 } from "../src/application/harness/adapters/registry.ts";
 import { type RuleBundle } from "../src/application/harness/adapters/types.ts";
+import { runSync } from "../src/application/harness/sync.ts";
 import {
   isolateLeinaHome,
   jsonFrontmatterDoc,
@@ -515,5 +517,47 @@ describe("buildBundle", () => {
     const after = await buildBundle(repo.root);
     assert.notEqual(before.bundle.digest, after.bundle.digest);
     assert.ok(after.bundle.rules.every((r) => r.enabled), "bundle carries enabled rules only");
+  });
+
+  it("(bundle-layers-1) compiles builtin + project rules and config.json only — never personal layers", async () => {
+    const committedOnly = await buildBundle(repo.root);
+    // Personal layers: a user rule, a user config and a gitignored config.local.
+    await repo.write(
+      "leina-home/harness/rules/mine.md",
+      jsonFrontmatterDoc({ id: "user/personal-style", phase: "execute", severity: "advisory" }, "# Personal"),
+    );
+    await repo.write("leina-home/harness/config.json", JSON.stringify({ hookCommand: "my-private-leina harness hook" }));
+    await repo.write(
+      ".harness/config.local.json",
+      JSON.stringify({ rules: { "harness/changelog-updated": { enabled: true } }, platforms: ["cursor"] }),
+    );
+
+    const withPersonal = await buildBundle(repo.root);
+    assert.deepEqual(withPersonal.errors, []);
+    assert.ok(!withPersonal.bundle.rules.some((r) => r.id === "user/personal-style"), "user rule not compiled");
+    assert.equal(withPersonal.bundle.config.hookCommand, "leina harness hook", "user config not compiled");
+    assert.deepEqual(withPersonal.bundle.config.platforms, [], "config.local not compiled");
+    assert.equal(withPersonal.bundle.digest, committedOnly.bundle.digest, "same artifacts as a clean CI checkout");
+
+    // The committed project layer still counts.
+    await repo.write(".harness/config.json", JSON.stringify({ rules: { "harness/changelog-updated": { enabled: true } } }));
+    const withProject = await buildBundle(repo.root);
+    assert.ok(withProject.bundle.rules.some((r) => r.id === "harness/changelog-updated"));
+  });
+
+  it("(bundle-layers-2) a personal user rule never reaches committed files, so CI `sync --check` stays clean", async () => {
+    await repo.write("AGENTS.md", "# Project\n");
+    await repo.write(
+      "leina-home/harness/rules/mine.md",
+      jsonFrontmatterDoc({ id: "user/personal-style", phase: "execute", severity: "advisory" }, "# Personal"),
+    );
+    const local = await runSync(repo.root, {});
+    assert.equal(local.exitCode, 0, local.errors.join("; "));
+    assert.ok(!(await fs.readFile(path.join(repo.root, "AGENTS.md"), "utf8")).includes("user/personal-style"));
+
+    // CI: same checkout, no user layer.
+    await fs.rm(path.join(repo.root, "leina-home"), { recursive: true, force: true });
+    const ci = await runSync(repo.root, { check: true });
+    assert.equal(ci.exitCode, 0, "no drift between a developer machine and CI");
   });
 });
