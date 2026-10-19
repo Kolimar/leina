@@ -31,6 +31,10 @@ stderr; quedan listados en `oversizeSkipped` del reporte del build) y el chequeo
 los ignora igual, así que un archivo generado o vendorizado enorme no puede agotar la memoria
 ni dejar el grafo permanentemente stale.
 
+`build` y `refresh` rechazan un `<dir>` que no existe o no es un directorio: salen con `1` y
+`cannot build the graph: no such directory: <abs>`, sin crear, construir ni registrar nada
+(antes un argumento mal escrito creaba el directorio y registraba un proyecto vacío).
+
 ### `refresh <dir>`
 Fuerza una reconstrucción ahora mismo, ignorando la freshness.
 

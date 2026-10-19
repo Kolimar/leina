@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -109,5 +109,44 @@ test("(WC-4) save --anchors with no graph still succeeds (anchors unresolved)", 
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(WC-5) build/refresh refuse a missing directory: exit 1, nothing created or registered", () => {
+  const home = mkdtempSync(join(tmpdir(), "leina-wiringcli-home5-"));
+  const parent = mkdtempSync(join(tmpdir(), "leina-wiringcli-nodir-"));
+  try {
+    const env = { ...process.env, LEINA_HOME: home };
+    for (const cmd of ["build", "refresh"]) {
+      // A free-text question passed where the dir belongs (the reported reproduction).
+      const missing = join(parent, "how is trust checked");
+      const r = runCli([cmd, missing], { env });
+      assert.equal(r.code, 1, `${cmd} must fail. stdout: ${r.stdout}`);
+      assert.match(r.stderr, /cannot build the graph: no such directory: .*how is trust checked/);
+      assert.equal(existsSync(missing), false, `${cmd} must not create the directory`);
+    }
+    // A regular file is refused too, and gets no .leina/ next to it.
+    const file = join(parent, "a.ts");
+    writeFileSync(file, "export const a = 1;\n");
+    const r = runCli(["build", file], { env });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /not a directory/);
+    assert.equal(existsSync(join(home, "projects.json")), false, "nothing registered");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("(WC-6) buildGraphShared / build-if-missing gate reject a missing root without creating it", async () => {
+  const { buildGraphShared, openFreshStoreOrThrow } = await import("../src/cli/wiring.ts");
+  const parent = mkdtempSync(join(tmpdir(), "leina-wiringcli-nodir2-"));
+  try {
+    const missing = join(parent, "nope");
+    await assert.rejects(buildGraphShared(missing), /no such directory/);
+    await assert.rejects(openFreshStoreOrThrow(missing, { buildIfMissing: true }), /no such directory/);
+    assert.equal(existsSync(missing), false);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
   }
 });

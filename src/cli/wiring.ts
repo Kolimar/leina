@@ -5,7 +5,7 @@
 // concrete classes. Dynamic import() of the heavy extractor stack stays in the
 // command handlers (build/refresh) so the read path never loads it at startup.
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { GraphStore } from "../infrastructure/sqlite/graph-store.ts";
 import { SQLiteMemoryRepository } from "../infrastructure/sqlite/memory-repository.ts";
@@ -34,6 +34,22 @@ import { readPackageVersion } from "../version.ts";
 
 export function graphDbPath(root: string): string {
   return join(resolvePath(root), ".leina", "graph.db");
+}
+
+/**
+ * Why `root` cannot be built, or null when it is an existing directory. A build opens
+ * `<root>/.leina/graph.db` with a recursive mkdir, so a typo'd or missing root (`leina build
+ * "how is trust checked"`) would otherwise be CREATED, get an empty graph and be registered
+ * as a project. Every build entry point checks this first.
+ */
+export function buildRootProblem(root: string): string | null {
+  let isDir: boolean;
+  try {
+    isDir = statSync(root).isDirectory();
+  } catch {
+    return `no such directory: ${resolvePath(root)}`;
+  }
+  return isDir ? null : `not a directory: ${resolvePath(root)}`;
 }
 
 export function openGraphRepo(root: string, opts?: { readOnly?: boolean }): GraphRepository {
@@ -147,6 +163,8 @@ export async function openFreshStoreOrThrow(
   if (missing && !opts.buildIfMissing) {
     throw new Error(`No graph at ${p}. Run: leina build ${root}`);
   }
+  const rootProblem = missing ? buildRootProblem(root) : null;
+  if (rootProblem) throw new Error(`cannot build the graph: ${rootProblem}`);
   // One source-walk memo for the whole gate+rebuild operation: the staleness
   // check and a stale-triggered rebuild share a single source listing instead of
   // walking the tree twice. The memo lives ONLY for this call's dynamic extent
@@ -198,6 +216,8 @@ export function buildGraphShared(root: string): Promise<BuildReport> {
   const key = resolvePath(root);
   const running = inflightBuilds.get(key);
   if (running) return running;
+  const rootProblem = buildRootProblem(root);
+  if (rootProblem) return Promise.reject(new Error(`cannot build the graph: ${rootProblem}`));
   const build = (async () => {
     const { buildGraph } = await import("../application/graph/build.ts");
     const registry = await buildDefaultRegistry();

@@ -12,7 +12,7 @@ import { displayLabel, nodeAt } from "../../application/graph/present.ts";
 import { compactQuery, type CompactQuery } from "../../application/graph/payloads.ts";
 import type { GraphNode } from "../../domain/graph/model.ts";
 import type { GraphRepository } from "../../domain/graph/ports.ts";
-import { openGraphRepo as openStore, openFreshStore, openEventSink, buildDefaultRegistry } from "../wiring.ts";
+import { openGraphRepo as openStore, openFreshStore, openEventSink, buildDefaultRegistry, buildRootProblem } from "../wiring.ts";
 import { makeLeinaEvent } from "../../domain/events/model.ts";
 import { emitEvent } from "../../application/events/emit.ts";
 import { fail } from "../io.ts";
@@ -53,9 +53,12 @@ function recordProjectBuild(root: string): void {
   }
 }
 
-// Shared by handleBuild/handleRefresh: wait for (or reclaim) the foreground build lock;
-// exit(1) with an actionable message if a live foreign holder never releases it in time.
+// Shared by handleBuild/handleRefresh: refuse a root that is not an existing directory
+// (before anything is created or registered), then wait for (or reclaim) the foreground
+// build lock; exit(1) with an actionable message if a live foreign holder never releases it.
 function acquireLockOrFail(root: string): void {
+  const problem = buildRootProblem(root);
+  if (problem) fail(`leina: cannot build the graph: ${problem}`);
   const result = acquireForegroundBuildLock(root);
   if ("timeout" in result) {
     const ageMs = Date.now() - result.holderStartedAt;

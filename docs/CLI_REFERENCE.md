@@ -29,6 +29,10 @@ stderr; listed in the build report's `oversizeSkipped`) and the freshness check 
 the same way, so a huge generated or vendored file can neither exhaust memory nor keep the
 graph permanently stale.
 
+`build` and `refresh` refuse a `<dir>` that does not exist or is not a directory: they exit `1`
+with `cannot build the graph: no such directory: <abs>` and create, build and register nothing
+(previously a mistyped argument created the directory and registered an empty project).
+
 ### `refresh <dir>`
 Force a rebuild now, ignoring freshness. Prints node/edge/file counts.
 
