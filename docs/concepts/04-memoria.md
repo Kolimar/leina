@@ -196,8 +196,26 @@ flowchart LR
 
 The strategy is **recall-first**: joining with `OR` makes it match any term, and BM25 sorts
 the best hits first. The full phrase as an extra term gives a boost to documents where the
-words appear together. Each `SearchHit` carries `id`, `title`, `type`, `topicKey`, a
-`snippet` (first ~200 chars), the BM25 score, and `updatedAt`.
+words appear together.
+
+BM25 only builds the **candidate pool**; the final order is one ranking shared by both back
+ends (FTS5, and the `LIKE` fallback for SQLite builds without it):
+
+1. **Exact hits before prefix-fallback hits.** When the exact hits do not fill the page
+   (`--limit`), each token is cut to ~60% and then to 4 chars (`paginacion` → `pagina*`,
+   `pagi*` → finds `pagination`) and those hits fill the rest of the page — always below.
+2. **Active before resolved/obsolete** notes (they stay findable, just demoted).
+3. **Relevance + match boosts:** normalised BM25 (or, in `LIKE` mode, a BM25-style score
+   computed in JS with the same 5× title weight), plus an exact `topicKey` match (+5), a query
+   that names the topic's family or leaf (+1.5 — `release` → `release/2-1-0-status`), the
+   phrase in the title (+1) or every token in it (+0.5), the phrase in the content (+0.3), and
+   a small recency prior (+0.3, 90-day half-life).
+4. Ties: newest first, then id — the order never depends on the SQLite build.
+
+Every comparison is **accent- and case-insensitive** in both modes (`publicacion` =
+`publicación`; `LIKE` folds through a `leina_fold()` SQL function). Each `SearchHit`
+carries `id`, `title`, `type`, `topicKey`, `status`, a `snippet`, the final `score` (higher
+is better) and `updatedAt`.
 
 Read commands:
 

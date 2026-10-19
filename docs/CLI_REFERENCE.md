@@ -280,6 +280,12 @@ Set the status back to `active` and clear the resolution note.
 
 ### `memory search <dir> <query> [--type t] [--scope s] [--limit N]`
 Full-text search (default limit 10). Prints `#id [type] [topic] title` plus a snippet per hit.
+The query is the positional words only (flag values such as `--limit 6` are never part of
+it). Ranking — identical with FTS5 and the `LIKE` fallback, accent- and case-insensitive:
+exact hits first (prefix-fallback hits only fill a short page, below them), active notes
+before resolved/obsolete ones, then relevance plus boosts for an exact / family topic-key
+match and the phrase in the title or content, with a small recency prior (details in
+[concepts/04](./concepts/04-memoria.md#how-its-searched-bm25)).
 
 ### `memory verified <dir> <query> [--type t] [--scope s] [--limit N]`
 Search **plus drift classification** against the live graph. Buckets results into

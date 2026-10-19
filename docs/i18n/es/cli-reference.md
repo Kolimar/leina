@@ -303,7 +303,13 @@ Vuelve el estado a `active` y borra la nota de resolución.
 
 ### `memory search <dir> <query> [--type t] [--scope s] [--limit N]`
 Búsqueda de texto completo (límite por defecto 10). Imprime `#id [type] [topic] title` más
-un snippet por hit.
+un snippet por hit. La query son solo las palabras posicionales (los valores de flags como
+`--limit 6` nunca entran en ella). Ranking — idéntico con FTS5 y con el fallback `LIKE`,
+insensible a acentos y mayúsculas: primero los hits exactos (los del fallback por prefijo solo
+completan una página corta, debajo), las notas activas antes que las resueltas/obsoletas, y
+después relevancia más boosts por match exacto o de familia del topic key y por la frase en el
+título o el contenido, con un pequeño prior de recencia (detalle en
+[concepts/04](./concepts/04-memoria.md#cómo-se-busca-bm25)).
 
 ### `memory verified <dir> <query> [--type t] [--scope s] [--limit N]`
 Búsqueda **más clasificación de drift** contra el grafo vivo. Agrupa los resultados en

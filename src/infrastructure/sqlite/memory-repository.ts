@@ -8,6 +8,14 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { makeId, normalizeLabel } from "../../domain/shared/id.ts";
 import { ensureMemorySchema, OBS_FTS_DDL } from "./schema.ts";
+import {
+  foldText,
+  likeRelevance,
+  prefixTiers,
+  queryTokens,
+  rankSearchCandidates,
+  type RankCandidate,
+} from "../../domain/memory/search-rank.ts";
 import type { CompactOptions, CompactReport } from "../../application/memory/compact.ts";
 import type {
   Observation,
@@ -216,25 +224,13 @@ function sanitizeMatchQuery(query: string): string {
 }
 
 /**
- * Recall fallback when the exact MATCH finds nothing: turn each token (≥4 chars) into
- * an FTS5 prefix query on its leading ~60%. Catches cross-language technical roots
- * ("paginacion" → pagina* → "pagination", "validación" → valid* → "validation") and
- * light typos in the suffix, at zero dependency cost. Returns null when no token is
- * long enough to form a useful prefix.
+ * The FTS5 form of one prefix-fallback tier (see prefixTiers in domain/memory/search-rank):
+ * `"pagin"* OR "vali"*`. Catches cross-language technical roots ("paginacion" → pagin* →
+ * "pagination", "validación" → valid* → "validation") and light typos in the suffix, at zero
+ * dependency cost.
  */
-function prefixMatchQuery(query: string): string | null {
-  const tokens = query.trim().split(/\s+/).filter((t) => t.length >= 4);
-  if (tokens.length === 0) return null;
-  const quote = (t: string) => `"${t.replaceAll('"', '""')}"`;
-  const prefixes = new Set<string>();
-  for (const t of tokens) {
-    // Two prefix lengths per token: ~60% of the query token, AND a short 4-char one.
-    // The index holds PORTER STEMS ("pagination" → "pagin"), which can be shorter than
-    // the 60% cut of the query word — the 4-char prefix still lands under the stem.
-    prefixes.add(`${quote(t.slice(0, Math.max(4, Math.floor(t.length * 0.6))))}*`);
-    prefixes.add(`${quote(t.slice(0, 4))}*`);
-  }
-  return [...prefixes].join(" OR ");
+function prefixMatchQuery(prefixes: string[]): string {
+  return prefixes.map((p) => `"${p.replaceAll('"', '""')}"*`).join(" OR ");
 }
 
 // Tokenize a key into a set of lowercase tokens split on - and /.
@@ -260,61 +256,67 @@ function jaccard(a: Set<string>, b: Set<string>): number {
 // LIKE-search helpers (used when FTS5 is unavailable)
 // ---------------------------------------------------------------------------
 
-// Split a search query into lowercase tokens suitable for SQL LIKE patterns (%token%).
-// Returns an empty array when the query is blank (caller should return [] without querying).
-function buildLikeTokens(query: string): string[] {
-  return query
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((t) => t.length > 0)
-    .map((t) => `%${t}%`);
-}
-
-// LIKE-mode counterpart of prefixMatchQuery (same recall fallback, same token policy):
-// each token ≥4 chars contributes two substring patterns — its leading ~60% and a short
-// 4-char prefix — so "paginacion" still lands on "pagination" without FTS5. Returns []
-// when no token is long enough (mirrors prefixMatchQuery returning null).
-function buildLikePrefixTokens(query: string): string[] {
-  const tokens = query.trim().toLowerCase().split(/\s+/).filter((t) => t.length >= 4);
-  const patterns = new Set<string>();
-  for (const t of tokens) {
-    patterns.add(`%${t.slice(0, Math.max(4, Math.floor(t.length * 0.6)))}%`);
-    patterns.add(`%${t.slice(0, 4)}%`);
-  }
-  return [...patterns];
-}
-
 // Build a snippet (similar to FTS5's snippet() function) from content by finding the
-// first occurrence of any token and extracting ~80 characters of context around it.
-// The matching word is wrapped with [ and ] to mirror the FTS5 snippet format used by
-// the FTS5 branch. Returns the full content (truncated) when no token is found.
-function buildLikeSnippet(content: string, tokens: string[]): string {
-  const raw = tokens.map((t) => t.replaceAll("%", "")); // strip LIKE wildcards
-  const lower = content.toLowerCase();
+// first occurrence of any (accent-folded) term and extracting ~80 characters of context
+// around it, the match wrapped in [ ] like the FTS5 branch's snippets. Folding keeps
+// offsets for the usual precomposed text; when it does not (rare case-mapping expansions)
+// or nothing matches, the snippet is the content's first 160 chars.
+function buildLikeSnippet(content: string, terms: string[]): string {
+  const plain = (): string => (content.length > 160 ? `${content.slice(0, 160)} …` : content);
+  const folded = foldText(content);
+  if (folded.length !== content.length) return plain();
   let bestIdx = -1;
-  let bestToken = "";
-  for (const t of raw) {
-    const idx = lower.indexOf(t);
+  let bestLen = 0;
+  for (const t of terms) {
+    const idx = folded.indexOf(t);
     if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
       bestIdx = idx;
-      bestToken = t;
+      bestLen = t.length;
     }
   }
-  if (bestIdx === -1) {
-    // No hit — return a plain prefix snippet
-    return content.length > 160 ? `${content.slice(0, 160)  } …` : content;
-  }
+  if (bestIdx === -1) return plain();
   const start = Math.max(0, bestIdx - 40);
-  const end = Math.min(content.length, bestIdx + bestToken.length + 40);
-  const window = content.slice(start, end);
-  // Wrap the matched word (case-insensitive) with [ ] mirroring FTS5 snippet format.
-  // eslint-disable-next-line security/detect-non-literal-regexp -- token is regex-escaped on the line above
-  const re = new RegExp(bestToken.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-  const highlighted = window.replaceAll(re, (m) => `[${m}]`);
+  const end = Math.min(content.length, bestIdx + bestLen + 40);
+  const highlighted = `${content.slice(start, bestIdx)}[${content.slice(bestIdx, bestIdx + bestLen)}]${content.slice(bestIdx + bestLen, end)}`;
   const prefix = start > 0 ? " … " : "";
   const suffix = end < content.length ? " … " : "";
   return prefix + highlighted + suffix;
+}
+
+interface SearchFilters {
+  scope: string | null;
+  type: string | null;
+  pool: number;
+}
+
+interface SearchCandidate extends RankCandidate {
+  type: ObservationType;
+  scope: Scope;
+  /** FTS5's own snippet; LIKE candidates build theirs from `matchTerms`. */
+  snippet?: string;
+  matchTerms: string[];
+}
+
+function searchRowFields(r: {
+  id: string;
+  title: string;
+  type: string;
+  topic_key: string | null;
+  updated_at: number;
+  scope: string;
+  status: string;
+  content: string;
+}): Omit<SearchCandidate, "relevance" | "tier" | "matchTerms"> {
+  return {
+    id: r.id,
+    title: r.title,
+    content: r.content,
+    type: r.type as ObservationType,
+    topicKey: r.topic_key ?? undefined,
+    updatedAt: r.updated_at,
+    scope: r.scope as Scope,
+    status: r.status as ObservationStatus,
+  };
 }
 
 export class SQLiteMemoryRepository implements MemoryRepository {
@@ -344,6 +346,8 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     // already-initialised db).
     const { fts5 } = ensureMemorySchema(this.db);
     this.fts5 = fts5;
+    // Accent/case folding for the LIKE search path ("publicacion" finds "publicación").
+    this.db.function("leina_fold", { deterministic: true }, (v) => (typeof v === "string" ? foldText(v) : v));
     this.projectKey = projectKey;
     if (resolveAnchor) this.resolveAnchor = resolveAnchor;
     // Read-only hardening for `graph serve` (defense in depth): after the schema is
@@ -1061,6 +1065,15 @@ export class SQLiteMemoryRepository implements MemoryRepository {
   }
 
   // ---- search ---------------------------------------------------------------
+  //
+  // Both back ends (FTS5, or LIKE on SQLite builds without it) gather a candidate pool with a
+  // base relevance in [0, 1] and leave the ORDER to rankSearchCandidates()
+  // (domain/memory/search-rank.ts): exact hits before prefix-fallback hits, active before
+  // resolved/obsolete, then relevance + match boosts (exact topic key, topic family, phrase in
+  // the title/content) + a small recency prior, ties by newest then id. When the exact hits
+  // number fewer than `limit`, the prefix tiers (each token cut to ~60%, then to 4 chars) fill
+  // the rest of the page — always below the exact hits. `score` is the final ranking score:
+  // higher is better, in both modes.
 
   search(
     query: string,
@@ -1069,196 +1082,152 @@ export class SQLiteMemoryRepository implements MemoryRepository {
     const scope = opts?.scope ?? null;
     const type = opts?.type ?? null;
     const limit = opts?.limit ?? 10;
+    const tokens = queryTokens(query);
+    if (tokens.length === 0) return this._recentAsHits(scope, type, limit);
 
-    if (!this.fts5) {
-      return this._searchLike(query, scope, type, limit);
-    }
+    const pool = Math.min(Math.max(limit * 4, 40), 400);
+    const filters: SearchFilters = { scope, type, pool };
+    const corpus = this.fts5 ? 0 : this._liveCount(scope, type);
+    const fetchTier = (terms: string[], tier: number, exact: boolean): SearchCandidate[] =>
+      this.fts5
+        ? this._ftsCandidates(exact ? sanitizeMatchQuery(query) : prefixMatchQuery(terms), query, tier, filters)
+        : this._likeCandidates(terms, tier, filters, corpus);
 
-    // FTS5 branch: BM25 ranking + native snippet, behind the SAME deterministic
-    // precedence the LIKE branch applies (exact topic_key > literal query in title >
-    // literal query in content). BM25 alone is NOT enough here: porter stemming maps
-    // e.g. "validation" and "valid" to the same root, so `validation_rules` and
-    // `valid_names` produce near-identical scores whose order then depends on the
-    // bundled SQLite build (pf-2 flipped between ubuntu/macos/windows runners on CI).
-    // The CASE rank pins the exact match first on every platform; BM25 and recency
-    // only break ties within the same precedence band.
-    const matchQuery = sanitizeMatchQuery(query);
+    const candidates: SearchCandidate[] = [];
+    const seen = new Set<string>();
+    const collect = (rows: SearchCandidate[]): void => {
+      for (const r of rows) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        candidates.push(r);
+      }
+    };
+    collect(fetchTier(tokens, 0, true));
+    const tiers = prefixTiers(query);
+    for (let i = 0; i < tiers.length && candidates.length < limit; i++) collect(fetchTier(tiers[i]!, i + 1, false));
+
+    return rankSearchCandidates(candidates, query)
+      .slice(0, limit)
+      .map((c) => ({
+        id: c.id,
+        title: c.title,
+        type: c.type,
+        topicKey: c.topicKey,
+        snippet: c.snippet ?? buildLikeSnippet(c.content, c.matchTerms),
+        score: c.finalScore,
+        updatedAt: c.updatedAt,
+        scope: c.scope,
+        status: c.status,
+      }));
+  }
+
+  // FTS5 candidates for one MATCH expression. The SQL order only decides which rows make the
+  // pool (the same precedence bands the final ranking boosts, then bm25); the final order is
+  // rankSearchCandidates'. bm25 is normalised to [0, 1] within the pool (1 = best).
+  private _ftsCandidates(matchQuery: string, query: string, tier: number, f: SearchFilters): SearchCandidate[] {
     const normalizedQuery = query.trim().toLowerCase();
     const topicForm = normalizedQuery.replaceAll(/\s+/g, "_");
-    const sql = `
-      SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope, o.status,
-             snippet(obs_fts, 1, '[', ']', ' … ', 12) AS snippet,
-             bm25(obs_fts, 5.0, 1.0) AS score
-        FROM obs_fts
-        JOIN observations o ON o.rowid = obs_fts.rowid
-       WHERE obs_fts MATCH ?
-         AND o.project_key = ?
-         AND o.superseded_by IS NULL
-         AND (? IS NULL OR o.scope = ?)
-         AND (? IS NULL OR o.type = ?)
-       ORDER BY o.status <> 'active',
-           CASE
-             WHEN lower(coalesce(o.topic_key, '')) = ? THEN 0
-             WHEN instr(lower(o.title), ?) > 0 THEN 1
-             WHEN instr(lower(o.content), ?) > 0 THEN 2
-             ELSE 3
-           END,
-           score, o.updated_at DESC
-       LIMIT ?
-    `;
-
-    let rows = this.db
-      .prepare(sql)
+    const rows = this.db
+      .prepare(
+        `SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope, o.status, o.content,
+                snippet(obs_fts, 1, '[', ']', ' … ', 12) AS snippet,
+                bm25(obs_fts, 5.0, 1.0) AS score
+           FROM obs_fts
+           JOIN observations o ON o.rowid = obs_fts.rowid
+          WHERE obs_fts MATCH ?
+            AND o.project_key = ?
+            AND o.superseded_by IS NULL
+            AND (? IS NULL OR o.scope = ?)
+            AND (? IS NULL OR o.type = ?)
+          ORDER BY CASE
+                     WHEN lower(coalesce(o.topic_key, '')) = ? THEN 0
+                     WHEN instr(lower(o.title), ?) > 0 THEN 1
+                     WHEN instr(lower(o.content), ?) > 0 THEN 2
+                     ELSE 3
+                   END,
+                   score, o.updated_at DESC, o.id DESC
+          LIMIT ?`,
+      )
       .all(
-        matchQuery, this.projectKey, scope, scope, type, type,
-        topicForm, normalizedQuery, normalizedQuery, limit,
-      ) as unknown as SearchRow[];
+        matchQuery, this.projectKey, f.scope, f.scope, f.type, f.type,
+        topicForm, normalizedQuery, normalizedQuery, f.pool,
+      ) as unknown as (SearchRow & { content: string })[];
+    const best = Math.min(...rows.map((r) => r.score));
+    const worst = Math.max(...rows.map((r) => r.score));
+    return rows.map((r) => ({
+      ...searchRowFields(r),
+      relevance: worst === best ? 1 : (worst - r.score) / (worst - best),
+      tier,
+      snippet: r.snippet,
+      matchTerms: [],
+    }));
+  }
 
-    // Zero exact hits → one prefix-match retry for recall (cross-language roots, suffix
-    // typos). Only on empty results, so precision of the primary path is untouched.
-    if (rows.length === 0) {
-      const fallback = prefixMatchQuery(query);
-      if (fallback !== null) {
-        rows = this.db
-          .prepare(sql)
-          .all(
-            fallback, this.projectKey, scope, scope, type, type,
-            topicForm, normalizedQuery, normalizedQuery, limit,
-          ) as unknown as SearchRow[];
-      }
-    }
+  // LIKE candidates: every live note whose accent-folded title or content contains any of
+  // `terms` (newest first, capped at the pool size × 4 so the BM25-like statistics see the
+  // whole match set on any realistic project), scored by likeRelevance().
+  private _likeCandidates(terms: string[], tier: number, f: SearchFilters, corpus: number): SearchCandidate[] {
+    const patterns = terms.map((t) => `%${t.replaceAll(/[\\%_]/g, (m) => `\\${m}`)}%`);
+    const clauses = patterns
+      .map(() => "(leina_fold(o.title) LIKE ? ESCAPE '\\' OR leina_fold(o.content) LIKE ? ESCAPE '\\')")
+      .join(" OR ");
+    const rows = this.db
+      .prepare(
+        `SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope, o.status, o.content
+           FROM observations o
+          WHERE o.project_key = ?
+            AND o.superseded_by IS NULL
+            AND (? IS NULL OR o.scope = ?)
+            AND (? IS NULL OR o.type = ?)
+            AND (${clauses})
+          ORDER BY o.updated_at DESC, o.id DESC
+          LIMIT ?`,
+      )
+      .all(
+        this.projectKey, f.scope, f.scope, f.type, f.type,
+        ...patterns.flatMap((p) => [p, p]),
+        f.pool * 4,
+      ) as unknown as ObsRow[];
+    const relevance = likeRelevance(rows, terms, corpus);
+    return rows.map((r, i) => ({ ...searchRowFields(r), relevance: relevance[i]!, tier, matchTerms: terms }));
+  }
 
+  private _liveCount(scope: string | null, type: string | null): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM observations
+          WHERE project_key = ? AND superseded_by IS NULL
+            AND (? IS NULL OR scope = ?) AND (? IS NULL OR type = ?)`,
+      )
+      .get(this.projectKey, scope, scope, type, type) as { n: number };
+    return row.n;
+  }
+
+  // Empty query: the newest live observations (active first), no text filter.
+  private _recentAsHits(scope: string | null, type: string | null, limit: number): SearchHit[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, title, type, topic_key, updated_at, scope, content, status
+           FROM observations
+          WHERE project_key = ?
+            AND superseded_by IS NULL
+            AND (? IS NULL OR scope = ?)
+            AND (? IS NULL OR type = ?)
+          ORDER BY status <> 'active', updated_at DESC, id DESC
+          LIMIT ?`,
+      )
+      .all(this.projectKey, scope, scope, type, type, limit) as unknown as ObsRow[];
     return rows.map((r) => ({
       id: r.id,
       title: r.title,
       type: r.type as ObservationType,
       topicKey: r.topic_key ?? undefined,
-      snippet: r.snippet,
-      score: r.score,
+      snippet: r.content.length > 160 ? `${r.content.slice(0, 160)} …` : r.content,
+      score: 0,
       updatedAt: r.updated_at,
       scope: r.scope as Scope,
       status: r.status as ObservationStatus,
     }));
-  }
-
-  // LIKE-mode search: substring token matching, JS snippet, deterministic rank
-  // (exact topic_key > term in title > term in content) with updated_at DESC as the
-  // final tie-break, plus the same zero-hit prefix-retry the FTS5 branch has.
-  // No stemming or BM25 — this is a deliberate quality/performance trade-off for
-  // Node builds without FTS5. The caller sees the same SearchHit shape as FTS5.
-  private _searchLike(
-    query: string,
-    scope: string | null,
-    type: string | null,
-    limit: number,
-  ): SearchHit[] {
-    const tokens = buildLikeTokens(query);
-    if (tokens.length === 0) {
-      // Empty query: return the most recently updated live observations (no text filter).
-      const rows = this.db
-        .prepare(
-          `SELECT id, title, type, topic_key, updated_at, scope, content, status
-             FROM observations
-            WHERE project_key = ?
-              AND superseded_by IS NULL
-              AND (? IS NULL OR scope = ?)
-              AND (? IS NULL OR type = ?)
-            ORDER BY status <> 'active', updated_at DESC, id DESC
-            LIMIT ?`,
-        )
-        .all(this.projectKey, scope, scope, type, type, limit) as unknown as ObsRow[];
-      return rows.map((r) => ({
-        id: r.id,
-        title: r.title,
-        type: r.type as ObservationType,
-        topicKey: r.topic_key ?? undefined,
-        snippet: r.content.length > 160 ? `${r.content.slice(0, 160)  } …` : r.content,
-        score: 0,
-        updatedAt: r.updated_at,
-        scope: r.scope as Scope,
-        status: r.status as ObservationStatus,
-      }));
-    }
-
-    // Deterministic precedence (mirrors what BM25 gives the FTS5 branch): an exact
-    // topic_key match outranks everything, then the full query term in the TITLE,
-    // then in the CONTENT, and only then recency as the FINAL tie-break. Without
-    // this rank, ORDER BY updated_at DESC alone let a NEWER partial match beat an
-    // OLDER exact one (pf-2: `valid_names` created 1ms later outranked the exact
-    // `validation_rules`).
-    const normalizedQuery = query.trim().toLowerCase();
-    const topicForm = normalizedQuery.replaceAll(/\s+/g, "_");
-    const phrasePattern = `%${normalizedQuery}%`;
-    const rankExpr = `CASE
-          WHEN lower(coalesce(o.topic_key, '')) = ? THEN 0
-          WHEN lower(o.title) LIKE ? THEN 1
-          WHEN lower(o.content) LIKE ? THEN 2
-          ELSE 3
-        END`;
-
-    // Build the LIKE filter: (lower(title) LIKE ? OR lower(content) LIKE ?) per token,
-    // all tokens joined with OR (any token match is a hit — recall-oriented).
-    const runLike = (patterns: string[]): ObsRow[] => {
-      const clauses = patterns.map(() => "(lower(o.title) LIKE ? OR lower(o.content) LIKE ?)").join(" OR ");
-      const sql = `
-        SELECT o.id, o.title, o.type, o.topic_key, o.updated_at, o.scope, o.content, o.status
-          FROM observations o
-         WHERE o.project_key = ?
-           AND o.superseded_by IS NULL
-           AND (? IS NULL OR o.scope = ?)
-           AND (? IS NULL OR o.type = ?)
-           AND (${clauses})
-         ORDER BY o.status <> 'active', ${rankExpr}, o.updated_at DESC
-         LIMIT ?
-      `;
-      return this.db
-        .prepare(sql)
-        .all(
-          this.projectKey,
-          scope,
-          scope,
-          type,
-          type,
-          ...patterns.flatMap((p) => [p, p]),
-          topicForm,
-          phrasePattern,
-          phrasePattern,
-          limit,
-        ) as unknown as ObsRow[];
-    };
-
-    let rows = runLike(tokens);
-    let matchedTokens = tokens;
-
-    // Zero exact hits → one prefix-match retry for recall (cross-language roots, suffix
-    // typos) — the LIKE twin of the FTS5 branch's prefixMatchQuery fallback. Only on
-    // empty results, so precision of the primary path is untouched.
-    if (rows.length === 0) {
-      const prefixTokens = buildLikePrefixTokens(query);
-      if (prefixTokens.length > 0) {
-        rows = runLike(prefixTokens);
-        matchedTokens = prefixTokens;
-      }
-    }
-
-    const rawTokens = matchedTokens.map((t) => t.replaceAll("%", ""));
-    return rows.map((r) => {
-      // Synthetic score: number of tokens matching in the title (higher = more relevant).
-      // Actual ordering is by updated_at DESC; this score is informational only.
-      const titleLower = r.title.toLowerCase();
-      const score = rawTokens.filter((t) => titleLower.includes(t)).length;
-      return {
-        id: r.id,
-        title: r.title,
-        type: r.type as ObservationType,
-        topicKey: r.topic_key ?? undefined,
-        snippet: buildLikeSnippet(r.content, matchedTokens),
-        score,
-        updatedAt: r.updated_at,
-        scope: r.scope as Scope,
-        status: r.status as ObservationStatus,
-      };
-    });
   }
 
   // ---- get ------------------------------------------------------------------

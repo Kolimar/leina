@@ -46,7 +46,7 @@ import { memOpenGuarded, openEventSink } from "../wiring.ts";
 import { makeLeinaEvent } from "../../domain/events/model.ts";
 import { emitEvent } from "../../application/events/emit.ts";
 import { fail, readStdin } from "../io.ts";
-import { hasFlag, optFlag, parseBatchInput } from "../args.ts";
+import { hasFlag, optFlag, parseBatchInput, positionals, positiveIntFlag } from "../args.ts";
 
 // MemSubHandler allows async sub-handlers (needed for memSave which calls emitEvent — D3).
 type MemSubHandler = (rest: string[], dir: string) => void | Promise<void>;
@@ -293,11 +293,19 @@ function warnIfOrphanKeys(dir: string): void {
   }
 }
 
+// Flags of `memory search` / `memory verified` that take a value — their values are not
+// part of the query.
+const SEARCH_VALUE_FLAGS = ["--type", "--scope", "--limit"] as const;
+
+function searchQuery(rest: string[], verb: string): string {
+  return positionals(rest.slice(2), SEARCH_VALUE_FLAGS).join(" ") || fail(`memory ${verb} requires a query`);
+}
+
 function memSearch(rest: string[], dir: string): void {
-  const query = rest.slice(2).filter((a) => !a.startsWith("--")).join(" ") || fail("memory search requires a query");
+  const query = searchQuery(rest, "search");
   const type = typeFlag(rest, undefined);
   const scope = scopeFlag(rest);
-  const limit = Number(optFlag(rest, "--limit", "10"));
+  const limit = positiveIntFlag(rest, "--limit", 10);
   const { store, close } = memOpenGuarded(dir);
   const hits = store.search(query, { type, scope, limit });
   close();
@@ -316,10 +324,10 @@ function memSearch(rest: string[], dir: string): void {
 
 function memVerified(rest: string[], dir: string): void {
   // Search + classify each hit against the live graph (drift detection).
-  const query = rest.slice(2).filter((a) => !a.startsWith("--")).join(" ") || fail("memory verified requires a query");
+  const query = searchQuery(rest, "verified");
   const type = typeFlag(rest, undefined);
   const scope = scopeFlag(rest);
-  const limit = Number(optFlag(rest, "--limit", "10"));
+  const limit = positiveIntFlag(rest, "--limit", 10);
   const { store, verifyNode, close } = memOpenGuarded(dir);
   const ctx = getVerifiedContext(store, query, verifyNode, { type, scope, limit });
   close();
@@ -372,8 +380,7 @@ function memGet(rest: string[], dir: string): void {
 // (application/memory/context-preview.ts). The RECENT SESSIONS block keeps full session ids:
 // the harness session-summary gate reads their creation epochs from it.
 function memContext(rest: string[], dir: string): void {
-  const limit = Number(optFlag(rest, "--limit", String(CONTEXT_NOTES)));
-  if (!Number.isInteger(limit) || limit < 1) fail("--limit must be a positive integer");
+  const limit = positiveIntFlag(rest, "--limit", CONTEXT_NOTES);
   const { store, close } = memOpenGuarded(dir);
   const ctx = store.recentContext({ limit: CONTEXT_POOL });
   close();

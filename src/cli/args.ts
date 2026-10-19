@@ -12,6 +12,33 @@ export function optFlag(args: string[], name: string, fallback: string | undefin
   return v;
 }
 
+/**
+ * The positional words of `args`: every token that is neither a `--flag` nor the value that
+ * follows one of `valueFlags` (the flags that take a value). Without the second rule
+ * `memory search <dir> confiable --limit 6` searched for "confiable 6".
+ */
+export function positionals(args: string[], valueFlags: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a.startsWith("--")) {
+      if (valueFlags.includes(a)) i++;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+/** A `--flag N` that must be a positive integer (absent → fallback). */
+export function positiveIntFlag(args: string[], name: string, fallback: number): number {
+  const raw = optFlag(args, name, undefined);
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) fail(`${name} must be a positive integer`);
+  return n;
+}
+
 /** Returns true if the exact flag token appears anywhere in args. */
 export function hasFlag(args: string[], name: string): boolean {
   return args.includes(name);

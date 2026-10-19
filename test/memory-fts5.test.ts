@@ -202,7 +202,7 @@ test("(like-3) LIKE→FTS5 transition: triggers recreated + obs_fts rebuilt with
   }
 });
 
-test("(like-4) LIKE search: recall by substring, snippet with [ ], order by updated_at DESC", () => {
+test("(like-4) LIKE search: recall by substring, snippet with [ ], equal relevance → newest first", () => {
   __setFts5ProbeForTests(() => false);
   const dir = mkdtempSync(join(tmpdir(), "leina-like-search-"));
   try {
@@ -232,10 +232,10 @@ test("(like-4) LIKE search: recall by substring, snippet with [ ], order by upda
       assert.match(h.snippet, /\[.*?\]/, "snippet should highlight the match with [ ]");
     }
 
-    // Most recently updated hit should come first
+    // Same term frequency and similar length: the recency prior puts the newer one first.
     assert.ok(
       hits[0]!.updatedAt >= hits[1]!.updatedAt,
-      "hits should be ordered by updatedAt DESC",
+      "near-equal relevance is broken by recency",
     );
 
     // Single-token search with limit
@@ -296,16 +296,19 @@ test("(pf-1) cross-language root: 'paginacion' finds 'pagination' via prefix fal
   }
 });
 
-test("(pf-2) fallback only fires on zero exact hits (precision untouched)", () => {
+test("(pf-2) prefix fallback only fills a short page, always below the exact hits", () => {
   const dir = mkdtempSync(join(tmpdir(), "leina-pf-"));
   try {
     const store = new MemoryStore(join(dir, "memory.db"), "pf-test");
     const { observation: exact } = store.save({
       title: "Validation rules", content: "input validation for forms", type: "manual",
     });
-    store.save({ title: "Valid names", content: "validity checker for slugs", type: "manual" });
+    // Newer, so recency alone would put it first.
+    const { observation: near } = store.save({ title: "Valid names", content: "validity checker for slugs", type: "manual" });
     const hits = store.search("validation");
-    assert.equal(hits[0]?.id, exact.id, "exact match ranks first, fallback not triggered");
+    assert.deepEqual(hits.map((h) => h.id), [exact.id, near.id], "exact hit first, prefix-only near miss below it");
+    // A full page of exact hits leaves no room for the fallback.
+    assert.deepEqual(store.search("validation", { limit: 1 }).map((h) => h.id), [exact.id]);
     store.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -373,7 +376,7 @@ test("(pf-like-2) LIKE mode: exact match outranks a NEWER partial match (recency
   }
 });
 
-test("(pf-like-3) LIKE mode: fallback only fires on zero exact hits; short tokens never retry", () => {
+test("(pf-like-3) LIKE mode: fallback fills below the exact hits; short tokens never retry", () => {
   __setFts5ProbeForTests(() => false);
   const dir = mkdtempSync(join(tmpdir(), "leina-pf-like-"));
   try {
@@ -382,10 +385,11 @@ test("(pf-like-3) LIKE mode: fallback only fires on zero exact hits; short token
       title: "Validation rules", content: "input validation for forms", type: "manual",
     });
     store.save({ title: "Valid names", content: "validity checker for slugs", type: "manual" });
-    // Exact hit exists → the prefix retry must NOT widen the result set (pf-2 in LIKE mode).
+    // Exact hit first; the prefix-only near miss may only fill the page below it (pf-2 in LIKE mode).
     const hits = store.search("validation");
-    assert.equal(hits[0]?.id, exact.id, "exact match ranks first, fallback not triggered");
-    assert.ok(!hits.some((h) => h.title === "Valid names"), "prefix-only near-miss stays out");
+    assert.equal(hits[0]?.id, exact.id, "exact match ranks first");
+    assert.deepEqual(hits.map((h) => h.title), ["Validation rules", "Valid names"]);
+    assert.equal(store.search("validation", { limit: 1 }).length, 1, "no fallback on a full page");
     // And tiny tokens never trigger the retry at all (pf-3 in LIKE mode).
     assert.equal(store.search("xyz").length, 0, "no prefix retry for tiny tokens");
     store.close();

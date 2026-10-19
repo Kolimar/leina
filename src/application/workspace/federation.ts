@@ -131,7 +131,10 @@ export class WorkspaceMemoryFederator implements MemoryRepository {
       }
     }
 
-    merged.sort((a, b) => b.score - a.score);
+    // Every member ranks with the same scale (higher = better); non-active notes stay below.
+    merged.sort(
+      (a, b) => Number(a.status !== "active") - Number(b.status !== "active") || b.score - a.score || b.updatedAt - a.updatedAt,
+    );
     if (opts?.limit !== undefined) return merged.slice(0, opts.limit);
     return merged;
   }

@@ -197,8 +197,26 @@ flowchart LR
 
 La estrategia es **recall-first**: unir con `OR` hace que matchee cualquier término, y BM25
 ordena los mejores hits primero. La frase completa como término extra le da un empujón a los
-documentos donde las palabras aparecen juntas. Cada resultado trae `id`, `title`, `type`,
-`topicKey`, un `snippet` (primeros ~200 chars), el score BM25 y `updatedAt`.
+documentos donde las palabras aparecen juntas.
+
+BM25 solo arma el **pool de candidatos**; el orden final es un ranking compartido por los dos
+back ends (FTS5, y el fallback `LIKE` para builds de SQLite sin FTS5):
+
+1. **Hits exactos antes que los del fallback por prefijo.** Si los hits exactos no llenan la
+   página (`--limit`), cada token se corta al ~60% y después a 4 chars (`paginacion` →
+   `pagina*`, `pagi*` → encuentra `pagination`) y esos hits completan la página — siempre debajo.
+2. **Activas antes que resueltas/obsoletas** (siguen apareciendo, solo más abajo).
+3. **Relevancia + boosts de match:** BM25 normalizado (o, en modo `LIKE`, un score estilo BM25
+   calculado en JS con el mismo peso 5× del título), más un match exacto de `topicKey` (+5), una
+   query que nombra la familia o la hoja del topic (+1.5 — `release` → `release/2-1-0-status`),
+   la frase en el título (+1) o todos los tokens en él (+0.5), la frase en el contenido (+0.3) y
+   un pequeño prior de recencia (+0.3, vida media de 90 días).
+4. Empates: más nueva primero, después id — el orden nunca depende del build de SQLite.
+
+Toda comparación es **insensible a acentos y mayúsculas** en ambos modos (`publicacion` =
+`publicación`; `LIKE` pliega con una función SQL `leina_fold()`). Cada `SearchHit` trae `id`,
+`title`, `type`, `topicKey`, `status`, un `snippet`, el `score` final (más alto es mejor) y
+`updatedAt`.
 
 Comandos de lectura:
 
