@@ -325,16 +325,18 @@ export function printRootHelp(): void {
       `  deactivate              global teardown: remove managed symlinks + revoke user-global\n` +
       `                          grant + hooks. Does NOT touch blanket sentinel. Idempotent.\n` +
       `  init [dir] --hosts h1,h2 --profile devin|windsurf [--freshness auto|refuse]\n` +
-      `       [--build] [--name <n>] [--mcp] [--harness-preset generic|leina-native]\n` +
+      `       [--build] [--name <n>] [--mcp] [--harness] [--harness-preset generic|leina-native]\n` +
       `                          per-repo opt-in: consent=enabled + .gitignore; standalone (no\n` +
       `                          blanket) also AGENTS.md protocol + per-host wiring (devin →\n` +
       `                          .devin/*, claude → .claude/settings.json hooks). --hosts is\n` +
       `                          REQUIRED (or a prior persisted choice); a full init also requires\n` +
       `                          --profile. --build builds the graph now; --name locks the project\n` +
       `                          key; --mcp registers the server in\n` +
-      `                          the project .mcp.json (committable, for teams). --harness-preset\n` +
-      `                          generic seeds a harness WITHOUT the leina-* rules (leina-native,\n` +
-      `                          the default, keeps them)\n` +
+      `                          the project .mcp.json (committable, for teams). --harness seeds\n` +
+      `                          + syncs the task harness (opt-in; a repo that already has\n` +
+      `                          .harness/config.json is always refreshed). --harness-preset\n` +
+      `                          (implies --harness) generic seeds it WITHOUT the leina-* rules\n` +
+      `                          (leina-native, the default, keeps them)\n` +
       `  deinit [<dir> | --project <dir>]\n` +
       `                          per-repo teardown (inverse of init): strip managed blocks +\n` +
       `                          set consent=disabled + remove .devin/hooks.v1.json. Idempotent.\n` +

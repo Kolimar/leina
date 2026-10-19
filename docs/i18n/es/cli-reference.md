@@ -766,7 +766,7 @@ user-global). Solo strip-inverse — elimina las entradas gestionadas por leina 
 cualquier symlink/grant/hook de terceros; **no** depende de archivos `.bak`. Idempotente (un
 segundo `disable` sale con 0).
 
-### `init [dir] --hosts <devin|claude>[,...] --profile <devin|windsurf> [--freshness auto|refuse] [--build] [--mcp] [--name <project-name>] [--claude-hooks] [--harness-preset generic|leina-native]`
+### `init [dir] --hosts <devin|claude>[,...] --profile <devin|windsurf> [--freshness auto|refuse] [--build] [--mcp] [--name <project-name>] [--claude-hooks] [--harness] [--harness-preset generic|leina-native]`
 Opt-in por-repo — **adaptativo** según si blanket está activo. Siempre escribe el consent flag
 `enabled`, asegura el bloque de `.gitignore` y registra la **confianza del workspace** en esta
 máquina (una línea `workspace trust (<ruta del registro>)` en el reporte). Luego:
@@ -785,12 +785,15 @@ foreground** (con progreso) justo después del wiring. `--name <project-name>` e
 `.leina/config.json` commiteable que fija la project key. `--profile windsurf` agrega la
 sección de capabilities de Windsurf a `AGENTS.md` (solo FULL). `--mcp` escribe un `.mcp.json`
 de proyecto commiteable. `--claude-hooks` fuerza los hooks de Claude Code aunque el host
-`claude` no esté en `--hosts`. `--harness-preset` elige la semilla de un `.harness/config.json`
+`claude` no esté en `--hosts`. El harness de tareas es **opt-in**: `--harness` siembra
+`.harness/config.json` y corre el sync del harness; sin el flag `init` no toca `.harness/`,
+salvo en un repo que ya tiene `.harness/config.json`, que cada `init` mantiene sincronizado.
+`--harness-preset` (implica `--harness`) elige la semilla de un `.harness/config.json`
 **nuevo**: `generic` desactiva las cuatro rules builtin acopladas a leina (`leina-*`) para usar
 el harness sin adoptar el resto de leina; `leina-native` (el default) conserva la suite builtin
 completa. Un `.harness/config.json` existente nunca se sobreescribe — en ese caso el flag se
-ignora con un aviso. Ver [concepts/07-harness.md](concepts/07-harness.md). Después `init`
-corre el sync del harness. Con `--hosts` (FULL) en un repo cuya config no tiene `platforms`,
+ignora con un aviso. Ver [concepts/07-harness.md](concepts/07-harness.md). Con el harness
+activo, `init` después corre el sync del harness. Con `--hosts` (FULL) en un repo cuya config no tiene `platforms`,
 fija `platforms` en las plataformas de esos hosts más lo que el lockfile y la
 auto-detección ya gobiernan, así que se conservan las plataformas ya sincronizadas o
 detectadas.

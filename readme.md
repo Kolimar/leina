@@ -315,7 +315,8 @@ converges to the same "done" on any host. Markdown rules persuade; gates block â
 complete only when `leina harness verify` exits 0. Rules resolve across three layers
 (builtin < project `.harness/rules/` < user `~/.leina/harness/rules/`); the four leina
 rules (memory-first, graph-consult, graph-fresh, session-summary) ship **enabled by
-default**, so `leina init` leaves the repo governed out of the box. In a workspace
+default**. The harness is opt-in: `leina init --harness` seeds `.harness/config.json` and
+syncs the rules into your hosts (a repo that already carries that file stays synced). In a workspace
 `leina init` trusted on this machine, the agent-gate always keeps harness rules/config
 agent-read-only; with an active contract (or strictness `strict`) it turns blocking
 (out-of-scope edits, commits with a red verify, stop with failing gates); in guided mode

@@ -723,7 +723,7 @@ teardown (unlinks hosts, revokes the CLI `Exec` grant, removes the user-global h
 Devin config and `~/.claude/settings.json`). Strip-inverse only — removes leina's managed entries while preserving any third-party
 symlinks/grants/hooks. Idempotent (a second `disable` exits 0).
 
-### `init <dir> [--hosts devin,claude] [--profile devin|windsurf] [--freshness auto|refuse] [--build] [--name <project-name>] [--mcp] [--claude-hooks] [--harness-preset generic|leina-native]`
+### `init <dir> [--hosts devin,claude] [--profile devin|windsurf] [--freshness auto|refuse] [--build] [--name <project-name>] [--mcp] [--claude-hooks] [--harness] [--harness-preset generic|leina-native]`
 Per-repo opt-in — **adaptive** on whether blanket is active. Always writes the consent flag
 `enabled`, ensures the `.gitignore` block, and records **workspace trust** for this machine
 (a `workspace trust (<record path>)` line in the report). Then:
@@ -741,12 +741,15 @@ foreground** (with progress) right after wiring. `--name <project-name>` writes 
 `.leina/config.json` locking the project key. `--profile windsurf` adds the Windsurf
 capabilities section to `AGENTS.md` (FULL only). `--mcp` writes a project-level `.mcp.json`.
 `--claude-hooks` forces the Claude Code hooks even when the `claude` host isn't in `--hosts`.
-`--harness-preset` chooses the seed for a **new** `.harness/config.json`: `generic` disables the
+The task harness is **opt-in**: `--harness` seeds `.harness/config.json` and runs the harness
+sync; without it `init` leaves `.harness/` alone, except in a repo that already carries
+`.harness/config.json`, which every `init` keeps synced.
+`--harness-preset` (implies `--harness`) chooses the seed for a **new** `.harness/config.json`: `generic` disables the
 four leina-coupled builtin rules (`leina-*`) so the harness works without adopting the rest of
 leina; `leina-native` (the default) keeps the full builtin suite. An existing
 `.harness/config.json` is never overwritten — the flag is then ignored with a note. See
 [concepts/07-harness.md](concepts/07-harness.md#rule-presets--generic-vs-leina-native).
-`init` then runs the harness sync. With `--hosts` (FULL) in a repo whose config has no
+With the harness on, `init` then runs the harness sync. With `--hosts` (FULL) in a repo whose config has no
 `platforms`, it pins `platforms` to those hosts' platforms plus whatever the lockfile and
 auto-detection already govern, so previously synced or detected platforms are kept.
 

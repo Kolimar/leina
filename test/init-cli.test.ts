@@ -566,10 +566,9 @@ test("(I1-1) init LIGHT (blanket activo): solo consent + gitignore; AGENTS.md y 
     assert.ok(existsSync(join(dir, ".gitignore")), ".gitignore written");
 
     // LIGHT no escribe AGENTS.md en absoluto: ni el protocolo leina ni el
-    // bloque del harness. El bootstrap harness en LIGHT no recibe hosts y su
-    // detección es por evidencia — en un repo vacío no elige plataforma alguna.
+    // bloque del harness. El harness es opt-in (--harness): sin el flag no se siembra.
     assert.ok(!existsSync(join(dir, "AGENTS.md")), "AGENTS.md NOT written in LIGHT mode");
-    assert.ok(existsSync(join(dir, ".harness", "config.json")), ".harness/config.json seeded");
+    assert.ok(!existsSync(join(dir, ".harness")), ".harness/ NOT seeded without --harness");
 
     // .devin/ NOT created (I1-1: LIGHT no escribe hooks ni config local)
     assert.ok(!existsSync(join(dir, ".devin")), ".devin/ NOT created in LIGHT mode");
@@ -746,7 +745,7 @@ test("(i-err-1) a failing step does not abort init: remaining steps run, ✖ rep
 
     const r = spawnSync(
       process.execPath,
-      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin", "--profile", "devin"],
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin", "--profile", "devin", "--harness"],
       { encoding: "utf8", env: TEST_ENV },
     );
 
@@ -966,14 +965,41 @@ test("(i-hp1) --harness-preset generic seeds a config disabling only the leina-*
   }
 });
 
-test("(i-hp2) default init leaves the leina-* rules governing (no rule overrides)", () => {
+test("(i-hp2) init --harness without a preset leaves the leina-* rules governing (no rule overrides)", () => {
   const dir = tmpProject();
   try {
-    runInit(dir, "--profile", "devin");
+    runInit(dir, "--profile", "devin", "--harness");
     const cfg = JSON.parse(readFileSync(join(dir, ".harness", "config.json"), "utf8")) as {
       rules?: unknown;
     };
     assert.equal(cfg.rules, undefined, "no preset ⇒ full builtin suite governs");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(i-harness-1) the harness is opt-in: a plain init seeds nothing under .harness/", () => {
+  const dir = tmpProject();
+  try {
+    runInit(dir, "--profile", "devin");
+    assert.ok(!existsSync(join(dir, ".harness")), "no .harness/ without --harness");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(i-harness-2) a repo that already carries .harness/config.json keeps being synced by init", () => {
+  const dir = tmpProject();
+  try {
+    mkdirSync(join(dir, ".harness"), { recursive: true });
+    writeFileSync(join(dir, ".harness", "config.json"), "{}\n");
+    const r = spawnSync(
+      process.execPath,
+      ["--no-warnings", "--experimental-strip-types", CLI, "init", "--project", dir, "--hosts", "devin", "--profile", "devin"],
+      { encoding: "utf8", env: TEST_ENV },
+    );
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /harness sync:/, "sync ran without the flag");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

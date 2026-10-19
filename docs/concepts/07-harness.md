@@ -20,6 +20,16 @@ of those instructions into two coupled halves:
 process the model cannot argue with. That is the entire design in one sentence: **advice
 for the model, evidence for the machine.**
 
+### Turning it on
+
+The harness is **opt-in**. `leina init --harness` seeds `.harness/config.json` and runs the
+sync (`--harness-preset generic|leina-native` implies `--harness`); a plain `leina init`
+leaves `.harness/` alone. A repo that already carries `.harness/config.json` — seeded
+earlier, written by `leina tui`, or committed by a teammate — keeps being synced by every
+`init`. `leina harness ...` commands work on any repo either way. Independently of the
+seed, a trusted workspace always gets the integrity seal on `.harness/` rules/config (see
+below).
+
 ## The model
 
 ### Rules
@@ -315,9 +325,9 @@ weakening, see the enforceability invariant). The `generic` preset is exactly:
 `presetConfig("generic")` in `application/harness/recipes.ts` generates this file — it
 derives the `leina-*` list by scanning the builtin rules at call time, so a new
 leina-coupled rule automatically joins the preset's exclusion list. To adopt a preset,
-pass `leina init --harness-preset generic|leina-native`: it seeds a **new**
-`.harness/config.json` (an existing one is left as it is, and the flag ignored with a
-note). Otherwise write that JSON as your `.harness/config.json` by hand; keep (or reset
+pass `leina init --harness-preset generic|leina-native` (it implies `--harness`): it seeds
+a **new** `.harness/config.json` (an existing one is left as it is, and the flag ignored
+with a note). Otherwise write that JSON as your `.harness/config.json` by hand; keep (or reset
 to) `{}` for `leina-native`.
 
 ## Vocabulary map — two hook vocabularies, one brain, three "gates"

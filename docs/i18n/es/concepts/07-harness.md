@@ -20,6 +20,16 @@ El harness convierte cada una de esas instrucciones en dos mitades acopladas:
 chequeado por un proceso con el que el modelo no puede discutir. Ese es todo el diseño en una
 frase: **consejo para el modelo, evidencia para la máquina.**
 
+### Cómo se activa
+
+El harness es **opt-in**. `leina init --harness` siembra `.harness/config.json` y corre el
+sync (`--harness-preset generic|leina-native` implica `--harness`); un `leina init` sin el
+flag no toca `.harness/`. Un repo que ya tiene `.harness/config.json` — sembrado antes,
+escrito por `leina tui` o commiteado por alguien del equipo — se sigue sincronizando en cada
+`init`. Los comandos `leina harness ...` funcionan en cualquier repo igual. Con o sin
+semilla, un workspace de confianza siempre recibe el sello de integridad sobre las
+rules/config de `.harness/` (ver más abajo).
+
 ## El modelo
 
 ### Rules
@@ -331,8 +341,8 @@ de config (la capa de proyecto puede deshabilitar rules builtin; solo las capas
 `presetConfig("generic")` en `application/harness/recipes.ts` genera este archivo —
 deriva la lista `leina-*` escaneando las rules builtin al momento de la llamada, así que
 una nueva rule acoplada a leina se suma automáticamente a la lista de exclusión del
-preset. Para adoptar un preset, pasá `leina init --harness-preset generic|leina-native`:
-siembra un `.harness/config.json` **nuevo** (uno existente queda como está, y el flag se
+preset. Para adoptar un preset, pasá `leina init --harness-preset generic|leina-native`
+(implica `--harness`): siembra un `.harness/config.json` **nuevo** (uno existente queda como está, y el flag se
 ignora con un aviso). Si no, escribí ese JSON a mano como tu `.harness/config.json`;
 mantené (o volvé a) `{}` para `leina-native`.
 

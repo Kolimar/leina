@@ -51,7 +51,7 @@ import { registerMcpGlobal, unregisterMcpGlobal } from "../../infrastructure/ins
 import { printMcpResults } from "./mcp-admin.ts";
 import { AGENT_HOOK_MARK, claudeHooksJson, removeClaudeHooks } from "../../application/install/claude-hooks.ts";
 import { bootstrapHarness, deinitHarness } from "../../application/install/harness-init.ts";
-import { isRulePreset } from "../../application/harness/recipes.ts";
+import { isRulePreset, type RulePreset } from "../../application/harness/recipes.ts";
 
 type CliBase = ReturnType<typeof deriveCliCommand>;
 
@@ -545,6 +545,29 @@ function writeInitArtifacts(
   return "full";
 }
 
+// Harness bootstrap — OPT-IN: handleInit calls this only with --harness (or
+// --harness-preset, which implies it), or in a repo that already carries
+// .harness/config.json (kept in sync). It seeds .harness/config.json if absent and runs the
+// in-process sync (same engine as `leina harness sync`) targeting the hosts the user chose
+// with --hosts (plus AGENTS.md only when the repo already carries one) — never auto-elected.
+// A LIGHT init (blanket active: "don't wire repos") passes no hosts, so only pre-existing
+// platform evidence is refreshed. Best-effort like every other init step.
+async function initHarnessStep(
+  project: string,
+  mode: "light" | "full",
+  hosts: HostId[],
+  preset: RulePreset | undefined,
+  report: { written: string[]; removed: string[]; failures: string[] },
+): Promise<void> {
+  if (mode === "light" && hosts.length > 0) {
+    report.written.push(`harness: LIGHT init does not wire new platforms — --hosts (${hosts.join(", ")}) not applied to the harness`);
+  }
+  const harness = await bootstrapHarness(project, mode === "full" ? hosts : [], { preset });
+  report.written.push(...harness.written);
+  report.removed.push(...harness.removed);
+  report.failures.push(...harness.failures);
+}
+
 export async function handleInit(rest: string[]): Promise<void> {
   // leina init [<dir> | --project <dir>]
   //   --hosts devin,claude             (which hosts to wire; required, or a persisted choice)
@@ -554,6 +577,9 @@ export async function handleInit(rest: string[]): Promise<void> {
   //   [--mcp]                          (opt-in: register `leina mcp` in the project .mcp.json)
   //   [--claude-hooks]                 (force Claude Code hooks even when the claude host
   //                                     is not selected; automatic when it is)
+  //   [--harness]                      (opt-in: seed + sync the task harness; implied by
+  //                                     --harness-preset; a repo that already carries
+  //                                     .harness/config.json is always refreshed)
   //
   // ADAPTIVE init — branches on isBlanketActive():
   //   LIGHT (blanket=on):  writeConsentFlag("enabled") + ensure .gitignore block.
@@ -572,6 +598,7 @@ export async function handleInit(rest: string[]): Promise<void> {
   const freshness   = optFlag(rest, "--freshness", "auto");
   const nameArg     = optFlag(rest, "--name", undefined);
   const harnessPresetFlag = optFlag(rest, "--harness-preset", undefined);
+  const harnessFlag = hasFlag(rest, "--harness");
   const doBuild     = hasFlag(rest, "--build");
   const doMcp       = hasFlag(rest, "--mcp");
   const doClaudeHooks = hasFlag(rest, "--claude-hooks");
@@ -614,19 +641,9 @@ export async function handleInit(rest: string[]): Promise<void> {
   // (idempotent: a no-op when the FULL branch above already wrote it).
   if (doClaudeHooks) writeClaudeHooksStep(project, cliBase, written, failures);
 
-  // Harness bootstrap (FULL and LIGHT): seed .harness/config.json if absent and
-  // run the in-process sync (same engine as `leina harness sync`) targeting the
-  // hosts the user chose with --hosts (plus AGENTS.md only when the repo
-  // already carries one) — never auto-elected. A LIGHT init (blanket active:
-  // "don't wire repos") passes no hosts, so only pre-existing platform
-  // evidence is refreshed. Best-effort like every other init step.
-  if (mode === "light" && hosts.length > 0) {
-    written.push(`harness: LIGHT init does not wire new platforms — --hosts (${hosts.join(", ")}) not applied to the harness`);
+  if (harnessFlag || harnessPreset !== undefined || existsSync(join(project, ".harness", "config.json"))) {
+    await initHarnessStep(project, mode, hosts, harnessPreset, { written, removed, failures });
   }
-  const harness = await bootstrapHarness(project, mode === "full" ? hosts : [], { preset: harnessPreset });
-  written.push(...harness.written);
-  removed.push(...harness.removed);
-  failures.push(...harness.failures);
 
   maybeActivationNudge();
 
