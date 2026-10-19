@@ -48,6 +48,7 @@ import { graphDbPath } from "./wiring.ts";
 import { isStale } from "../application/graph/manifest.ts";
 import { readConsentFlag } from "../application/install/consent.ts";
 import { isWorkspaceTrusted } from "../application/install/trust.ts";
+import { type HookHost, type HookScope, isHookHost } from "../application/install/hook-command.ts";
 
 // Running any of these `leina memory <sub>` CLI commands counts as "project memory
 // loaded" for the session. Detected by inspecting the exec tool's command line (there is no
@@ -123,6 +124,34 @@ export function resolveHookProjectRoot(env: NodeJS.ProcessEnv, fallbackCwd: stri
   if (claudeEnv.length > 0) return claudeEnv;
   const fromEnv = typeof env.DEVIN_PROJECT_DIR === "string" ? env.DEVIN_PROJECT_DIR.trim() : "";
   return fromEnv.length > 0 ? fromEnv : fallbackCwd;
+}
+
+/** Which host fired the hook and which copy of the wiring it ran (see hook-command.ts). */
+export interface AgentHookInvocation {
+  event?: string;
+  host: HookHost;
+  scope: HookScope;
+}
+
+/**
+ * Parse `agent-hook <Event> [--host claude|devin] [--scope user]`. The installers always
+ * write `--host`; an entry without it (written before the flag existed) falls back to the
+ * environment: Claude Code exports CLAUDE_PROJECT_DIR to its hooks, so its presence means
+ * Claude Code, anything else is Devin (the only other host that runs these entries).
+ */
+export function parseAgentHookArgs(rest: string[], env: NodeJS.ProcessEnv): AgentHookInvocation {
+  const flag = (name: string): string | undefined => {
+    const i = rest.indexOf(name);
+    return i < 0 ? undefined : rest[i + 1];
+  };
+  const explicit = flag("--host");
+  const claudeEnv = typeof env.CLAUDE_PROJECT_DIR === "string" && env.CLAUDE_PROJECT_DIR.trim().length > 0;
+  const event = rest[0] !== undefined && !rest[0].startsWith("--") ? rest[0] : undefined;
+  return {
+    ...(event !== undefined ? { event } : {}),
+    host: isHookHost(explicit) ? explicit : claudeEnv ? "claude" : "devin",
+    scope: flag("--scope") === "user" ? "user" : "project",
+  };
 }
 
 export interface AgentHookPayload {

@@ -261,8 +261,8 @@ test("(devin-init-1) init --agent devin writes .devin/hooks.v1.json with all 4 m
     for (const ev of ["PreToolUse", "PostToolUse", "UserPromptSubmit", "SessionStart"]) {
       assert.ok(Array.isArray(hooks[ev]), `${ev} present`);
     }
-    // PreToolUse routes through `devin-hook` subcommand:
-    assert.match(hooks.PreToolUse[0].hooks[0].command, /devin-hook PreToolUse/);
+    // PreToolUse routes through the gate, tagged with its host:
+    assert.match(hooks.PreToolUse[0].hooks[0].command, /agent-hook PreToolUse --host devin/);
     // PostToolUse: freshness refresh + exec marker + native-nudge (Palanca C, ADR-1):
     const matchers = hooks.PostToolUse.map((m: { matcher: string }) => m.matcher).sort();
     assert.deepEqual(matchers, [

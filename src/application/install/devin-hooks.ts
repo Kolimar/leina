@@ -16,6 +16,7 @@
 import type { FileArtifact } from "../../domain/install/artifact.ts";
 import type { McpCommand } from "./protocol.ts";
 import { parseJsonRoot, shellJoin } from "./hooks-common.ts";
+import { agentHookCommand, type HookScope } from "./hook-command.ts";
 
 // ---------------------------------------------------------------------------
 // Type contracts (mirrored from the SDD design — section 2)
@@ -87,47 +88,54 @@ const MANAGED_MATCHERS: Record<DevinHookEventName, readonly string[]> = {
   Stop: [""],
 };
 
-/** Build the full managed hooks block for the PROJECT file (includes freshness refresh). */
-function buildManagedHooks(cli: McpCommand, project: string): DevinHooksFile {
-  const cliLine = shellJoin([cli.command, ...cli.args]);
-  const cmd = (sub: string): DevinHookEntry => ({
+/**
+ * Build the full managed hooks block for the PROJECT file (includes freshness refresh).
+ * Every gate entry names its host (`--host devin`) and, for the user-global copy, its scope
+ * (`--scope user`) — see hook-command.ts.
+ */
+function buildManagedHooks(cli: McpCommand, project: string, scope: HookScope = "project"): DevinHooksFile {
+  const gate = (event: DevinHookEventName): DevinHookEntry => ({
     type: "command",
-    command: `${cliLine} ${sub}`,
+    command: agentHookCommand(cli, event, "devin", scope),
   });
+  const refresh: DevinHookEntry = {
+    type: "command",
+    command: `${shellJoin([cli.command, ...cli.args])} refresh ${project}`,
+  };
 
   return {
     PreToolUse: [
-      { matcher: "^(edit|write|exec)$", hooks: [cmd("devin-hook PreToolUse")] },
+      { matcher: "^(edit|write|exec)$", hooks: [gate("PreToolUse")] },
       // Palanca A: native grep/glob tool → advisory to prefer leina query/affected.
-      { matcher: "^(grep|glob)$", hooks: [cmd("devin-hook PreToolUse")] },
+      { matcher: "^(grep|glob)$", hooks: [gate("PreToolUse")] },
     ],
     PostToolUse: [
       // Freshness: rebuild the graph after a code edit.
-      { matcher: "^(edit|write)$", hooks: [cmd(`refresh ${project}`)] },
+      { matcher: "^(edit|write)$", hooks: [refresh] },
       // Marker write: the gate inspects the exec command for `leina memory
       // (context|search|verified)` and flips the session gate when memory is loaded.
-      { matcher: "^exec$", hooks: [cmd("devin-hook PostToolUse")] },
+      { matcher: "^exec$", hooks: [gate("PostToolUse")] },
       // Palanca C: retrospective nudge after native grep/read/glob — one-shot per session.
-      { matcher: "^(read|grep|glob)$", hooks: [cmd("devin-hook PostToolUse")] },
+      { matcher: "^(read|grep|glob)$", hooks: [gate("PostToolUse")] },
     ],
     UserPromptSubmit: [
-      // Hard gate on the first user message of a fresh session — blocks with FIRST_TURN_GATE
-      // until the agent calls mem_context (PostToolUse marker fires below). Paired with the
-      // SessionStart additionalContext so a well-behaved agent loads memory BEFORE this fires.
-      { matcher: "", hooks: [cmd("devin-hook UserPromptSubmit")] },
+      // First user message of a fresh session: injects the memory context when it has not
+      // been loaded yet (PostToolUse marker fires below). Paired with the SessionStart
+      // additionalContext so a well-behaved agent loads memory BEFORE this fires.
+      { matcher: "", hooks: [gate("UserPromptSubmit")] },
     ],
     SessionStart: [
-      { matcher: "", hooks: [cmd("devin-hook SessionStart")] },
+      { matcher: "", hooks: [gate("SessionStart")] },
     ],
     // PostCompaction: re-inject memory + graph context after a compaction event and re-arm
     // the session marker. `summary` is intentionally ignored; injection is unconditional.
     PostCompaction: [
-      { matcher: "", hooks: [cmd("devin-hook PostCompaction")] },
+      { matcher: "", hooks: [gate("PostCompaction")] },
     ],
     // Stop: advisory nudge to persist session memory. Gate checks session.memory-saved marker;
     // emits STOP_SAVE_NUDGE on stderr if absent. stdout ALWAYS empty. Never blocks.
     Stop: [
-      { matcher: "", hooks: [cmd("devin-hook Stop")] },
+      { matcher: "", hooks: [gate("Stop")] },
     ],
   };
 }
@@ -225,7 +233,7 @@ export function devinUserConfigWithHooks(
  * marker from `cwd()` so they remain project-agnostic and safe to install globally.
  */
 export function buildUserGlobalHooks(cli: McpCommand): DevinHooksFile {
-  const project = buildManagedHooks(cli, "/unused");
+  const project = buildManagedHooks(cli, "/unused", "user");
   return {
     ...project,
     PostToolUse: project.PostToolUse.filter((m) => !m.matcher.startsWith("^(edit|write)")),

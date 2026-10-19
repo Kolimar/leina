@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeHooksJson, removeClaudeHooks } from "../src/application/install/claude-hooks.ts";
-import { resolveHookProjectRoot } from "../src/cli/agent-gate.ts";
+import { parseAgentHookArgs, resolveHookProjectRoot } from "../src/cli/agent-gate.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli/index.ts", import.meta.url));
 const cliBase = { command: "/usr/bin/node", args: ["/pkg/dist/cli/index.js"] };
@@ -29,7 +29,7 @@ test("(ch-1) writer registers the four managed events, idempotently, preserving 
     assert.ok(Array.isArray(entries), `${ev} registered`);
     const ours = entries.flatMap((e: { hooks: { command: string }[] }) => e.hooks).filter((h: { command: string }) => h.command.includes(" agent-hook "));
     assert.equal(ours.length, 1, `${ev} has exactly one managed entry`);
-    assert.match((ours[0] as { command: string }).command, new RegExp(`agent-hook ${ev}$`));
+    assert.match((ours[0] as { command: string }).command, new RegExp(`agent-hook ${ev} --host claude$`));
   }
   // PostToolUse scoped to the tools the gate reacts to.
   assert.equal(cfg.hooks.PostToolUse.at(-1).matcher, "Bash|Grep|Read|Glob");
@@ -56,6 +56,19 @@ test("(ch-2) removeClaudeHooks strips only ours; empty events and hooks key coll
   assert.equal(removeClaudeHooks(JSON.stringify({ a: 1 })), null, "nothing to strip → null");
 });
 
+test("(ch-2b) user scope tags every entry --scope user and replaces older managed forms", () => {
+  const legacy = JSON.stringify({
+    hooks: { Stop: [{ hooks: [{ type: "command", command: "/old/node /old/dist/cli/index.js agent-hook Stop" }] }] },
+  });
+  const cfg = JSON.parse(claudeHooksJson(cliBase, legacy, "user")!);
+  const cmds: string[] = Object.values(cfg.hooks as Record<string, { hooks: { command: string }[] }[]>)
+    .flat()
+    .flatMap((e) => e.hooks.map((h) => h.command));
+  assert.ok(cmds.length > 0);
+  for (const c of cmds) assert.match(c, / --host claude --scope user$/);
+  assert.ok(!cmds.some((c) => c.startsWith("/old/")), "the stale launch form was replaced, not duplicated");
+});
+
 test("(ch-3) CLAUDE_PROJECT_DIR wins root resolution; Devin var and cwd still work", () => {
   assert.equal(resolveHookProjectRoot({ CLAUDE_PROJECT_DIR: "/from/claude" }, "/cwd"), "/from/claude");
   assert.equal(resolveHookProjectRoot({ DEVIN_PROJECT_DIR: "/from/devin" }, "/cwd"), "/from/devin");
@@ -65,6 +78,18 @@ test("(ch-3) CLAUDE_PROJECT_DIR wins root resolution; Devin var and cwd still wo
     "claude var takes precedence",
   );
   assert.equal(resolveHookProjectRoot({ CLAUDE_PROJECT_DIR: "  " }, "/cwd"), "/cwd", "blank falls through");
+});
+
+test("(ch-3b) agent-hook args: explicit --host/--scope win; a flagless entry falls back on CLAUDE_PROJECT_DIR", () => {
+  assert.deepEqual(parseAgentHookArgs(["Stop", "--host", "devin", "--scope", "user"], { CLAUDE_PROJECT_DIR: "/p" }), {
+    event: "Stop",
+    host: "devin",
+    scope: "user",
+  });
+  assert.deepEqual(parseAgentHookArgs(["Stop"], { CLAUDE_PROJECT_DIR: "/p" }), { event: "Stop", host: "claude", scope: "project" });
+  assert.deepEqual(parseAgentHookArgs(["Stop"], { CLAUDE_PROJECT_DIR: " " }), { event: "Stop", host: "devin", scope: "project" });
+  assert.equal(parseAgentHookArgs(["--host", "claude"], {}).event, undefined);
+  assert.equal(parseAgentHookArgs(["Stop", "--host", "cursor"], {}).host, "devin", "unknown host value → fallback");
 });
 
 test("(ch-4) e2e: init --claude-hooks wires the repo; a Claude-shaped Bash payload flips the save marker", () => {

@@ -1,7 +1,7 @@
 // cli/handlers/system.ts — diagnostics, hook bridge, sidecar, capabilities, verify and root help.
 
 import { runDoctor, formatDoctor } from "../doctor.ts";
-import { runAgentGate, runHarnessAgentGate, resolveHookProjectRoot } from "../agent-gate.ts";
+import { parseAgentHookArgs, runAgentGate, runHarnessAgentGate, resolveHookProjectRoot } from "../agent-gate.ts";
 import { readPackageVersion } from "../../version.ts";
 import { readStdin } from "../io.ts";
 import { capabilities } from "../../application/capabilities/registry.ts";
@@ -45,7 +45,7 @@ export async function handleAgentHook(rest: string[]): Promise<never> {
   // (.harness/state/current/contract.json) or strictness "strict", PreToolUse edit/bash and
   // Stop may BLOCK (exit 2 / decision:block). Guided mode without a contract leaves the
   // advisory behaviour below untouched, byte for byte, except for that integrity seal.
-  const eventName = rest[0];
+  const eventName = parseAgentHookArgs(rest, process.env).event;
   // Resolve the project root from Devin's documented DEVIN_PROJECT_DIR env var (fallback to
   // process.cwd()) — the hook payload itself never carries a cwd. See resolveHookProjectRoot.
   const rawStdin = readStdin();
@@ -394,8 +394,9 @@ export function printRootHelp(): void {
       `                          contract new|show|edit|end · verify [--json] · sync\n` +
       `                          [--check|--force] · list · hook <event>; run\n` +
       `                          'leina harness' for the full per-sub-command flags\n` +
-      `  agent-hook <Event>      host-neutral agent hook gate (stdin = payload JSON;\n` +
-      `                          alias: devin-hook)\n` +
+      `  agent-hook <Event> [--host claude|devin] [--scope user]\n` +
+      `                          host-neutral agent hook gate (stdin = payload JSON;\n` +
+      `                          alias: devin-hook); the installers write the flags\n` +
       `  version | --version     print the leina version\n`,
   );
 }

@@ -840,9 +840,12 @@ prints an array of `{id, description, inputSchema, outputSchema, schemaVersion, 
 output schema is versioned (`schemaVersion: 1`). This registry lets any transport (CLI, HTTP, SDK,
 TUI, …) resolve the same use cases without duplicating logic.
 
-### `agent-hook <Event>` (alias: `devin-hook`)
+### `agent-hook <Event> [--host claude|devin] [--scope user]` (alias: `devin-hook`)
 Host-neutral agent hook gate; reads the payload JSON on stdin (`devin-hook` is a compatibility
-alias — existing `.devin/hooks.v1.json` installs invoke it). Events: `PreToolUse`, `PostToolUse`,
+alias — pre-3.0 `.devin/hooks.v1.json` installs invoke it). The installers write `--host` on
+every entry (it selects the host's output protocol) and `--scope user` on the user-global copy;
+an entry without `--host` is treated as Claude Code when `CLAUDE_PROJECT_DIR` is set and as
+Devin otherwise. Events: `PreToolUse`, `PostToolUse`,
 `UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`. The advisory gate never blocks.
 **Scope-aware**: the gate is a silent no-op unless the repo's consent flag is `enabled` **and**
 the workspace is trusted on this machine (see *Workspace trust* above), so a user-global hook

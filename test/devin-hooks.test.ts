@@ -45,14 +45,14 @@ test("(devin-hooks-2) emits all managed event keys with correct matcher group co
   assert.equal(parsed.SessionStart.length, 1);
 });
 
-test("(devin-hooks-3) PreToolUse matcher is ^(edit|write|exec)$ and invokes `devin-hook PreToolUse`", () => {
+test("(devin-hooks-3) PreToolUse matcher is ^(edit|write|exec)$ and invokes `agent-hook PreToolUse --host devin`", () => {
   const out = devinHooksJson(CLI_BIN, PROJECT, null);
   const parsed = JSON.parse(out.content);
   const entry = parsed.PreToolUse[0];
   assert.equal(entry.matcher, "^(edit|write|exec)$");
   assert.equal(entry.hooks.length, 1);
   assert.equal(entry.hooks[0].type, "command");
-  assert.match(entry.hooks[0].command, /devin-hook PreToolUse/);
+  assert.match(entry.hooks[0].command, /agent-hook PreToolUse --host devin/);
 });
 
 test("(devin-hooks-4) PostToolUse has freshness-refresh, exec-marker and native-nudge groups", () => {
@@ -60,8 +60,8 @@ test("(devin-hooks-4) PostToolUse has freshness-refresh, exec-marker and native-
   const parsed = JSON.parse(out.content);
   const matchers = parsed.PostToolUse.map((m: { matcher: string }) => m.matcher).sort();
   // ^(edit|write)$ → leina refresh <project> (freshness)
-  // ^exec$         → devin-hook PostToolUse (memory marker write)
-  // ^(read|grep|glob)$ → devin-hook PostToolUse (Palanca C retrospective nudge)
+  // ^exec$         → agent-hook PostToolUse (memory marker write)
+  // ^(read|grep|glob)$ → agent-hook PostToolUse (Palanca C retrospective nudge)
   assert.deepEqual(matchers, [
     "^(edit|write)$",
     "^exec$",
@@ -71,10 +71,10 @@ test("(devin-hooks-4) PostToolUse has freshness-refresh, exec-marker and native-
    
   assert.match(refresh.hooks[0].command, new RegExp(`refresh ${PROJECT.replace(/\//g, "\\/")}`));
   const marker = parsed.PostToolUse.find((m: { matcher: string }) => m.matcher === "^exec$");
-  assert.match(marker.hooks[0].command, /devin-hook PostToolUse/);
+  assert.match(marker.hooks[0].command, /agent-hook PostToolUse --host devin/);
   const native = parsed.PostToolUse.find((m: { matcher: string }) => m.matcher === "^(read|grep|glob)$");
   assert.ok(native, "native matcher entry present");
-  assert.match(native.hooks[0].command, /devin-hook PostToolUse/);
+  assert.match(native.hooks[0].command, /agent-hook PostToolUse --host devin/);
 });
 
 test("(devin-hooks-5) UserPromptSubmit invokes the gate (`devin-hook UserPromptSubmit`) with empty matcher", () => {
@@ -82,15 +82,15 @@ test("(devin-hooks-5) UserPromptSubmit invokes the gate (`devin-hook UserPromptS
   const parsed = JSON.parse(out.content);
   const entry = parsed.UserPromptSubmit[0];
   assert.equal(entry.matcher, "");
-  assert.match(entry.hooks[0].command, /devin-hook UserPromptSubmit/);
+  assert.match(entry.hooks[0].command, /agent-hook UserPromptSubmit --host devin/);
 });
 
-test("(devin-hooks-6) SessionStart invokes `devin-hook SessionStart` with empty matcher", () => {
+test("(devin-hooks-6) SessionStart invokes `agent-hook SessionStart --host devin` with empty matcher", () => {
   const out = devinHooksJson(CLI_BIN, PROJECT, null);
   const parsed = JSON.parse(out.content);
   const entry = parsed.SessionStart[0];
   assert.equal(entry.matcher, "");
-  assert.match(entry.hooks[0].command, /devin-hook SessionStart/);
+  assert.match(entry.hooks[0].command, /agent-hook SessionStart --host devin/);
 });
 
 test("(devin-hooks-7) every managed hook entry has type 'command' and a non-empty command string", () => {
@@ -149,7 +149,7 @@ test("(devin-hooks-12) dev launcher (node + flags) flows through into commands",
   const parsed = JSON.parse(out.content);
   assert.match(parsed.PreToolUse[0].hooks[0].command, /^node /);
   assert.match(parsed.PreToolUse[0].hooks[0].command, /--experimental-strip-types/);
-  assert.match(parsed.PreToolUse[0].hooks[0].command, /index\.ts devin-hook PreToolUse$/);
+  assert.match(parsed.PreToolUse[0].hooks[0].command, /index\.ts agent-hook PreToolUse --host devin$/);
 });
 
 // ---------- devinUserConfigWithHooks — user-global ~/.config/devin/config.json hooks key ----------
@@ -231,14 +231,14 @@ test("(devin-hooks-PostCompaction-2) devinHooksJson output contains PostCompacti
   assert.equal(entry.matcher, "", "PostCompaction has empty string matcher");
   assert.equal(entry.hooks.length, 1, "exactly 1 hook command");
   assert.equal(entry.hooks[0].type, "command");
-  assert.match(entry.hooks[0].command, /devin-hook PostCompaction/, "command invokes devin-hook PostCompaction");
+  assert.match(entry.hooks[0].command, /agent-hook PostCompaction --host devin/, "command invokes agent-hook PostCompaction --host devin");
 });
 
 test("(devin-hooks-PostCompaction-3) buildUserGlobalHooks includes PostCompaction", () => {
   const hooks = buildUserGlobalHooks(CLI_BIN);
   assert.ok(Array.isArray(hooks.PostCompaction), "PostCompaction present in user-global hooks");
   assert.equal(hooks.PostCompaction.length, 1, "exactly 1 PostCompaction entry");
-  assert.match(hooks.PostCompaction[0]!.hooks[0]!.command, /devin-hook PostCompaction/);
+  assert.match(hooks.PostCompaction[0]!.hooks[0]!.command, /agent-hook PostCompaction --host devin/);
 });
 
 test("(devin-hooks-PostCompaction-4) devinHooksJson emits all 5 managed event keys after adding PostCompaction", () => {
@@ -261,7 +261,7 @@ test("(devin-hooks-PostCompaction-5/FR8a) merge-safe: adding PostCompaction to e
   const parsed = JSON.parse(out.content);
   // PostCompaction should be ADDED
   assert.ok(Array.isArray(parsed.PostCompaction), "PostCompaction added to existing install");
-  assert.match(parsed.PostCompaction[0].hooks[0].command, /devin-hook PostCompaction/);
+  assert.match(parsed.PostCompaction[0].hooks[0].command, /agent-hook PostCompaction --host devin/);
   // User's unmanaged event is preserved
   assert.deepEqual(parsed.CustomUserEvent, [
     { matcher: "", hooks: [{ type: "command", command: "user-custom" }] },
@@ -282,7 +282,7 @@ test("(devin-hooks-PostCompaction-7) devinUserConfigWithHooks includes PostCompa
   const out = devinUserConfigWithHooks(null, hooks);
   const parsed = JSON.parse(out);
   assert.ok(Array.isArray(parsed.hooks.PostCompaction), "PostCompaction in user-global config");
-  assert.match(parsed.hooks.PostCompaction[0].hooks[0].command, /devin-hook PostCompaction/);
+  assert.match(parsed.hooks.PostCompaction[0].hooks[0].command, /agent-hook PostCompaction --host devin/);
 });
 
 // ---------------------------------------------------------------------------
@@ -305,14 +305,14 @@ test("(devin-hooks-Stop-2) devinHooksJson output contains Stop key with empty ma
   assert.equal(entry.matcher, "", "Stop has empty string matcher");
   assert.equal(entry.hooks.length, 1, "exactly 1 hook command");
   assert.equal(entry.hooks[0].type, "command");
-  assert.match(entry.hooks[0].command, /devin-hook Stop/, "command invokes devin-hook Stop");
+  assert.match(entry.hooks[0].command, /agent-hook Stop --host devin/, "command invokes agent-hook Stop --host devin");
 });
 
 test("(devin-hooks-Stop-3) buildUserGlobalHooks includes Stop", () => {
   const hooks = buildUserGlobalHooks(CLI_BIN);
   assert.ok(Array.isArray(hooks.Stop), "Stop present in user-global hooks");
   assert.equal(hooks.Stop.length, 1, "exactly 1 Stop entry");
-  assert.match(hooks.Stop[0]!.hooks[0]!.command, /devin-hook Stop/);
+  assert.match(hooks.Stop[0]!.hooks[0]!.command, /agent-hook Stop --host devin/);
 });
 
 test("(devin-hooks-Stop-4) devinHooksJson emits all 6 managed event keys including Stop", () => {
@@ -335,7 +335,7 @@ test("(devin-hooks-Stop-5/idempotent) merge-safe: adding Stop to existing instal
   const parsed = JSON.parse(out.content);
   // Stop should be ADDED
   assert.ok(Array.isArray(parsed.Stop), "Stop added on merge");
-  assert.match(parsed.Stop[0].hooks[0].command, /devin-hook Stop/);
+  assert.match(parsed.Stop[0].hooks[0].command, /agent-hook Stop --host devin/);
   // Unrelated custom event preserved
   assert.deepEqual(parsed.CustomUserEvent, [
     { matcher: "", hooks: [{ type: "command", command: "user-custom" }] },
@@ -356,7 +356,7 @@ test("(devin-hooks-Stop-7) devinUserConfigWithHooks includes Stop from buildUser
   const out = devinUserConfigWithHooks(null, hooks);
   const parsed = JSON.parse(out);
   assert.ok(Array.isArray(parsed.hooks.Stop), "Stop in user-global config");
-  assert.match(parsed.hooks.Stop[0].hooks[0].command, /devin-hook Stop/);
+  assert.match(parsed.hooks.Stop[0].hooks[0].command, /agent-hook Stop --host devin/);
 });
 
 // ---------------------------------------------------------------------------
@@ -380,7 +380,7 @@ test("(devin-hooks-new-2) PostToolUse includes ^(read|grep|glob)$ (Palanca C)", 
   assert.equal(parsed.PostToolUse.length, 3, "exactly 3 PostToolUse groups");
   const entry = parsed.PostToolUse.find((m: { matcher: string }) => m.matcher === "^(read|grep|glob)$");
   assert.ok(entry, "entry found");
-  assert.match(entry.hooks[0].command, /devin-hook PostToolUse/);
+  assert.match(entry.hooks[0].command, /agent-hook PostToolUse --host devin/);
 });
 
 test("(devin-hooks-new-3) buildUserGlobalHooks preserves ^(read|grep|glob)$ and excludes refresh matcher", () => {
@@ -482,4 +482,35 @@ test("(hooks-remove-h) idempotent: removing twice → null second time", () => {
   const once = removeUserGlobalHooks(withHooks)!;
   assert.ok(once !== null, "first remove produced output");
   assert.equal(removeUserGlobalHooks(once), null, "second remove is idempotent no-op");
+});
+
+// ---------- host / scope tagging (hook-command.ts) ----------
+
+test("(devin-hooks-scope-1) project entries say --host devin; user-global entries add --scope user", () => {
+  const project = JSON.parse(devinHooksJson(CLI_BIN, PROJECT, null).content) as DevinHooksFile;
+  for (const ev of DEVIN_MANAGED_EVENTS) {
+    for (const m of project[ev]) {
+      for (const h of m.hooks) {
+        if (h.command.includes(" refresh ")) continue;
+        assert.match(h.command, new RegExp(`agent-hook ${ev} --host devin$`), `${ev} project entry`);
+      }
+    }
+  }
+  const user = buildUserGlobalHooks(CLI_BIN);
+  for (const ev of DEVIN_MANAGED_EVENTS) {
+    for (const m of user[ev]) {
+      for (const h of m.hooks) assert.match(h.command, new RegExp(`agent-hook ${ev} --host devin --scope user$`));
+    }
+  }
+});
+
+test("(devin-hooks-scope-2) re-running over a pre-3.0 file rewrites the old devin-hook entries in place", () => {
+  const legacy = JSON.stringify({
+    PreToolUse: [{ matcher: "^(edit|write|exec)$", hooks: [{ type: "command", command: "/old/node /old/cli.js devin-hook PreToolUse" }] }],
+    Stop: [{ matcher: "", hooks: [{ type: "command", command: "/old/node /old/cli.js devin-hook Stop" }] }],
+  });
+  const parsed = JSON.parse(devinHooksJson(CLI_BIN, PROJECT, legacy).content) as DevinHooksFile;
+  const all = DEVIN_MANAGED_EVENTS.flatMap((ev) => parsed[ev].flatMap((m) => m.hooks.map((h) => h.command)));
+  assert.ok(!all.some((c) => c.includes("devin-hook")), "no legacy launch form survives");
+  assert.equal(parsed.Stop.length, 1);
 });

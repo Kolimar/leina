@@ -897,9 +897,12 @@ transports}`. Cada output schema está versionado (`schemaVersion: 1`). Este reg
 costura que le permite a un futuro transporte alternativo (HTTP, SDK, TUI, …) resolver los
 mismos casos de uso que la CLI llama hoy, sin duplicar lógica.
 
-### `agent-hook <Event>` (alias: `devin-hook`)
+### `agent-hook <Event> [--host claude|devin] [--scope user]` (alias: `devin-hook`)
 Gate de agent hook agnóstica de host; lee el payload JSON por stdin (`devin-hook` es un alias
-de compatibilidad — las instalaciones de `.devin/hooks.v1.json` lo invocan). Events:
+de compatibilidad — las instalaciones de `.devin/hooks.v1.json` anteriores a 3.0 lo invocan).
+Los instaladores escriben `--host` en cada entrada (elige el protocolo de salida del host) y
+`--scope user` en la copia user-global; una entrada sin `--host` se trata como Claude Code
+cuando `CLAUDE_PROJECT_DIR` está definida y como Devin en caso contrario. Events:
 `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `PostCompaction`, `Stop`.
 La gate advisory nunca bloquea. **Scope-aware**: la gate es un no-op silencioso a menos que
 el consent flag del repo sea `enabled` **y** el workspace sea de confianza en esta máquina

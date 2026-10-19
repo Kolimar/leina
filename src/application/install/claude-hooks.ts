@@ -1,23 +1,27 @@
-// application/install/claude-hooks.ts — merge-safe writer for Claude Code project hooks.
+// application/install/claude-hooks.ts — merge-safe writer for Claude Code hooks.
 //
-// Claude Code reads hooks from the project's `.claude/settings.json` (committable). The
-// managed entries call back into the host-neutral gate (`leina agent-hook <Event>`) with
-// absolute node+cli paths — the exact launch form deriveCliCommand builds for Devin, and
-// for the same reason: GUI hosts do not inherit the shell PATH.
+// Claude Code reads hooks from the project's `.claude/settings.json` (committable, written by a
+// FULL `init`) and from the user's `~/.claude/settings.json` (written by `setup`/`activate`,
+// fires in every project). The managed entries call back into the host-neutral gate
+// (`leina agent-hook <Event> --host claude [--scope user]`) with absolute node+cli paths — the
+// exact launch form deriveCliCommand builds for Devin, and for the same reason: GUI hosts do
+// not inherit the shell PATH.
 //
-// Ownership rule (same convention as devin-hooks.ts): an entry is OURS iff its command
-// contains the AGENT_HOOK_MARK token. Everything else in the file — other hooks, other
-// matchers, unknown top-level keys — is preserved verbatim. Pure string -> string|null.
+// Ownership rule: an entry is OURS iff its command parses as a managed gate command
+// (hook-command.ts). Everything else in the file — other hooks, other matchers, unknown
+// top-level keys — is preserved verbatim. Pure string -> string|null.
 
 import type { McpCommand } from "./protocol.ts";
-import { type HookCommand, type HookEntry, parseJsonRoot, shellJoin } from "./hooks-common.ts";
+import { type HookCommand, type HookEntry, parseJsonRoot } from "./hooks-common.ts";
+import { agentHookCommand, type HookScope, parseManagedHookCommand } from "./hook-command.ts";
 
+/** Token every managed gate command carries — a cheap "is there leina wiring here?" probe. */
 export const AGENT_HOOK_MARK = " agent-hook ";
 
 /** Gate events registered for Claude Code, with each event's tool matcher. */
 const MANAGED_EVENTS: { event: string; matcher?: string }[] = [
-  // startup|resume|clear: fresh-session context injection. Claude Code's `compact` source
-  // re-fires SessionStart, covering what Devin models as PostCompaction.
+  // startup|resume|clear|compact: context injection. Claude Code's `compact` source re-fires
+  // SessionStart, covering what Devin models as PostCompaction.
   { event: "SessionStart" },
   { event: "UserPromptSubmit" },
   // The gate reacts to shell commands (memory markers) and native search (nudge).
@@ -30,23 +34,20 @@ interface ClaudeSettingsShape {
   [k: string]: unknown;
 }
 
-function gateCommand(cliBase: McpCommand, event: string): string {
-  return shellJoin([cliBase.command, ...cliBase.args, "agent-hook", event]);
-}
-
-const isOurs = (h: HookCommand): boolean =>
-  typeof h.command === "string" && h.command.includes(`${AGENT_HOOK_MARK.trim()  } `) ||
-  (typeof h.command === "string" && h.command.includes(AGENT_HOOK_MARK));
+const isOurs = (h: HookCommand): boolean => parseManagedHookCommand(h.command) !== undefined;
 
 function parseSettings(existing: string | null): ClaudeSettingsShape | null {
   return parseJsonRoot(existing); // null = no-clobber
 }
 
 /**
- * Merge the managed agent-hook entries into a `.claude/settings.json`. Returns the new
- * content, or null when nothing changes (idempotent) or the file is unparseable (no-clobber).
+ * Merge the managed agent-hook entries into a Claude Code settings file — the project's
+ * `.claude/settings.json` (scope "project", the default) or `~/.claude/settings.json`
+ * (scope "user"). Returns the new content, or null when nothing changes (idempotent) or the
+ * file is unparseable (no-clobber). Any previous managed entry — an older launch form, a
+ * stale CLI path, a missing flag — is replaced by the current one.
  */
-export function claudeHooksJson(cliBase: McpCommand, existing: string | null): string | null {
+export function claudeHooksJson(cliBase: McpCommand, existing: string | null, scope: HookScope = "project"): string | null {
   const root = parseSettings(existing);
   if (root === null) return null;
   const hooks: Record<string, HookEntry[]> = (root.hooks ?? {});
@@ -59,7 +60,7 @@ export function claudeHooksJson(cliBase: McpCommand, existing: string | null): s
       .filter((e) => (e.hooks?.length ?? 0) > 0 || Object.keys(e).some((k) => k !== "hooks" && k !== "matcher"));
     const ours: HookEntry = {
       ...(matcher !== undefined ? { matcher } : {}),
-      hooks: [{ type: "command", command: gateCommand(cliBase, event) }],
+      hooks: [{ type: "command", command: agentHookCommand(cliBase, event, "claude", scope) }],
     };
     hooks[event] = [...kept, ours];
   }

@@ -217,6 +217,12 @@ The hooks call back into THIS CLI on disk via `deriveCliCommand` (`src/applicati
 `{ command: "<abs-node>", args: ["<abs-cli.{js,ts}>"] }` (plus `--experimental-strip-types`
 for a `.ts` dev entry). Absolute paths are used so the hook resolves regardless of PATH — GUI
 hosts on macOS (Devin.app) and Windows do not inherit the shell PATH from launchd / Services.
+Every managed entry then runs `agent-hook <Event> --host <claude|devin>`, plus `--scope user`
+for the user-global copy (`agentHookCommand` / `parseManagedHookCommand` in
+`src/application/install/hook-command.ts`). `--host` picks the output protocol; `--scope user`
+lets the machine-wide copy defer to a project's own wiring. Entries without the flags (written
+before 3.0, including the `devin-hook` alias) are still recognised and rewritten by the next
+`init`/`activate`/`repair`.
 
 **Project root resolution.** The `agent-hook` (alias `devin-hook`) events are NOT pinned to a baked dir (a single
 user-global hook fires in every repo, so it must resolve the project at runtime). It resolves
