@@ -24,6 +24,8 @@ export interface ShellToken {
 
 /** Unquoted characters that end a simple command besides `&`/`|` (subshells, substitutions). */
 const SEGMENT_BREAKS = new Set([";", "\n", "(", ")", "`"]);
+/** What a backslash escapes inside double quotes (POSIX); before any other character it is literal. */
+const DQ_ESCAPABLE = new Set(["$", "`", '"', "\\", "\n"]);
 
 /** Accumulates tokens and simple-command segments for shellSegments. */
 class SegmentBuilder {
@@ -54,7 +56,8 @@ class SegmentBuilder {
     this.quoted = true;
     let j = i + 1;
     for (; j < command.length && command[j] !== quote; j += 1) {
-      if (quote === '"' && command[j] === "\\" && j + 1 < command.length) j += 1;
+      // "C:\Users\me" keeps its separators: only DQ_ESCAPABLE characters are escaped.
+      if (quote === '"' && command[j] === "\\" && j + 1 < command.length && DQ_ESCAPABLE.has(command[j + 1]!)) j += 1;
       this.current += command[j];
     }
     return j;

@@ -260,7 +260,9 @@ describe("harness agent gate — WITH active contract (consent enabled)", () => 
 
   it("(integrity-user-2) pre-bash: shell writes to the user-level harness are blocked, reads allowed", async () => {
     for (const command of [
-      `echo weak > ${path.join(leinaHome, "harness", "rules", "x.md")}`,
+      `echo weak > "${path.join(leinaHome, "harness", "rules", "x.md")}"`,
+      // Windows separators inside double quotes are kept, not eaten as escapes.
+      `echo weak > "${leinaHome}\\harness\\config.json"`,
       "sed -i s/blocking/advisory/ ~/.leina/harness/config.json",
       'rm -rf "$LEINA_HOME/harness"',
     ]) {

@@ -517,9 +517,11 @@ function readRuleOverrides(value: unknown, errors: string[]): Record<string, Rul
 //   /abs/path/leina[.cmd|.exe] harness hook
 //   <node | /abs/node> [--no-warnings] [--experimental-strip-types] /abs/…/cli/index.{js,ts} harness hook
 // (the last is the form deriveCliCommand writes for the agent hooks). Words
-// may not carry shell metacharacters or quotes. Whether an absolute path lies
-// inside the repository is checked by the loader, which knows the repo root.
-const HOOK_WORD_RE = /^[\w./:@+=\\-]+$/;
+// may not carry shell metacharacters or quotes; a `~` only inside a Windows
+// 8.3 short name (`C:\PROGRA~1`), never where a shell would expand it. Whether
+// an absolute path lies inside the repository is checked by the loader, which
+// knows the repo root.
+const HOOK_WORD_RE = /^[\w./:@+=\\-](?:[\w./:@+=\\-]|(?<=[A-Za-z0-9])~(?=\d))*$/;
 const ABSOLUTE_PATH_RE = /^(?:\/|[A-Za-z]:[\\/])/;
 const HOOK_NODE_FLAGS = new Set(["--no-warnings", "--experimental-strip-types"]);
 

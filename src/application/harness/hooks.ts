@@ -360,7 +360,9 @@ function isIntegrityPath(target: string): boolean {
   const norm = path.posix.normalize(target.replaceAll("\\", "/"));
   if (HARNESS_PATH_RE.test(norm) && !HARNESS_STATE_RE.test(norm)) return true;
   if (USER_INTEGRITY_PATH_RE.test(norm)) return true;
-  return userIntegrityDirs().some((dir) => norm === dir || norm.startsWith(`${dir}/`));
+  return userIntegrityDirs()
+    .map((dir) => dir.replaceAll("\\", "/"))
+    .some((dir) => norm === dir || norm.startsWith(`${dir}/`));
 }
 
 function writesIntegrityPaths(command: string): string | undefined {
