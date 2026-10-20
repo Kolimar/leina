@@ -186,7 +186,8 @@ test("(rep-f) repair points stale hook wiring at this install and un-hides the c
     assert.equal(runCli(env, "init", "--project", dir).status, 0, "init ok");
     const stale = "/old/install/dist/cli/index.js";
     const devinHooks = join(dir, ".devin", "hooks.v1.json");
-    writeFileSync(devinHooks, readFileSync(devinHooks, "utf8").split(CLI).join(stale));
+    // The hooks file is JSON: on Windows the CLI path sits there with its backslashes escaped.
+    writeFileSync(devinHooks, readFileSync(devinHooks, "utf8").split(JSON.stringify(CLI).slice(1, -1)).join(stale));
     assert.ok(readFileSync(devinHooks, "utf8").includes(stale), "fixture: hooks now launch the stale install");
     // Claude Code project wiring outside the devin-only selection (init --claude-hooks).
     mkdirSync(join(dir, ".claude"), { recursive: true });

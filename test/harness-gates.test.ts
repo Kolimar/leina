@@ -73,7 +73,8 @@ describe("command gate", () => {
 
   it("captures stderr in the combined output", async () => {
     const r = await runCommandGate(
-      { type: "command", run: "echo warn >&2; exit 1", expectExitCode: 0 },
+      // `&&` and `1>&2` read the same in sh and cmd.exe (the Windows gate shell).
+      { type: "command", run: "echo warn 1>&2 && exit 1", expectExitCode: 0 },
       ctx(),
     );
     assert.equal(r.status, "fail");

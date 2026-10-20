@@ -207,47 +207,50 @@ test("(like-4) LIKE search: recall by substring, snippet with [ ], equal relevan
   const dir = mkdtempSync(join(tmpdir(), "leina-like-search-"));
   try {
     const store = new MemoryStore(join(dir, "memory.db"), "like-search");
-    // Both content strings contain the search term "refactor" so the snippet
-    // will always find a match and produce [ ] brackets.
-    store.save({
-      title: "auth module",
-      content: "refactor authentication logic to a separate module for clarity",
-      type: "architecture",
-    });
-    // Second insert is newer (higher updated_at)
-    const obs2 = store.save({
-      title: "cache layer for auth",
-      content: "refactor auth cache implementation to use redis backend",
-      type: "architecture",
-    });
+    try {
+      // Both content strings contain the search term "refactor" so the snippet
+      // will always find a match and produce [ ] brackets. Same lengths, so the
+      // relevance ties exactly and only recency (or the tie-break) orders them —
+      // whether or not the two saves land in the same millisecond.
+      store.save({
+        title: "auth cache layer",
+        content: "refactor auth cache to use the redis backend",
+        type: "architecture",
+      });
+      // Second insert is newer (higher or equal updated_at)
+      store.save({
+        title: "auth store layer",
+        content: "refactor auth store to use the mysql backend",
+        type: "architecture",
+      });
 
-    // Search for "refactor" — both content strings match
-    const hits = store.search("refactor", { limit: 10 });
-    assert.ok(hits.length >= 2, "should find at least two hits for 'refactor'");
+      // Search for "refactor" — both content strings match
+      const hits = store.search("refactor", { limit: 10 });
+      assert.ok(hits.length >= 2, "should find at least two hits for 'refactor'");
 
-    for (const h of hits) {
-      assert.ok(h.id, "hit has an id");
-      assert.ok(h.snippet, "hit has a non-empty snippet");
-      // Snippet must contain [ ] markers around the matched word
-      assert.match(h.snippet, /\[.*?\]/, "snippet should highlight the match with [ ]");
+      for (const h of hits) {
+        assert.ok(h.id, "hit has an id");
+        assert.ok(h.snippet, "hit has a non-empty snippet");
+        // Snippet must contain [ ] markers around the matched word
+        assert.match(h.snippet, /\[.*?\]/, "snippet should highlight the match with [ ]");
+      }
+
+      // Same term frequency and length: the recency prior (or the tie-break) puts the newer one first.
+      assert.ok(
+        hits[0]!.updatedAt >= hits[1]!.updatedAt,
+        "equal relevance is broken by recency",
+      );
+
+      // Single-token search with limit
+      const limited = store.search("auth", { limit: 1 });
+      assert.equal(limited.length, 1, "limit is respected");
+
+      // No match → empty array
+      const none = store.search("xyzzy123notexist");
+      assert.equal(none.length, 0, "no results for a term that doesn't exist");
+    } finally {
+      store.close();
     }
-
-    // Same term frequency and similar length: the recency prior puts the newer one first.
-    assert.ok(
-      hits[0]!.updatedAt >= hits[1]!.updatedAt,
-      "near-equal relevance is broken by recency",
-    );
-
-    // Single-token search with limit
-    const limited = store.search("auth", { limit: 1 });
-    assert.equal(limited.length, 1, "limit is respected");
-
-    // No match → empty array
-    const none = store.search("xyzzy123notexist");
-    assert.equal(none.length, 0, "no results for a term that doesn't exist");
-
-    store.close();
-    void obs2; // suppress unused-var warning
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

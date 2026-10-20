@@ -94,7 +94,8 @@ export class FakeAgentRunner {
    */
   run(event: string, payload: object, env?: Record<string, string>): HookResult {
     const input = JSON.stringify(payload);
-    const baseEnv = { ...process.env };
+    // No background self-heal build: its detached child would hold the temp dir (Windows).
+    const baseEnv: NodeJS.ProcessEnv = { ...process.env, LEINA_DISABLE_AUTOBUILD: "1" };
     delete baseEnv.DEVIN_PROJECT_DIR;
 
     const r = spawnSync(

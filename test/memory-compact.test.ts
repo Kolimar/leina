@@ -624,8 +624,14 @@ test("(compact-16) CLI: a write-locked db fails compact (even --dry-run) with an
     assert.match(r.stderr, /another leina process/);
     assert.doesNotMatch(r.stderr, /\n\s+at /, "no stack trace");
   } finally {
-    holder?.kill();
-    rmSync(home, { recursive: true, force: true });
+    // Wait for the holder to let go of memory.db: Windows refuses to delete an open file.
+    const live = holder?.exitCode === null && holder.signalCode === null ? holder : undefined;
+    if (live !== undefined) {
+      const exited = new Promise((resolve) => live.once("exit", resolve));
+      live.kill();
+      await exited;
+    }
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     rmSync(repoDir, { recursive: true, force: true });
   }
 });

@@ -194,25 +194,36 @@ describe("L2: writeFileAtomic", () => {
     }
   });
 
-  it("preserves the target's existing permissions and honors an explicit mode", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "leina-atomic-"));
-    try {
-      const secretive = path.join(dir, "settings.json");
-      await fs.writeFile(secretive, "{}\n", { mode: 0o600 });
-      await writeFileAtomic(secretive, '{"v":1}\n');
-      assert.equal((await fs.stat(secretive)).mode & 0o777, 0o600);
+  it(
+    "preserves the target's existing permissions and honors an explicit mode",
+    { skip: process.platform === "win32" ? "POSIX modes" : false },
+    async () => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "leina-atomic-"));
+      try {
+        const secretive = path.join(dir, "settings.json");
+        await fs.writeFile(secretive, "{}\n", { mode: 0o600 });
+        await writeFileAtomic(secretive, '{"v":1}\n');
+        assert.equal((await fs.stat(secretive)).mode & 0o777, 0o600);
 
-      const script = path.join(dir, "hook.sh");
-      await writeFileAtomic(script, "#!/bin/sh\n", 0o755);
-      assert.equal((await fs.stat(script)).mode & 0o777, 0o755);
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
-  });
+        const script = path.join(dir, "hook.sh");
+        await writeFileAtomic(script, "#!/bin/sh\n", 0o755);
+        assert.equal((await fs.stat(script)).mode & 0o777, 0o755);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it(
     "a failed write leaves the original file intact (no truncation)",
-    { skip: process.getuid?.() === 0 ? "root ignores directory permissions" : false },
+    {
+      skip:
+        process.platform === "win32"
+          ? "POSIX directory permissions"
+          : process.getuid?.() === 0
+            ? "root ignores directory permissions"
+            : false,
+    },
     async () => {
       const dir = await fs.mkdtemp(path.join(os.tmpdir(), "leina-atomic-"));
       try {
