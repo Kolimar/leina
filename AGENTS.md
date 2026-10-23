@@ -237,7 +237,11 @@ hook stay quiet in unrelated repos.
 
 The grep/find branch (`rg|grep|find` in an `exec` command) emits an advisory steering the
 agent toward `leina query` / `leina affected`. The `git commit` branch (anchored
-to exclude `commit-tree` / `commit-graph`) emits a memory-load advisory.
+to exclude `commit-tree` / `commit-graph`) emits a memory-load advisory. After the commit
+(`PostToolUse`, `git commit` anywhere in the line) the gate reports how many lines the branch
+changes against its base (`origin/HEAD`, else `main`, else `master`; lockfiles and binaries
+excluded) and how far that is from the 400-line review budget of the `chained-pr` skill
+(`commitSliceSignal` in `src/cli/agent-gate.ts`).
 
 ## Hook launch form
 

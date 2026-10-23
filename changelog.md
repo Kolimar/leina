@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - The `AGENTS.md` protocol block written by `leina init` shrank from 8.9 KB to 5.4 KB (same rules, duplication removed, rarely used admin commands left to `--help`), guarded by a byte-budget test. It now routes every code change: a direct one still checks consumers with `leina affected`, sees its test fail then pass and closes with `Risk: none`; anything else invokes `leina-sdd` before the first edit. Existing repos pick it up with `leina init` or `leina repair`.
 
 ### Added
+- **Commit slice signal.** After a `git commit`, the `PostToolUse` hook tells the agent how many lines the branch changes against its base (`origin/HEAD`, else `main`, else `master`; lockfiles and binaries excluded) and how far that is from the 400-line review budget, pointing at the `chained-pr` skill once it is over. Nothing is reported on the base branch itself or when git fails.
 - **Backup before a memory schema upgrade.** Before a schema upgrade rewrites `memory.db` in place, leina copies it next to itself as `memory.db.bak-v<from>-<ISO>` (`VACUUM INTO`). A new db, an in-memory db or one already current gets no copy. If the copy fails, nothing is migrated and the error names the db, both versions and the cause. The whole upgrade (copy, schema and migrations) now runs in one transaction: processes opening the db at once wait for it and find it current, so there is a single copy and never a half-upgraded db.
 
 ### Fixed

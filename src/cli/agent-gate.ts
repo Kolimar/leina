@@ -44,7 +44,7 @@
 // harness root (enforcement), so subdirectories and worktrees act on their project.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { buildActiveContext } from "./active-context.ts";
 import { spawnDetachedBuild } from "./background-build.ts";
 import { graphDbPath } from "./wiring.ts";
@@ -54,6 +54,7 @@ import { isTrustedWorkspaceDir, isWorkspaceTrusted } from "../application/instal
 import { findConsentRoot, findGitToplevel, findHarnessRoot, resolveHookProjectRoot } from "../application/project/root.ts";
 import { type HookSource, hookSourceOf, runningHookHost, shouldDeferHook } from "../application/install/hook-scope.ts";
 import { claudeUserSettingsFile, devinUserConfigFile } from "../infrastructure/install/share-paths.ts";
+import { safeGitOutput } from "../infrastructure/install/safe-exec.ts";
 import { type HookHost, type HookScope, isHookHost, managedHookCommands } from "../application/install/hook-command.ts";
 import { MCP_MEMORY_TOOLS } from "../application/install/hooks-common.ts";
 
@@ -260,6 +261,18 @@ export interface AgentGateDecision {
 const GIT_COMMIT_RE = /^\s*git\s+commit(?:\s|$)/;
 // Whole-word match for the grep family anywhere in the command line.
 const GREP_RE = /\b(rg|grep|find)\b/;
+// `git commit` as a command of its own anywhere in the line (at the start or after `;`, `&`,
+// `|`, `(`) — still never `git commit-tree` / `git commit-graph`.
+const GIT_COMMIT_ANYWHERE_RE = /(?:^|[;&|(])\s*git\s+commit(?=\s|$)/;
+
+// The review budget the chained-pr skill enforces: a branch over it is split into chained PRs.
+const REVIEW_BUDGET_LINES = 400;
+// Generated lockfiles never count toward a reviewer's load.
+const LOCKFILES = new Set([
+  "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb",
+  "Cargo.lock", "go.sum", "poetry.lock", "uv.lock", "Pipfile.lock", "composer.lock", "Gemfile.lock",
+  "packages.lock.json",
+]);
 
 // Matches a `leina memory (context|search|verified) ...` invocation anywhere in an exec
 // command line — the CLI-only signal that project memory was loaded this session.
@@ -487,12 +500,12 @@ export function runAgentGate(
   }
 
   // Marker writes: PostToolUse on an exec that ran a leina memory command (or on a leina MCP
-  // memory tool).
+  // memory tool); after a `git commit`, also the commit slice signal.
   // - Load RE (`context|search|verified`): flip the per-session memory-loaded marker.
   // - Save RE (`save|session|update`): flip the per-session memory-saved marker.
   // Subcommand sets are disjoint — both checks are independent and idempotent.
   // Done BEFORE decideAgentGate so the decision sees an up-to-date markerExists.
-  if (event === "PostToolUse" && handlePostToolUseMarkers(payload, markerPath, saveMarkerPath)) return;
+  if (event === "PostToolUse" && handlePostToolUseMarkers(payload, cwd, host, markerPath, saveMarkerPath)) return;
 
   // SessionStart: a NEW session (startup/clear, or no source — Devin) resets the per-session
   // markers before injection runs: it starts as "not loaded, not saved", nudges unshown. A
@@ -573,17 +586,62 @@ function commandOf(payload: AgentHookPayload): string {
   return typeof payload.tool_input?.command === "string" ? payload.tool_input.command : "";
 }
 
-// PostToolUse on an exec (memory markers from the command line) or on a leina MCP memory tool
-// (the same markers). True when the event was one of those.
-function handlePostToolUseMarkers(payload: AgentHookPayload, markerPath: string, saveMarkerPath: string): boolean {
+// PostToolUse on an exec (memory markers from the command line, then the commit slice signal)
+// or on a leina MCP memory tool (the same markers). True when the event was one of those.
+function handlePostToolUseMarkers(
+  payload: AgentHookPayload,
+  cwd: string,
+  host: HookHost,
+  markerPath: string,
+  saveMarkerPath: string,
+): boolean {
   if (payload.tool_name === "exec") {
-    handleMemoryMarkerWrites(commandOf(payload), markerPath, saveMarkerPath);
+    const cmd = commandOf(payload);
+    handleMemoryMarkerWrites(cmd, markerPath, saveMarkerPath);
+    // After a commit: how big the branch is against the review budget.
+    const signal = GIT_COMMIT_ANYWHERE_RE.test(cmd) ? commitSliceSignal(cwd) : "";
+    if (signal) emitAdvisoryText(host, "PostToolUse", signal);
     return true;
   }
   const mcpMemory = payload.tool_name === undefined ? undefined : MCP_MEMORY_TOOLS[payload.tool_name];
   if (mcpMemory === undefined) return false;
   writeMarker(mcpMemory === "load" ? markerPath : saveMarkerPath);
   return true;
+}
+
+// The lines the branch changes against its base (added + deleted since the merge-base,
+// lockfiles and binaries excluded), measured against the review budget. Empty when there is
+// nothing to report or git fails — fail open, like every gate path.
+function commitSliceSignal(cwd: string): string {
+  const base = sliceBase(cwd);
+  const mergeBase = base === null ? null : safeGitOutput(["merge-base", "HEAD", base], cwd);
+  const numstat = mergeBase ? safeGitOutput(["diff", "--numstat", mergeBase, "HEAD"], cwd) : null;
+  if (numstat === null) return "";
+  let lines = 0;
+  for (const row of numstat.split("\n")) {
+    const [added, deleted, path] = row.split("\t");
+    if (path === undefined || LOCKFILES.has(basename(path))) continue;
+    const changed = Number(added) + Number(deleted); // a binary file reports "-"
+    if (Number.isFinite(changed)) lines += changed;
+  }
+  if (lines === 0) return "";
+  const budget = lines <= REVIEW_BUDGET_LINES
+    ? `${REVIEW_BUDGET_LINES - lines} left of the ${REVIEW_BUDGET_LINES}-line review budget.`
+    : `${lines - REVIEW_BUDGET_LINES} over the ${REVIEW_BUDGET_LINES}-line review budget: split it into chained PRs (chained-pr skill).`;
+  return `leina: this branch changes ${lines} lines against ${base} (lockfiles and binaries excluded) — ${budget}`;
+}
+
+// The branch a slice is measured against: origin/HEAD's target, else local main, else master.
+// Null on a detached HEAD, outside git, or when HEAD is that base itself (nothing to slice).
+function sliceBase(cwd: string): string | null {
+  const branch = safeGitOutput(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd);
+  if (!branch) return null;
+  const remoteHead = safeGitOutput(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], cwd);
+  for (const candidate of remoteHead ? [remoteHead] : ["main", "master"]) {
+    if (safeGitOutput(["rev-parse", "--verify", "--quiet", `${candidate}^{commit}`], cwd) === null) continue;
+    return candidate === branch || candidate === `origin/${branch}` ? null : candidate;
+  }
+  return null;
 }
 
 function handleMemoryMarkerWrites(postCmd: string, markerPath: string, saveMarkerPath: string): void {

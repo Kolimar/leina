@@ -8,6 +8,7 @@
 // aren't leina-initialized.
 
 import { test } from "node:test";
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1535,4 +1536,69 @@ test("(session-3) the UserPromptSubmit fallback context is delivered at most onc
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Commit slice signal: after `git commit`, the branch size against the 400-line budget
+// ---------------------------------------------------------------------------
+
+function git(cwd: string, ...args: string[]): void {
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], {
+    cwd,
+    stdio: "ignore",
+  });
+}
+
+// A leina project with `main` holding one file and a `feature` branch that adds `lines` lines
+// to a.txt plus a large lockfile.
+function featureRepo(lines: number): string {
+  const cwd = freshCwd();
+  git(cwd, "init", "-q", "-b", "main");
+  writeFileSync(join(cwd, "a.txt"), "base\n");
+  git(cwd, "add", "a.txt");
+  git(cwd, "commit", "-q", "-m", "base");
+  git(cwd, "checkout", "-q", "-b", "feature");
+  writeFileSync(join(cwd, "a.txt"), `base\n${"x\n".repeat(lines)}`);
+  writeFileSync(join(cwd, "package-lock.json"), "{}\n".repeat(1000));
+  git(cwd, "add", "a.txt", "package-lock.json");
+  git(cwd, "commit", "-q", "-m", "feature");
+  return cwd;
+}
+
+const postExec = (cwd: string, command: string): { stdout: string } =>
+  withCapturedIO(() =>
+    runAgentGate(JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "exec", tool_input: { command } }), cwd),
+  );
+
+test("(Slice-1) after git commit, the branch size and what is left of the 400-line budget", () => {
+  const cwd = featureRepo(30);
+  const { stdout } = postExec(cwd, "git add a.txt && git commit -m feature");
+  const out = JSON.parse(stdout) as { hookSpecificOutput: { additionalContext: string } };
+  const text = out.hookSpecificOutput.additionalContext;
+  assert.match(text, /changes 30 lines against main \(lockfiles and binaries excluded\)/);
+  assert.match(text, /370 left of the 400-line review budget/);
+});
+
+test("(Slice-2) over the budget, the signal points at chained PRs", () => {
+  const cwd = featureRepo(450);
+  const { stdout } = postExec(cwd, "git commit -m feature");
+  const text = (JSON.parse(stdout) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput
+    .additionalContext;
+  assert.match(text, /changes 450 lines against main/);
+  assert.match(text, /50 over the 400-line review budget: split it into chained PRs \(chained-pr skill\)/);
+});
+
+test("(Slice-3) no signal on the base branch, outside git, or for commit-tree", () => {
+  const onMain = featureRepo(30);
+  git(onMain, "checkout", "-q", "main");
+  assert.equal(postExec(onMain, "git commit -m x").stdout, "", "HEAD on the base branch");
+  assert.equal(postExec(freshCwd(), "git commit -m x").stdout, "", "not a git repo");
+  assert.equal(postExec(featureRepo(30), "git commit-tree abc -m x").stdout, "", "commit-tree is not a commit");
+});
+
+test("(Slice-4) one exec that saves memory and commits does both", () => {
+  const cwd = featureRepo(10);
+  const { stdout } = postExec(cwd, "leina memory save . --title t --content c && git commit -m feature");
+  assert.equal(existsSync(join(cwd, SAVE_MARKER_REL_LOCAL)), true, "save marker written");
+  assert.match(stdout, /changes 10 lines against main/);
 });
