@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - **`leina activate` (and `repair`/`init`) rebuilds the global share when the bundled skills or agents change without a version bump.** A dev checkout used to keep serving old prompts until `~/.leina/share/.version` was deleted by hand. The share now also records a fingerprint of the bundled assets (`share/.assets.sha256`) and repopulates when it differs; `.version` still holds the bare version that `leina doctor` compares.
 - **The `leina-sdd` skill no longer duplicates the user's request in the loaded prompt.** It spelled the arguments placeholder in its prose, and Claude Code substitutes it, so the request appeared twice. The skill now names "the skill's arguments" and Claude Code appends them once.
 
-## [3.0.0] — Unreleased
+## [3.0.0] — 2026-10-21
 
 3.0.0 ships the never-published 2.1.0 work (the task harness and a security review) together with a functional review of detection, agent ergonomics and performance. Several defaults, CLI outputs and MCP payloads changed — read *Upgrading from 2.x* first.
 
