@@ -48,6 +48,21 @@ test("protocol shows the 3.0 CLI surface: optional <dir>, query filters, selecto
   assert.match(PROTOCOL_BODY, /leina init --harness/);
 });
 
+// Every session and every subagent that reads AGENTS.md pays for this block, so it has a byte
+// budget. Raising it is a deliberate decision: say in the commit what the extra bytes buy.
+const PROTOCOL_BUDGET_BYTES = 5_200;
+
+test("protocol stays within its byte budget", () => {
+  const bytes = Buffer.byteLength(PROTOCOL_BODY, "utf8");
+  assert.ok(bytes <= PROTOCOL_BUDGET_BYTES, `PROTOCOL_BODY is ${bytes} B, budget ${PROTOCOL_BUDGET_BYTES} B`);
+});
+
+test("protocol routes changes by size before SDD", () => {
+  assert.match(PROTOCOL_BODY, /SDD \(size first\)/);
+  assert.match(PROTOCOL_BODY, /`git diff` alone/);
+  assert.match(PROTOCOL_BODY, /request verbatim/);
+});
+
 test("AGENTS.md merge is idempotent and preserves user content", () => {
   const user = "# Project\n\nKeep me.\n";
   const once = mergeAgentsMd(user);
