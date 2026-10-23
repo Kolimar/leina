@@ -63,7 +63,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Notes = the changelog section of this version (its `## [X.Y.Z]` heading up to the next
-      # `## [`), blank lines around it trimmed. A re-run edits the existing release.
+      # `## [`), blank lines around it trimmed. Only the highest version tag is marked Latest
+      # (a patch to an older line stays below it). Re-running this job alone edits the
+      # existing release; "Re-run all jobs" stops at publish, the version being on npm already.
       - name: Create the release from the changelog section
         env:
           GH_TOKEN: ${{ github.token }}
@@ -81,10 +83,11 @@ jobs:
             echo "::error::changelog.md has no notes for ${V} (expected a '## [${V}]' section)"
             exit 1
           fi
-          FLAGS=()
-          case "${V}" in *-*) FLAGS+=(--prerelease) ;; esac
+          NEWEST="$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/##' | { grep -v -- - || true; } | sort -V | tail -n 1)"
+          LATEST=false
+          if [ "${NEWEST}" = "${TAG}" ]; then LATEST=true; fi
           if gh release view "${TAG}" > /dev/null 2>&1; then
-            gh release edit "${TAG}" --title "leina ${V}" --notes-file notes.md "${FLAGS[@]}"
+            gh release edit "${TAG}" --title "leina ${V}" --notes-file notes.md --latest="${LATEST}"
           else
-            gh release create "${TAG}" --title "leina ${V}" --notes-file notes.md --verify-tag "${FLAGS[@]}"
+            gh release create "${TAG}" --title "leina ${V}" --notes-file notes.md --verify-tag --latest="${LATEST}"
           fi
