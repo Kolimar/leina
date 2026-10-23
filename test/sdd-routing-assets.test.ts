@@ -21,6 +21,12 @@ test("leina-sdd stays within its byte budget", () => {
   assert.ok(bytes <= ORCHESTRATOR_BUDGET_BYTES, `leina-sdd is ${bytes} B, budget ${ORCHESTRATOR_BUDGET_BYTES} B`);
 });
 
+test("leina-sdd never spells the arguments placeholder", () => {
+  // Claude Code substitutes every literal placeholder in a loaded skill body with the request,
+  // duplicating it into prose; without one, the arguments are appended once at the end.
+  assert.ok(!ORCHESTRATOR.includes("$ARGUMENTS"));
+});
+
 test("leina-sdd routes every change before any phase runs", () => {
   // The description is what makes the host invoke it: any non-direct change, before editing.
   assert.match(ORCHESTRATOR, /^description: Use before the first edit of any feature, bug fix, refactor or migration that is not a direct change/m);

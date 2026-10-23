@@ -25,8 +25,8 @@ Route first, then do the least process the route allows.
 
 ## Inputs
 
-A free-form description of the change. `$ARGUMENTS` may include a `change-name` slug; if absent,
-derive one (kebab-case, ≤ 4 words) and confirm it in your opening line.
+A free-form description of the change, as the skill's arguments. It may include a `change-name`
+slug; if absent, derive one (kebab-case, ≤ 4 words) and confirm it in your opening line.
 
 ## Pre-flight (every route)
 
@@ -148,8 +148,8 @@ Launch each phase through your subagent primitive with the brief as the task —
 `Agent(subagent_type: "sdd-explore", prompt: "<brief>")`; Devin:
 `run_subagent(profile: "sdd-explore", task: "<brief>")`.
 
-> **Never launch a phase via the `skill()` tool**: it spawns the executor with an EMPTY
-> `$ARGUMENTS`, so it starts blind and stops to ask. That path is only for a human typing
+> **Never launch a phase via the `skill()` tool**: it spawns the executor with EMPTY
+> arguments, so it starts blind and stops to ask. That path is only for a human typing
 > `/sdd-explore <args>`. Executors never spawn subagents — the tree is one level deep.
 
 **After each phase**: confirm the `--topic` save happened (missing → retry once with a reminder,
