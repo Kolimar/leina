@@ -314,7 +314,7 @@ inherit four rules that fail unless they also run leina commands. Hence two pres
 | preset | what governs | `.harness/config.json` |
 |---|---|---|
 | `leina-native` | the full builtin suite, **including** the four `leina-*` rules — the historical default | `{}` — no rule overrides (the seed `leina init` writes, give or take a `platforms` pin) |
-| `generic` | only the host-agnostic rules (`tests-pass`, `no-secrets`, `diff-in-scope`, `lint-clean`, `typecheck`, `no-skipped-tests`, `plan-before-code`, `criteria-checklist`, `contract-interview`, `changelog-updated`) — **no rule requires a leina command** | the config below |
+| `generic` | only the host-agnostic rules (`tests-pass`, `no-secrets`, `diff-in-scope`, `lint-clean`, `typecheck`, `no-skipped-tests`, `delivered-test-lint`, `plan-before-code`, `criteria-checklist`, `contract-interview`, `changelog-updated`) — **no rule requires a leina command** | the config below |
 
 A preset never edits the rule files — it is realized entirely through config overrides
 (the project layer may disable builtin rules; only *user-local* layers are barred from

@@ -330,7 +330,7 @@ leina. De ahí los dos presets (definidos en `application/harness/recipes.ts`):
 | preset | qué gobierna | `.harness/config.json` |
 |---|---|---|
 | `leina-native` | la suite builtin completa, **incluyendo** las cuatro rules `leina-*` — el default histórico | `{}` — sin overrides de rules (la semilla que escribe `leina init`, salvo un `platforms` fijado) |
-| `generic` | solo las rules agnósticas del host (`tests-pass`, `no-secrets`, `diff-in-scope`, `lint-clean`, `typecheck`, `no-skipped-tests`, `plan-before-code`, `criteria-checklist`, `contract-interview`, `changelog-updated`) — **ninguna rule exige un comando leina** | la config de abajo |
+| `generic` | solo las rules agnósticas del host (`tests-pass`, `no-secrets`, `diff-in-scope`, `lint-clean`, `typecheck`, `no-skipped-tests`, `delivered-test-lint`, `plan-before-code`, `criteria-checklist`, `contract-interview`, `changelog-updated`) — **ninguna rule exige un comando leina** | la config de abajo |
 
 Un preset nunca edita los archivos de rules — se realiza por completo mediante overrides
 de config (la capa de proyecto puede deshabilitar rules builtin; solo las capas
