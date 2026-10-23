@@ -346,7 +346,7 @@ Las versiones anteriores guardaban `--type` sin validar; al abrir la DB con 3.0 
 migran una vez, en el lugar: `note`, `reference`, `suggestion` y `project` pasan a `discovery`,
 cualquier otro tipo desconocido pasa a `manual` y un scope desconocido pasa a `project`.
 `memory import` / `sync` aceptan los mismos alias heredados, así que un export tomado antes de
-la actualización se sigue cargando.
+la actualización se sigue cargando. Antes de cualquier actualización de esquema, leina copia la DB a su lado como `memory.db.bak-v<from>-<ISO>` (`VACUUM INTO`); si esa copia falla, no se migra nada y el comando informa el motivo.
 
 ### `memory save [<dir>] --title "..." --content "..." [--type t] [--topic key] [--scope s] [--anchors a,b]`
 Guarda (o hace upsert de) una observación. Pasar `--topic <key>` evoluciona la entrada

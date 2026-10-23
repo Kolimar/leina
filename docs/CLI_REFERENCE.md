@@ -319,7 +319,7 @@ an error that lists the accepted ones (a batch fails only the offending item). O
 stored `--type` unvalidated; opening the db with 3.0 migrates those rows once, in place:
 `note`, `reference`, `suggestion` and `project` become `discovery`, any other unknown type
 becomes `manual`, and an unknown scope becomes `project`. `memory import` / `sync` accept the
-same legacy aliases, so an export taken before the upgrade still loads.
+same legacy aliases, so an export taken before the upgrade still loads. Before any schema upgrade, leina copies the db next to itself as `memory.db.bak-v<from>-<ISO>` (`VACUUM INTO`); if that copy fails, nothing is migrated and the command reports why.
 
 ### `memory save [<dir>] --title "..." --content "..." [--type t] [--topic key] [--scope s] [--anchors a,b]`
 Add (or upsert) an observation. Passing `--topic <key>` evolves the existing entry with that
