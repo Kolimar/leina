@@ -1,6 +1,6 @@
 ---
 name: leina-sdd
-description: Route a code change by size and risk — direct, one compact plan, or the full Spec-Driven Development cycle (explore → propose → spec → design → tasks → apply → verify → archive) — delegating to phase subagents only for a named reason and persisting artifacts to leina memory.
+description: Use before the first edit of any feature, bug fix, refactor or migration that is not a direct change (one read batch, no high-risk item, finishable from the request and git diff). Routes it to one compact plan or the full Spec-Driven Development cycle (explore → … → archive), delegating to phase subagents only for a named reason and persisting artifacts to leina memory.
 triggers:
   - user
   - model
@@ -22,7 +22,6 @@ Route first, then do the least process the route allows.
 > **Language**: detect the user's language and conduct the whole flow in it — your own
 > commentary, every clarifying question, and the prose/content of each artifact.
 > Keep `topic_key`s, slugs (`sdd/{change}/…`), identifiers, paths and CLI commands in English.
-> Pass the detected language explicitly in every subagent brief.
 
 ## Inputs
 
@@ -180,5 +179,3 @@ At each route step or phase boundary, emit:
   artifacts: <topics>
   next: <what runs next>
 ```
-
-Keep commentary minimal: progress, not a re-narration of each result.

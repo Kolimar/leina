@@ -82,11 +82,15 @@ SHELL
 - Prefer \`bash\` when the host offers a choice; PowerShell only on Windows without bash.
 
 SDD (size first)
-- Go direct when the change is understood in one read batch, touches no high-risk item (data
-  you cannot rebuild, security, a contract others consume, concurrency, delivery/CI, code no
-  test covers) and could be finished from the request and \`git diff\` alone.
-  Otherwise drive it through the \`leina-sdd\` skill: it picks one compact plan or the full
-  explore → … → archive cycle, and delegates only for a named reason.
+- Every code change (feature, fix, refactor, migration) is routed. Go direct when it is
+  understood in one read batch, touches no high-risk item (data you cannot rebuild, security,
+  a contract others consume, concurrency, delivery/CI, code no test covers) and could be
+  finished from the request and \`git diff\` alone.
+- Direct still means: \`leina affected\` before changing an exported symbol (a consumer outside
+  your files → not direct); see the test fail before the fix and pass after; run the focused
+  test and the suite; close with \`Risk: none\`; a fixed bug leaves one \`--type bugfix\` note.
+- Anything else: invoke the \`leina-sdd\` skill BEFORE the first edit. It picks one compact plan
+  or the full explore → … → archive cycle, and delegates only for a named reason.
 - Never launch the \`/sdd-*\` phase skills through the skill tool: the executor starts with
   empty arguments and re-asks. Phase briefs carry the user's request verbatim plus artifact ids.
 - At DESIGN and TASKS, \`leina affected [<dir>] <symbol>\` on every touched symbol drives the

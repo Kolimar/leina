@@ -22,6 +22,8 @@ test("leina-sdd stays within its byte budget", () => {
 });
 
 test("leina-sdd routes every change before any phase runs", () => {
+  // The description is what makes the host invoke it: any non-direct change, before editing.
+  assert.match(ORCHESTRATOR, /^description: Use before the first edit of any feature, bug fix, refactor or migration that is not a direct change/m);
   assert.match(ORCHESTRATOR, /## Step 0 — Route the change/);
   for (const route of ["**Direct**", "**Compact**", "**Full**"]) assert.ok(ORCHESTRATOR.includes(route), route);
   assert.match(ORCHESTRATOR, /`git diff` alone/);
