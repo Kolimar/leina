@@ -17,6 +17,7 @@
 // skills/agents surface in O(1). The orchestrator skill (`leina-sdd`) and every SDD phase
 // skill become available globally with no per-project files.
 
+import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -28,7 +29,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   blanketFile,
@@ -36,6 +37,7 @@ import {
   type HostId,
   type HostSpec,
   shareAgentsDir,
+  shareAssetsHashFile,
   shareRoot,
   shareSelectionFile,
   shareSkillsDir,
@@ -236,7 +238,16 @@ export function populateShare(
   // changed choice forces a repopulate even on the same package version.
   const persisted = deserializeSelection(safeRead(shareSelectionFile())) ?? ALL_ASSETS;
   const effective = selection ?? persisted;
-  if (current === packageVersion && sameSelection(persisted, effective)) return false;
+  const skillsSrc = join(assetsRoot, "skills");
+  const agentsSrc = join(assetsRoot, "agents");
+  const fingerprint = assetsFingerprint([skillsSrc, agentsSrc]);
+  if (
+    current === packageVersion &&
+    sameSelection(persisted, effective) &&
+    safeRead(shareAssetsHashFile()) === fingerprint
+  ) {
+    return false;
+  }
 
   // Replace the share atomically: rm -rf the kind dirs, repopulate, then write the sentinel last.
   // We never touch anything outside share/, so a corrupted partial population is recoverable.
@@ -250,15 +261,44 @@ export function populateShare(
   mkdirSync(shareAgentsDir(), { recursive: true });
   mkdirSync(shareWorkflowsDir(), { recursive: true });
 
-  const skillsSrc = join(assetsRoot, "skills");
-  const agentsSrc = join(assetsRoot, "agents");
   populateSkills(skillsSrc, effective.skills);
   populateAgentArtifacts(root, agentsSrc, skillsSrc, effective.agents);
   populateWorkflows(root, skillsSrc, agentsSrc, effective);
 
   writeFileSync(shareSelectionFile(), serializeSelection(effective));
+  writeFileSync(shareAssetsHashFile(), fingerprint);
   writeFileSync(sentinel, packageVersion);
   return true;
+}
+
+// sha256 over every file under the given dirs: sorted relative paths (forward slashes, so the
+// value is the same on every OS) and their bytes. A missing dir contributes nothing.
+function assetsFingerprint(dirs: string[]): string {
+  const hash = createHash("sha256");
+  for (const dir of dirs) {
+    const files: string[] = [];
+    const walk = (d: string, rel: string): void => {
+      let entries: import("node:fs").Dirent[];
+      try {
+        entries = readdirSync(d, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) walk(join(d, e.name), r);
+        else if (e.isFile()) files.push(r);
+      }
+    };
+    walk(dir, "");
+    hash.update(`${basename(dir)}\0`);
+    for (const r of files.sort()) {
+      hash.update(`${r}\0`);
+      hash.update(readFileSync(join(dir, ...r.split("/"))));
+      hash.update("\0");
+    }
+  }
+  return hash.digest("hex");
 }
 
 /**
@@ -433,9 +473,10 @@ export function installGlobal(
 /**
  * Self-heal the global share. Named wrapper around installGlobal so callers read as intent —
  * "make the share current for this binary" — and so the behaviour has a single unit-test
- * surface. populateShare is version-gated, so this is a cheap no-op when the share already
- * matches `version`; on a version bump it repopulates and re-links so freshly-bundled
- * skills/agents become visible (the `activate` / `init` paths use it).
+ * surface. populateShare is gated on version, selection and assets fingerprint, so this is a
+ * cheap no-op when the share already matches; on a version bump or an asset edit it
+ * repopulates and re-links so freshly-bundled skills/agents become visible (the `activate` /
+ * `init` paths use it).
  */
 export function maybeHealShare(assetsRoot: string, version: string): InstallGlobalReport {
   return installGlobal(assetsRoot, version);

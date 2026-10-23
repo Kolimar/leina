@@ -45,6 +45,14 @@ export function shareVersionFile(): string {
   return join(shareRoot(), ".version");
 }
 
+/**
+ * Fingerprint of the bundled assets the share was built from. A different one forces a
+ * repopulate at the same version (an asset edit in a dev checkout never bumps the version).
+ */
+export function shareAssetsHashFile(): string {
+  return join(shareRoot(), ".assets.sha256");
+}
+
 /** Persisted asset selection (null/absent = everything). Changing it forces a repopulate. */
 export function shareSelectionFile(): string {
   return join(shareRoot(), ".selection.json");

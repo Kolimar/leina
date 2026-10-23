@@ -148,7 +148,8 @@ host's global dir:
 - Claude Code: `~/.claude/skills/<name>/` and `~/.claude/agents/<name>.md`
 
 The share is versioned via `share/.version`: when the running package version differs from
-the sentinel, the share is rebuilt from bundled `assets/`. macOS/Linux use symlinks; Windows
+the sentinel, or the bundled `assets/` no longer match `share/.assets.sha256` (an asset edit in
+a dev checkout never bumps the version), the share is rebuilt from bundled `assets/`. macOS/Linux use symlinks; Windows
 falls back to a recursive copy with a stderr notice (`linkOrCopy` in `src/infrastructure/install/symlinks.ts`).
 
 `leina init` does NOT run `activate`: when global activation is missing it only prints a

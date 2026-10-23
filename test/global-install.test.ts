@@ -25,6 +25,7 @@ import {
   devinAgentsRoot,
   devinSkillsRoot,
   shareAgentsDir,
+  shareAssetsHashFile,
   shareRoot,
   shareSelectionFile,
   shareSkillsDir,
@@ -423,6 +424,33 @@ test("(gi-b) populateShare is idempotent when version matches", () => {
     populateShare(assets, "1.0.0-test");
     const repopulated = populateShare(assets, "1.0.0-test");
     assert.equal(repopulated, false, "second call with same version is a no-op");
+  });
+});
+
+test("(gi-b2) populateShare re-runs when the bundled assets change at the same version", () => {
+  withTmpHome((home) => {
+    const assets = makeFakeAssetsRoot(home);
+    populateShare(assets, "1.0.0-test");
+    writeFileSync(
+      join(assets, "skills", "leina-sdd", "SKILL.md"),
+      "---\nname: leina-sdd\ndescription: orchestrator\n---\n\nEdited body\n",
+    );
+    const repopulated = populateShare(assets, "1.0.0-test");
+    assert.equal(repopulated, true, "an asset edit without a version bump repopulates");
+    assert.match(readFileSync(join(shareSkillsDir(), "leina-sdd", "SKILL.md"), "utf8"), /Edited body/);
+    // doctor compares .version with the binary, so it keeps the bare version.
+    assert.equal(readFileSync(shareVersionFile(), "utf8"), "1.0.0-test");
+    assert.equal(populateShare(assets, "1.0.0-test"), false, "unchanged assets stay a no-op");
+  });
+});
+
+test("(gi-b3) a share without an assets fingerprint (older binary) repopulates once", () => {
+  withTmpHome((home) => {
+    const assets = makeFakeAssetsRoot(home);
+    populateShare(assets, "1.0.0-test");
+    rmSync(shareAssetsHashFile());
+    assert.equal(populateShare(assets, "1.0.0-test"), true);
+    assert.equal(populateShare(assets, "1.0.0-test"), false);
   });
 });
 
