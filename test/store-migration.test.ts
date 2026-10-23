@@ -15,15 +15,19 @@
 //   - uq_obs_topic con scope incluido en la clave única
 
 import { test } from "node:test";
+import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { GraphStore } from "../src/infrastructure/sqlite/graph-store.ts";
 import type { GraphNode, GraphEdge, Signature } from "../src/domain/graph/model.ts";
 import { SQLiteMemoryRepository } from "../src/infrastructure/sqlite/memory-repository.ts";
 import { ensureMemorySchema, MEMORY_SCHEMA_VERSION, LIKE_DDL } from "../src/infrastructure/sqlite/schema.ts";
+
+const REPOSITORY_MODULE = fileURLToPath(new URL("../src/infrastructure/sqlite/memory-repository.ts", import.meta.url));
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "leina-store-mig-"));
@@ -229,6 +233,134 @@ test("(mem-mig-v4tov5) DB en v4 migra hasta la versión actual al abrir y conser
       assert.equal(count, 1, "la observación de fixture debe preservarse");
       probe.close();
     }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function memoryBackups(dir: string): string[] {
+  return readdirSync(dir).filter((f) => f.startsWith("memory.db.bak-"));
+}
+
+test("(mem-mig-backup) an outdated memory.db is copied before the ladder upgrades it", () => {
+  const dir = makeTmpDir();
+  try {
+    const dbPath = join(dir, "memory.db");
+    makeMemoryV4Db(dbPath);
+    const db = new DatabaseSync(dbPath);
+    ensureMemorySchema(db);
+    db.close();
+
+    const backups = memoryBackups(dir);
+    assert.equal(backups.length, 1, "one copy before migrating");
+    assert.match(backups[0]!, /^memory\.db\.bak-v4-\d{4}-\d{2}-\d{2}T[\d-]+Z$/);
+    const copy = new DatabaseSync(join(dir, backups[0]!));
+    assert.equal(getUserVersion(copy), 4, "the copy keeps the old version");
+    const n = (copy.prepare("SELECT COUNT(*) AS n FROM observations").get() as unknown as { n: number }).n;
+    assert.equal(n, 1, "the copy keeps the rows");
+    copy.close();
+
+    // The db is current now: reopening it takes no second copy.
+    const again = new DatabaseSync(dbPath);
+    ensureMemorySchema(again);
+    again.close();
+    assert.equal(memoryBackups(dir).length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(mem-mig-backup-fresh) a brand-new or in-memory db gets no backup", () => {
+  const dir = makeTmpDir();
+  try {
+    const db = new DatabaseSync(join(dir, "memory.db"));
+    ensureMemorySchema(db);
+    db.close();
+    assert.deepEqual(memoryBackups(dir), []);
+    // An in-memory db has no file to copy, even when it holds outdated tables.
+    const mem = new DatabaseSync(":memory:");
+    mem.exec(LIKE_DDL);
+    mem.exec("PRAGMA user_version = 4");
+    ensureMemorySchema(mem);
+    assert.equal(getUserVersion(mem), MEMORY_SCHEMA_VERSION);
+    mem.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("(mem-mig-backup-race) processes opening an outdated db at once: all succeed, one backup", async () => {
+  const dir = makeTmpDir();
+  try {
+    const dbPath = join(dir, "memory.db");
+    const db = new DatabaseSync(dbPath);
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec(LIKE_DDL);
+    db.exec("PRAGMA user_version = 4");
+    const now = Date.now();
+    const insert = db.prepare(
+      `INSERT INTO observations (id, project_key, scope, type, title, content, created_at, updated_at, revision)
+       VALUES (?, 'p', 'project', 'architecture', 't', ?, ?, ?, 1)`,
+    );
+    for (let i = 0; i < 500; i++) insert.run(`o${i}`, "c".repeat(500), now, now);
+    db.close();
+
+    // All children open at the same instant; the lead covers a slow process start.
+    const startAt = Date.now() + 4000;
+    const script =
+      `const m = await import(${JSON.stringify(pathToFileURL(REPOSITORY_MODULE).href)});` +
+      `while (Date.now() < ${startAt}) {}` +
+      `new m.SQLiteMemoryRepository(${JSON.stringify(dbPath)}, "p");`;
+    const runs = Array.from({ length: 6 }, () =>
+      new Promise<void>((ok, ko) => {
+        const child = spawn(
+          process.execPath,
+          ["--no-warnings", "--experimental-strip-types", "--input-type=module", "-e", script],
+          { stdio: ["ignore", "ignore", "pipe"] },
+        );
+        let err = "";
+        child.stderr.on("data", (c: Buffer) => (err += c.toString()));
+        child.on("error", ko);
+        child.on("close", (code) => (code === 0 ? ok() : ko(new Error(`child exit ${code}: ${err}`))));
+      }),
+    );
+    await Promise.all(runs);
+
+    const backups = memoryBackups(dir).filter((f) => !/-(wal|shm)$/.test(f));
+    assert.equal(backups.length, 1, `one backup: ${backups.join(", ")}`);
+    const copy = new DatabaseSync(join(dir, backups[0]!));
+    assert.equal(getUserVersion(copy), 4, "the copy is the untouched db");
+    copy.close();
+    const probe = new DatabaseSync(dbPath);
+    assert.equal(getUserVersion(probe), MEMORY_SCHEMA_VERSION);
+    probe.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A read-only directory refuses the copy (POSIX permissions; root bypasses them).
+const cannotDenyWrites = process.platform === "win32" || process.getuid?.() === 0;
+
+test("(mem-mig-backup-fails-closed) a failed backup migrates nothing", { skip: cannotDenyWrites }, () => {
+  const dir = makeTmpDir();
+  try {
+    const dbPath = join(dir, "memory.db");
+    makeMemoryV4Db(dbPath);
+    chmodSync(dir, 0o500);
+    try {
+      const db = new DatabaseSync(dbPath);
+      assert.throws(
+        () => ensureMemorySchema(db),
+        new RegExp(`migration from v4 to v${MEMORY_SCHEMA_VERSION}, but its backup .* failed .*nothing was changed`),
+      );
+      db.close();
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+    const probe = new DatabaseSync(dbPath);
+    assert.equal(getUserVersion(probe), 4, "nothing migrated");
+    probe.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

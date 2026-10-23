@@ -1,7 +1,8 @@
 // Memory DB schema — DDL + versioning helpers.
 // FTS5 rides the implicit rowid; triggers maintain the external-content index.
 
-import type { DatabaseSync } from "node:sqlite";
+import { rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { LEGACY_TYPE_ALIASES, OBSERVATION_TYPES, SCOPES } from "../../domain/memory/model.ts";
 
 export const MEMORY_SCHEMA_VERSION = 8;
@@ -199,6 +200,27 @@ ${FTS_SYNC_TRIGGERS}
 ${  ANCHORS_DDL}`;
 
 export function ensureMemorySchema(db: DatabaseSync): { fts5: boolean } {
+  const file = outdatedDbFile(db);
+  if (file === null) return applyMemorySchema(db);
+  // An outdated file-backed db is upgraded in ONE transaction that holds the write lock from
+  // before the backup to the version stamp: a concurrent opener waits on the lock, then finds
+  // the db current — one backup, of the untouched db, and never a half-upgraded one.
+  db.exec("BEGIN IMMEDIATE");
+  upgrading.add(db);
+  try {
+    backupBeforeMigration(db, file);
+    const result = applyMemorySchema(db);
+    db.exec("COMMIT");
+    return result;
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  } finally {
+    upgrading.delete(db);
+  }
+}
+
+function applyMemorySchema(db: DatabaseSync): { fts5: boolean } {
   const fts5 = fts5Available(db);
 
   if (fts5) {
@@ -211,15 +233,62 @@ export function ensureMemorySchema(db: DatabaseSync): { fts5: boolean } {
   return { fts5 };
 }
 
+function userVersion(db: DatabaseSync): number {
+  return (db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version;
+}
+
+// The file of a db the ladder will upgrade: file-backed, already holding tables (a db with
+// none is new) and below the current version. Null when there is nothing to back up.
+function outdatedDbFile(db: DatabaseSync): string | null {
+  if (userVersion(db) >= MEMORY_SCHEMA_VERSION) return null;
+  const main = (
+    db.prepare("PRAGMA database_list").all() as unknown as { name: string; file: string }[]
+  ).find((d) => d.name === "main");
+  const file = main?.file ?? "";
+  if (file === "") return null;
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1").get() === undefined) return null;
+  return file;
+}
+
+// A schema upgrade rewrites stored memory in place, so keep a copy next to the db first
+// (`memory.db.bak-v<from>-<ISO>`). Runs inside the upgrade transaction, before its first
+// write: VACUUM INTO cannot run in a transaction, so a second, read-only connection copies
+// the committed (untouched) db. The version is re-read under the lock — another process may
+// have finished the upgrade while this one waited. A failed copy stops here, before any change.
+function backupBeforeMigration(db: DatabaseSync, file: string): void {
+  const v = userVersion(db);
+  if (v >= MEMORY_SCHEMA_VERSION) return;
+  const target = `${file}.bak-v${v}-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
+  try {
+    const copy = new DatabaseSync(file, { readOnly: true });
+    try {
+      copy.exec("PRAGMA busy_timeout = 5000;");
+      copy.prepare("VACUUM INTO ?").run(target);
+    } finally {
+      copy.close();
+    }
+  } catch (e) {
+    rmSync(target, { force: true }); // a failed VACUUM INTO can leave an empty or partial file
+    throw new Error(
+      `${file} needs a migration from v${v} to v${MEMORY_SCHEMA_VERSION}, but its backup to ${target} failed (${e instanceof Error ? e.message : String(e)}); nothing was changed.`,
+    );
+  }
+}
+
+// Dbs being upgraded inside ensureMemorySchema's outer transaction: their inner transactions
+// become savepoints.
+const upgrading = new WeakSet<DatabaseSync>();
+
 // Run a sequence of statements inside a single IMMEDIATE transaction, rolling back
 // (and rethrowing) on any failure so a crash never leaves the db half-migrated.
 function inTransaction(db: DatabaseSync, work: () => void): void {
-  db.exec("BEGIN IMMEDIATE");
+  const nested = upgrading.has(db);
+  db.exec(nested ? "SAVEPOINT leina_step" : "BEGIN IMMEDIATE");
   try {
     work();
-    db.exec("COMMIT");
+    db.exec(nested ? "RELEASE leina_step" : "COMMIT");
   } catch (e) {
-    db.exec("ROLLBACK");
+    db.exec(nested ? "ROLLBACK TO leina_step; RELEASE leina_step" : "ROLLBACK");
     throw e;
   }
 }
@@ -270,9 +339,7 @@ function applyLikeSchema(db: DatabaseSync): void {
 // runs the migration ladder for any db below the current version.
 function runMemoryMigrations(db: DatabaseSync, fts5: boolean): void {
   // IMPORTANT: never use bound params for PRAGMA; build the literal.
-  const v = (
-    db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }
-  ).user_version;
+  const v = userVersion(db);
   if (v > MEMORY_SCHEMA_VERSION) {
     throw new Error(
       `memory.db was written by a newer version of leina (db version ${v}, binary supports up to ${MEMORY_SCHEMA_VERSION}). Upgrade leina.`,
@@ -327,8 +394,7 @@ function migrateV1toV2(db: DatabaseSync): void {
 function migrateV2toV3(db: DatabaseSync): void {
   // Wrapped in a transaction so a crash mid-migration leaves the prior (v2) state intact
   // rather than a half-repaired index.
-  db.exec("BEGIN IMMEDIATE");
-  try {
+  inTransaction(db, () => {
     // Purge already-indexed snapshot rows from the FTS index. external-content FTS5
     // 'delete' requires the originally-indexed title/content; snapshots are immutable so
     // the row's current values match exactly → clean removal, no index corruption.
@@ -342,11 +408,7 @@ function migrateV2toV3(db: DatabaseSync): void {
     // ones that exclude superseded snapshots.
     dropFtsTriggers(db);
     db.exec(FTS_SYNC_TRIGGERS);
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 // v3 → v4: switch the FTS tokenizer to porter (English stemming). The tokenizer is fixed
