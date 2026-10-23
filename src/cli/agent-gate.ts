@@ -845,7 +845,7 @@ async function harnessPreToolUse(
   return HARNESS_NOT_HANDLED;
 }
 
-/** The integrity seal alone (guided mode, no contract): edits and shell writes to what defines the gates. */
+/** The integrity seal and the destructive-command guard alone (guided mode, no contract). */
 async function harnessIntegritySeal(
   cwd: string,
   payload: AgentHookPayload,
@@ -853,9 +853,13 @@ async function harnessIntegritySeal(
 ): Promise<HarnessAgentGateResult> {
   const raw = payload as unknown as Record<string, unknown>;
   const tool = payload.tool_name ?? "";
-  const decision = HARNESS_EDIT_TOOLS.has(tool)
-    ? await hooks.decideIntegrityEdit(cwd, hooks.payloadFilePath(raw))
-    : hooks.decideIntegrityBash(hooks.payloadCommand(raw));
+  let decision;
+  if (HARNESS_EDIT_TOOLS.has(tool)) {
+    decision = await hooks.decideIntegrityEdit(cwd, hooks.payloadFilePath(raw));
+  } else {
+    decision = hooks.decideIntegrityBash(hooks.payloadCommand(raw));
+    if (!decision.block) decision = await hooks.decideDestructiveBash(cwd, hooks.payloadCommand(raw));
+  }
   if (!decision.block) return HARNESS_NOT_HANDLED;
   process.stderr.write(`${decision.message}\n`);
   return { handled: true, exitCode: 2 };

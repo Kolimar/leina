@@ -193,6 +193,22 @@ place con `sed -i` / `perl -i`; `dd of=`; paths pasados a `git checkout` / `rest
 de la tarea (`.harness/state/` — plan, checklist, contract) sigue siendo escribible por el
 agente: esa es la superficie que el flujo de trabajo necesita.
 
+**Comandos destructivos — bloqueados, sin configuración.** En un repo de confianza donde
+existe `.harness/`, el hook pre-bash (y el sello guiado sin contract, y el guard de shell
+de Cursor) también rechaza un comando de shell que destruye trabajo, sin importar la
+strictness, con o sin contract: `rm -r` de `/`, un directorio de primer nivel, el home, la
+raíz del repo o uno de sus ancestros, o `.git` (incluidos `.`, `..`, `*` y
+`cd .. && rm -rf <repo>`); `git reset --hard`; `git clean -f`; `git push --force` / `-f` /
+`+refspec` (`--force-with-lease` pasa); `git branch -D`; y, vía `psql`, `sqlite3`, `mysql`,
+`mariadb`, `sqlcmd` o `duckdb`, `DROP TABLE|DATABASE|SCHEMA`, `TRUNCATE` y `DELETE FROM`
+sin `WHERE`. Sigue prefijos `sudo`/`doas`/`env`/`nice`/`timeout` (con sus flags y valores), `cd`/`pushd`, heredocs de shell, `sh -c`, `eval` y `$(…)`; el texto de
+`echo`/`printf` es dato. No hay allowlist ni interruptor: si de verdad se quiere, el
+mensaje le pide al agente que lo corra el humano (en Claude Code, escribiendo
+`! <comando>`). Huecos conocidos, con la misma honestidad: sustitución entre comillas
+(`"$(rm -rf ~)"`), variables (`rm -rf $DIR`), SQL desde heredocs o `-f archivo.sql`,
+`find -delete` / `-exec`, objetivos pasados por `xargs`, intérpretes (`python -c`) y
+scripts que el agente escribe y un script canalizado a un shell (`echo '…' | sh`, o su forma heredoc `cat <<'EOF' | bash`).
+
 Seamos claros sobre qué es esto: el harness es un **guardarraíl contra accidentes y
 deriva, no un sandbox contra un agente adversario**. Un modelo decidido a hacer trampa
 todavía puede llegar a los archivos por canales que ningún hook puede parsear del todo

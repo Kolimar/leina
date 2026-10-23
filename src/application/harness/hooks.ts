@@ -11,6 +11,7 @@
 // Process/git access is injected through HarnessPorts where needed (stop /
 // advisory verify); everything else is plain fs + pure glob matching.
 
+import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { MAX_RETRIES_CAP } from "../../domain/harness/model.ts";
@@ -22,7 +23,7 @@ import { ensureStateDir, loadContract, stateDir } from "./contract-io.ts";
 import { filterRules, loadResolvedRules } from "./resolver.ts";
 import { readJsonIfExists } from "./io.ts";
 import { worktreeMatches } from "./freshness.ts";
-import { gitCommitOrPush, shellWriteTargets } from "./shell-words.ts";
+import { destructiveCommand, gitCommitOrPush, shellWriteTargets } from "./shell-words.ts";
 import { reusePersistedVerify, runVerify } from "./verify.ts";
 import { renderFeedback } from "./gates/report.ts";
 
@@ -162,10 +163,10 @@ export async function sessionStartContext(repoRoot: string): Promise<string> {
 
 /**
  * `kind` says WHY a call is refused: "integrity" (a write to what defines the
- * gates) or "gate" (scope, contract, commit guard, config) — transports with a
+ * gates), "destructive" (a shell command that destroys work) or "gate" (scope, contract, commit guard, config) — transports with a
  * separate user-facing line (Cursor) word it accordingly.
  */
-export type PreDecision = { block: false } | { block: true; kind: "integrity" | "gate"; message: string };
+export type PreDecision = { block: false } | { block: true; kind: "integrity" | "destructive" | "gate"; message: string };
 
 const ALLOW: PreDecision = { block: false };
 
@@ -425,6 +426,31 @@ export function decideIntegrityBash(command: string | undefined): PreDecision {
   };
 }
 
+/**
+ * The destructive-command guard: where the harness is installed (`.harness/`
+ * exists) an agent never runs `rm -rf` on the repo/home/root, `git reset
+ * --hard`, `git clean -f`, `git push --force`, `git branch -D` or destructive
+ * SQL. No config, allowlist, strictness or contract changes that — a human who
+ * really means it runs the command themselves.
+ */
+export async function decideDestructiveBash(repoRoot: string, command: string | undefined): Promise<PreDecision> {
+  if (command === undefined) return ALLOW;
+  const label = destructiveCommand(command, { cwd: repoRoot, home: os.homedir() });
+  if (label === undefined) return ALLOW;
+  try {
+    await fs.stat(path.join(repoRoot, ".harness"));
+  } catch {
+    return ALLOW;
+  }
+  return {
+    block: true,
+    kind: "destructive",
+    message:
+      `BLOCKED: this command is destructive (${label}) and the harness never lets an agent run one. ` +
+      `If it is really intended, ask the human to run it themselves (in Claude Code, by typing \`! ${command}\`).`,
+  };
+}
+
 export async function decidePreBash(
   repoRoot: string,
   command: string | undefined,
@@ -434,6 +460,9 @@ export async function decidePreBash(
 
   const sealed = decideIntegrityBash(command);
   if (sealed.block) return sealed;
+
+  const destructive = await decideDestructiveBash(repoRoot, command);
+  if (destructive.block) return destructive;
 
   const action = gitCommitOrPush(command);
   if (action === undefined) return ALLOW;
@@ -584,6 +613,12 @@ export type CursorShellDecision =
   | { permission: "allow" }
   | { permission: "deny"; agentMessage: string; userMessage: string };
 
+function cursorUserMessage(kind: "integrity" | "destructive" | "gate"): string {
+  if (kind === "integrity") return "harness: blocked a shell write to harness rules/config";
+  if (kind === "destructive") return "harness: blocked a destructive command";
+  return "harness: git commit/push blocked until `leina harness verify` passes";
+}
+
 /**
  * Cursor's shell permission is the SAME decision as decidePreBash — integrity
  * seal, commit guard with its freshness and strictness rules, config errors —
@@ -599,10 +634,7 @@ export async function decideCursorShell(
   return {
     permission: "deny",
     agentMessage: decision.message,
-    userMessage:
-      decision.kind === "integrity"
-        ? "harness: blocked a shell write to harness rules/config"
-        : "harness: git commit/push blocked until `leina harness verify` passes",
+    userMessage: cursorUserMessage(decision.kind),
   };
 }
 

@@ -221,7 +221,8 @@ PostToolUse (used there) and keeps the stderr nudge for PreToolUse/Stop. Honest 
 and never an obstacle to the user. The harness enforcement branch that runs first on the
 same entry point (`runHarnessAgentGate`) is the exception, and only in a trusted workspace:
 it always refuses writes to the harness rules/config/lockfile and to `$LEINA_HOME/harness`
-/ `$LEINA_HOME/trust`, and with an active contract, strictness `strict` or an unreadable
+/ `$LEINA_HOME/trust`, and destructive shell commands (`rm -rf` of the repo/home/root, `git reset --hard`,
+`git push --force`, destructive SQL …) wherever `.harness/` exists, and with an active contract, strictness `strict` or an unreadable
 config it applies the contract scope, the commit guard and the Stop gate
 (docs/concepts/07-harness.md).
 

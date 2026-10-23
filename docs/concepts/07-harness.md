@@ -186,6 +186,22 @@ edited in place by `sed -i` / `perl -i`; `dd of=`; paths given to `git checkout`
 `.harness`) passes. Task state (`.harness/state/` — plan, checklist, contract) stays
 agent-writable: that is the surface the workflow needs.
 
+**Destructive commands — blocked, never configurable.** In a trusted repo where
+`.harness/` exists, the pre-bash hook (and the guided no-contract seal, and Cursor's
+shell guard) also refuses a shell command that destroys work, whatever the strictness,
+with or without a contract: `rm -r` of `/`, a top-level dir, the home dir, the repo root
+or one of its ancestors, or `.git` (including `.`, `..`, `*` and `cd .. && rm -rf <repo>`);
+`git reset --hard`; `git clean -f`; `git push --force` / `-f` / `+refspec`
+(`--force-with-lease` passes); `git branch -D`; and, through `psql`, `sqlite3`, `mysql`,
+`mariadb`, `sqlcmd` or `duckdb`, `DROP TABLE|DATABASE|SCHEMA`, `TRUNCATE` and
+`DELETE FROM` without `WHERE`. It follows `sudo`/`doas`/`env`/`nice`/`timeout` prefixes (with their flags and values), `sh -c`, `cd`/`pushd`, shell heredocs, `eval` and
+`$(…)`; `echo`/`printf` text is data. There is no allowlist or switch: if the command is
+really intended, the message asks the agent to have the human run it (in Claude Code, by
+typing `! <command>`). Known gaps, same honesty as above: quoted substitution
+(`"$(rm -rf ~)"`), variables (`rm -rf $DIR`), SQL from heredocs or `-f file.sql`,
+`find -delete` / `-exec`, targets fed through `xargs`, interpreters (`python -c`) and
+scripts the agent writes, and a script piped into a shell (`echo '…' | sh`, or its heredoc form `cat <<'EOF' | bash`).
+
 Be clear about what this is: the harness is a **guardrail against accidents and drift,
 not a sandbox against an adversarial agent**. A model determined to cheat can still
 reach the files through channels no hook can fully parse (variable indirection, a quoted
