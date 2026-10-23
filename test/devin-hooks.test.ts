@@ -39,8 +39,9 @@ test("(devin-hooks-2) emits all managed event keys with correct matcher group co
   }
   // PreToolUse: ^(edit|write|exec)$ + ^(grep|glob)$ (Palanca A, ADR-1 additive).
   assert.equal(parsed.PreToolUse.length, 2);
-  // PostToolUse: ^exec$ (marker) + ^(read|grep|glob)$ (Palanca C) — no per-edit refresh.
-  assert.equal(parsed.PostToolUse.length, 2);
+  // PostToolUse: ^exec$ (marker) + ^(read|grep|glob)$ (Palanca C) + the MCP memory tools
+  // (marker) — no per-edit refresh.
+  assert.equal(parsed.PostToolUse.length, 3);
   assert.equal(parsed.UserPromptSubmit.length, 1);
   assert.equal(parsed.SessionStart.length, 1);
 });
@@ -61,13 +62,17 @@ test("(devin-hooks-4) PostToolUse has exec-marker and native-nudge groups, and n
   const matchers = parsed.PostToolUse.map((m: { matcher: string }) => m.matcher).sort();
   // ^exec$         → agent-hook PostToolUse (memory marker write)
   // ^(read|grep|glob)$ → agent-hook PostToolUse (Palanca C retrospective nudge)
-  assert.deepEqual(matchers, ["^exec$", "^(read|grep|glob)$"].sort());
+  // ^(mcp__leina__memory_…)$ → agent-hook PostToolUse (memory markers through MCP)
+  assert.deepEqual(matchers, ["^exec$", "^(read|grep|glob)$", "^(mcp__leina__memory_context|mcp__leina__memory_search|mcp__leina__memory_verified|mcp__leina__memory_add|mcp__leina__memory_update|mcp__leina__memory_session)$"].sort());
   assert.ok(!out.content.includes(" refresh "), "no entry rebuilds the graph after an edit");
   const marker = parsed.PostToolUse.find((m: { matcher: string }) => m.matcher === "^exec$");
   assert.match(marker.hooks[0].command, /agent-hook PostToolUse --host devin/);
   const native = parsed.PostToolUse.find((m: { matcher: string }) => m.matcher === "^(read|grep|glob)$");
   assert.ok(native, "native matcher entry present");
   assert.match(native.hooks[0].command, /agent-hook PostToolUse --host devin/);
+  const mcp = parsed.PostToolUse.find((m: { matcher: string }) => m.matcher.startsWith("^(mcp__leina__"));
+  assert.ok(mcp, "MCP memory matcher entry present");
+  assert.match(mcp.hooks[0].command, /agent-hook PostToolUse --host devin/);
 });
 
 test("(devin-hooks-5) UserPromptSubmit invokes the gate (`devin-hook UserPromptSubmit`) with empty matcher", () => {
@@ -365,7 +370,7 @@ test("(devin-hooks-new-2) PostToolUse includes ^(read|grep|glob)$ (Palanca C)", 
   const parsed = JSON.parse(out.content);
   const matchers = parsed.PostToolUse.map((m: { matcher: string }) => m.matcher);
   assert.ok(matchers.includes("^(read|grep|glob)$"), "^(read|grep|glob)$ present");
-  assert.equal(parsed.PostToolUse.length, 2, "exactly 2 PostToolUse groups");
+  assert.equal(parsed.PostToolUse.length, 3, "exactly 3 PostToolUse groups");
   const entry = parsed.PostToolUse.find((m: { matcher: string }) => m.matcher === "^(read|grep|glob)$");
   assert.ok(entry, "entry found");
   assert.match(entry.hooks[0].command, /agent-hook PostToolUse --host devin/);
@@ -516,4 +521,28 @@ test("(devin-hooks-refresh-strip) re-running over a pre-3.0 file strips the per-
   assert.ok(matchers.includes("^custom$"), "a foreign matcher survives");
   const user = devinUserConfigWithHooks(JSON.stringify({ hooks: JSON.parse(legacy) }), buildUserGlobalHooks(CLI_BIN));
   assert.ok(!user.includes(" refresh "), "the user-global merger strips it too");
+});
+
+test("(devin-hooks-upgrade) upgrading a pre-MCP file leaves one managed copy of each PostToolUse group and keeps the user group", () => {
+  const group = (matcher: string, command: string) => ({ matcher, hooks: [{ type: "command", command }] });
+  const oldCmd = "/old/node /old/dist/cli/index.js agent-hook PostToolUse --host devin";
+  const legacy = {
+    PostToolUse: [group("^exec$", oldCmd), group("^(read|grep|glob)$", oldCmd), group("^custom$", "keep-me")],
+  };
+  const check = (content: string, label: string): void => {
+    const matchers = (JSON.parse(content) as DevinHooksFile).PostToolUse.map((m) => m.matcher);
+    const count = (pred: (m: string) => boolean): number => matchers.filter(pred).length;
+    assert.equal(count((m) => m === "^exec$"), 1, `${label}: one exec group`);
+    assert.equal(count((m) => m === "^(read|grep|glob)$"), 1, `${label}: one native-nudge group`);
+    assert.equal(count((m) => m.startsWith("^(mcp__leina__")), 1, `${label}: one MCP group`);
+    assert.equal(count((m) => m === "^custom$"), 1, `${label}: user group survives`);
+  };
+
+  const project = devinHooksJson(CLI_BIN, JSON.stringify(legacy)).content;
+  check(project, "project");
+  assert.equal(devinHooksJson(CLI_BIN, project).content, project, "project: second run identical");
+
+  const user = devinUserConfigWithHooks(JSON.stringify({ hooks: legacy }), buildUserGlobalHooks(CLI_BIN));
+  check(JSON.stringify((JSON.parse(user) as { hooks: unknown }).hooks), "user");
+  assert.equal(devinUserConfigWithHooks(user, buildUserGlobalHooks(CLI_BIN)), user, "user: second run identical");
 });

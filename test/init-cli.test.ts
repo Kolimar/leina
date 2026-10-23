@@ -265,7 +265,7 @@ test("(devin-init-1) init --agent devin writes .devin/hooks.v1.json with all 4 m
     assert.match(hooks.PreToolUse[0].hooks[0].command, /agent-hook PreToolUse --host devin/);
     // PostToolUse: exec marker + native-nudge (Palanca C) — no per-edit graph refresh:
     const matchers = hooks.PostToolUse.map((m: { matcher: string }) => m.matcher).sort();
-    assert.deepEqual(matchers, ["^exec$", "^(read|grep|glob)$"].sort());
+    assert.deepEqual(matchers, ["^exec$", "^(read|grep|glob)$", "^(mcp__leina__memory_context|mcp__leina__memory_search|mcp__leina__memory_verified|mcp__leina__memory_add|mcp__leina__memory_update|mcp__leina__memory_session)$"].sort());
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

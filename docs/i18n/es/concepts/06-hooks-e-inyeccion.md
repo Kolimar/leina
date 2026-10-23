@@ -164,8 +164,8 @@ markers, porque la conversación (y lo que ya cargó, guardó y se le dijo) sigu
 
 | Marker | Archivo | Quién lo escribe | Para qué |
 |--------|---------|------------------|----------|
-| **load** | `session.memory-loaded` | `PostToolUse` cuando un `exec` corre `memory (context\|search\|verified)`; o la inyección exitosa | corta en seco los consejos una vez que la memoria ya se cargó |
-| **save** | `session.memory-saved` | `PostToolUse` cuando un `exec` corre `memory (save\|session\|update)` | lo lee `Stop` para decidir si recordar guardar |
+| **load** | `session.memory-loaded` | `PostToolUse` cuando un `exec` corre `memory (context\|search\|verified)` o el agente usa la tool MCP `memory_context`, `memory_search` o `memory_verified`; o la inyección exitosa | corta en seco los consejos una vez que la memoria ya se cargó |
+| **save** | `session.memory-saved` | `PostToolUse` cuando un `exec` corre `memory (save\|session\|update)` o el agente usa la tool MCP `memory_add`, `memory_update` o `memory_session` | lo lee `Stop` para decidir si recordar guardar |
 | **stop nudge** | `session.stop-nudge-shown` | `Stop` después de empujar | deja el empujón de guardado en una vez por sesión |
 | **search tip** | `session.native-search-nudge-shown` | `PostToolUse` después del consejo de búsqueda nativa | deja ese consejo en una vez por sesión |
 | **fallback** | `session.context-fallback-shown` | toda inyección que cayó al texto estático | evita que `UserPromptSubmit` repita ese texto en cada prompt |

@@ -46,3 +46,17 @@ export function parseJsonRoot(existing: string | null | undefined): Record<strin
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   return parsed as Record<string, unknown>;
 }
+
+/**
+ * The leina MCP memory tools that count as loading or saving memory for the session markers —
+ * the twins of `leina memory (context|search|verified)` and `(save|session|update)`. Both hosts
+ * name an MCP tool `mcp__<server>__<tool>`; leina's server registers as `leina`.
+ */
+export const MCP_MEMORY_TOOLS: Readonly<Record<string, "load" | "save">> = {
+  mcp__leina__memory_context: "load",
+  mcp__leina__memory_search: "load",
+  mcp__leina__memory_verified: "load",
+  mcp__leina__memory_add: "save",
+  mcp__leina__memory_update: "save",
+  mcp__leina__memory_session: "save",
+};

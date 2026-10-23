@@ -165,8 +165,8 @@ markers, because the conversation (and what it already loaded, saved and was tol
 
 | Marker | File | Who writes it | What it's for |
 |--------|---------|------------------|----------|
-| **load** | `session.memory-loaded` | `PostToolUse` when an `exec` runs `memory (context\|search\|verified)`; or a successful injection | cuts off the advice cold once memory has already been loaded |
-| **save** | `session.memory-saved` | `PostToolUse` when an `exec` runs `memory (save\|session\|update)` | read by `Stop` to decide whether to remind you to save |
+| **load** | `session.memory-loaded` | `PostToolUse` when an `exec` runs `memory (context\|search\|verified)` or the agent calls the MCP tool `memory_context`, `memory_search` or `memory_verified`; or a successful injection | cuts off the advice cold once memory has already been loaded |
+| **save** | `session.memory-saved` | `PostToolUse` when an `exec` runs `memory (save\|session\|update)` or the agent calls the MCP tool `memory_add`, `memory_update` or `memory_session` | read by `Stop` to decide whether to remind you to save |
 | **stop nudge** | `session.stop-nudge-shown` | `Stop` after it nudged | keeps the save nudge to once per session |
 | **search tip** | `session.native-search-nudge-shown` | `PostToolUse` after the native-search tip | keeps that tip to once per session |
 | **fallback** | `session.context-fallback-shown` | any injection that fell back to the static text | keeps `UserPromptSubmit` from repeating that text on every prompt |

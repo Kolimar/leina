@@ -956,6 +956,65 @@ test("(Save-S2-5) PostToolUse + exec + `memory search` → save marker NOT writt
   assert.equal(existsSync(join(cwd, MARKER_REL)), true, "load marker IS written for search");
 });
 
+test("(Save-MCP-1) PostToolUse on the leina MCP memory tools writes the same markers as the CLI", () => {
+  const post = (cwd: string, tool: string): void => {
+    withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: "PostToolUse", tool_name: tool, tool_input: {} }), cwd));
+  };
+  for (const tool of ["mcp__leina__memory_add", "mcp__leina__memory_update", "mcp__leina__memory_session"]) {
+    const cwd = freshCwd();
+    post(cwd, tool);
+    assert.equal(existsSync(join(cwd, SAVE_MARKER_REL_LOCAL)), true, `${tool} writes the save marker`);
+    assert.equal(existsSync(join(cwd, MARKER_REL)), false, `${tool} is not a load`);
+  }
+  for (const tool of ["mcp__leina__memory_context", "mcp__leina__memory_search", "mcp__leina__memory_verified"]) {
+    const cwd = freshCwd();
+    post(cwd, tool);
+    assert.equal(existsSync(join(cwd, MARKER_REL)), true, `${tool} writes the load marker`);
+    assert.equal(existsSync(join(cwd, SAVE_MARKER_REL_LOCAL)), false, `${tool} is not a save`);
+  }
+  for (const tool of ["mcp__leina__memory_get", "mcp__leina__graph_query", "mcp__other__memory_add"]) {
+    const cwd = freshCwd();
+    post(cwd, tool);
+    assert.equal(existsSync(join(cwd, SAVE_MARKER_REL_LOCAL)), false, `${tool} writes no save marker`);
+    assert.equal(existsSync(join(cwd, MARKER_REL)), false, `${tool} writes no load marker`);
+  }
+});
+
+test("(Save-MCP-2) a save through the MCP tool silences the Stop save nudge", () => {
+  const cwd = freshCwd();
+  withCapturedIO(() =>
+    runAgentGate(JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "mcp__leina__memory_add", tool_input: {} }), cwd),
+  );
+  const { stdout, stderr } = withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: "Stop" }), cwd));
+  assert.equal(stdout.trim(), "");
+  assert.doesNotMatch(stderr, /leina memory session/);
+});
+
+test("(Save-MCP-3) an MCP memory tool with tool_input absent or null still writes its marker and prints nothing", () => {
+  for (const extra of [{}, { tool_input: null }]) {
+    const save = freshCwd();
+    const { stdout, stderr } = withCapturedIO(() =>
+      runAgentGate(JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "mcp__leina__memory_add", ...extra }), save),
+    );
+    assert.equal(stdout + stderr, "", "no output");
+    assert.equal(existsSync(join(save, SAVE_MARKER_REL_LOCAL)), true, "save marker written");
+    const load = freshCwd();
+    withCapturedIO(() =>
+      runAgentGate(JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "mcp__leina__memory_search", ...extra }), load),
+    );
+    assert.equal(existsSync(join(load, MARKER_REL)), true, "load marker written");
+  }
+});
+
+test("(Save-MCP-4) prototype-key and non-string tool names write no marker", () => {
+  for (const tool_name of ["constructor", "__proto__", "toString", "hasOwnProperty", 42, null]) {
+    const cwd = freshCwd();
+    withCapturedIO(() => runAgentGate(JSON.stringify({ hook_event_name: "PostToolUse", tool_name, tool_input: {} }), cwd));
+    assert.equal(existsSync(join(cwd, SAVE_MARKER_REL_LOCAL)), false, `${String(tool_name)} writes no save marker`);
+    assert.equal(existsSync(join(cwd, MARKER_REL)), false, `${String(tool_name)} writes no load marker`);
+  }
+});
+
 test("(Save-REGEX-micro) MEMORY_SAVE_CMD_RE: matches save/session/update but NOT session-start", () => {
   // We test via the gate behavior: memory session-start must NOT write the save marker
   const cwd = freshCwd();

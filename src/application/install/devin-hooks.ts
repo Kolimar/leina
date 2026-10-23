@@ -15,8 +15,11 @@
 
 import type { FileArtifact } from "../../domain/install/artifact.ts";
 import type { McpCommand } from "./protocol.ts";
-import { parseJsonRoot } from "./hooks-common.ts";
+import { MCP_MEMORY_TOOLS, parseJsonRoot } from "./hooks-common.ts";
 import { agentHookCommand, type HookScope } from "./hook-command.ts";
+
+// PostToolUse on the leina MCP memory tools: the gate flips the session memory markers.
+const MCP_MEMORY_MATCHER = `^(${Object.keys(MCP_MEMORY_TOOLS).join("|")})$`;
 
 // ---------------------------------------------------------------------------
 // Type contracts (mirrored from the SDD design — section 2)
@@ -78,10 +81,12 @@ const MANAGED_MATCHERS: Record<DevinHookEventName, readonly string[]> = {
     // init/repair (or deactivate) strips it from existing files.
     "^(edit|write)$",
     // exec: the gate inspects the command line for `leina memory (context|search|verified)`
-    // to flip the per-session memory-loaded marker (CLI-only — no MCP tool to key on).
+    // and `(save|session|update)` to flip the per-session memory markers.
     "^exec$",
     // Palanca C: retrospective nudge for native grep/read/glob tools.
     "^(read|grep|glob)$",
+    // The same memory markers when the agent uses the leina MCP tools instead of the CLI.
+    MCP_MEMORY_MATCHER,
   ],
   UserPromptSubmit: [""],
   SessionStart: [""],
@@ -115,6 +120,7 @@ function buildManagedHooks(cli: McpCommand, scope: HookScope): DevinHooksFile {
       { matcher: "^exec$", hooks: [gate("PostToolUse")] },
       // Palanca C: retrospective nudge after native grep/read/glob — one-shot per session.
       { matcher: "^(read|grep|glob)$", hooks: [gate("PostToolUse")] },
+      { matcher: MCP_MEMORY_MATCHER, hooks: [gate("PostToolUse")] },
     ],
     UserPromptSubmit: [
       // First user message of a fresh session: injects the memory context when it has not

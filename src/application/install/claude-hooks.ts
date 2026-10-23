@@ -12,7 +12,7 @@
 // top-level keys — is preserved verbatim. Pure string -> string|null.
 
 import type { McpCommand } from "./protocol.ts";
-import { type HookCommand, type HookEntry, parseJsonRoot } from "./hooks-common.ts";
+import { type HookCommand, type HookEntry, MCP_MEMORY_TOOLS, parseJsonRoot } from "./hooks-common.ts";
 import { agentHookCommand, type HookScope, parseManagedHookCommand } from "./hook-command.ts";
 
 /** Token every managed gate command carries — a cheap "is there leina wiring here?" probe. */
@@ -34,8 +34,9 @@ const MANAGED_EVENTS: { event: string; matcher?: string }[] = [
   { event: "SessionStart" },
   { event: "UserPromptSubmit" },
   { event: "PreToolUse", matcher: CLAUDE_PRE_TOOL_MATCHER },
-  // The gate reacts to shell commands (memory markers) and native search (nudge).
-  { event: "PostToolUse", matcher: "Bash|Grep|Read|Glob" },
+  // The gate reacts to shell commands and the leina MCP memory tools (memory markers) and to
+  // native search (nudge).
+  { event: "PostToolUse", matcher: ["Bash", "Grep", "Read", "Glob", ...Object.keys(MCP_MEMORY_TOOLS)].join("|") },
   { event: "Stop" },
 ];
 

@@ -202,11 +202,14 @@ both files. `init` never writes user-global hooks.
   Never blocks (exit 0 on all paths).
 - Load marker is per-project at `<cwd>/.leina/session.memory-loaded` — `PostToolUse` on
   an `exec` whose command runs `leina memory (context|search|verified)` writes it
-  (`MEMORY_LOAD_CMD_RE` in `src/cli/agent-gate.ts`); marker is re-written on successful injection, never on
+  (`MEMORY_LOAD_CMD_RE` in `src/cli/agent-gate.ts`), and so does `PostToolUse` on the MCP tools
+  `mcp__leina__memory_(context|search|verified)` (`MCP_MEMORY_TOOLS` in
+  `src/application/install/hooks-common.ts`); marker is re-written on successful injection, never on
   fallback. The marker short-circuits all advisories once memory has been loaded.
 - Save marker is per-project at `<cwd>/.leina/session.memory-saved` — `PostToolUse` on
   an `exec` whose command runs `leina memory (save|session|update)` writes it
-  (`MEMORY_SAVE_CMD_RE` in `src/cli/agent-gate.ts`; lookahead excludes `session-start`). Deleted at
+  (`MEMORY_SAVE_CMD_RE` in `src/cli/agent-gate.ts`; lookahead excludes `session-start`), and so does
+  `PostToolUse` on `mcp__leina__memory_(add|update|session)`. Deleted at
   SessionStart alongside the load marker (per-session semantics). Only the Stop branch reads it.
 
 **Advisory only.** The advisory gate (`runAgentGate`) **never** returns `exit 2` /

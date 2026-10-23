@@ -31,8 +31,11 @@ test("(ch-1) writer registers the five managed events, idempotently, preserving 
     assert.equal(ours.length, 1, `${ev} has exactly one managed entry`);
     assert.match((ours[0] as { command: string }).command, new RegExp(`agent-hook ${ev} --host claude$`));
   }
-  // PostToolUse scoped to the tools the gate reacts to.
-  assert.equal(cfg.hooks.PostToolUse.at(-1).matcher, "Bash|Grep|Read|Glob");
+  // PostToolUse scoped to the tools the gate reacts to, the leina MCP memory tools included.
+  assert.equal(
+    cfg.hooks.PostToolUse.at(-1).matcher,
+    "Bash|Grep|Read|Glob|mcp__leina__memory_context|mcp__leina__memory_search|mcp__leina__memory_verified|mcp__leina__memory_add|mcp__leina__memory_update|mcp__leina__memory_session",
+  );
   // Foreign content survives.
   assert.ok(cfg.hooks.SessionStart.some((e: { hooks: { command: string }[] }) => e.hooks.some((h) => h.command === "other-tool warmup")));
   assert.deepEqual(cfg.permissions, { allow: ["Bash(ls:*)"] });
@@ -67,6 +70,27 @@ test("(ch-2b) user scope tags every entry --scope user and replaces older manage
   assert.ok(cmds.length > 0);
   for (const c of cmds) assert.match(c, / --host claude --scope user$/);
   assert.ok(!cmds.some((c) => c.startsWith("/old/")), "the stale launch form was replaced, not duplicated");
+});
+
+test("(ch-2c) upgrading a pre-MCP install replaces the old PostToolUse matcher, keeps user hooks, and is idempotent", () => {
+  const old = (command: string) => ({ matcher: "Bash|Grep|Read|Glob", hooks: [{ type: "command", command }] });
+  const existing = JSON.stringify({
+    hooks: {
+      PostToolUse: [
+        { matcher: "Bash", hooks: [{ type: "command", command: "my-linter" }] },
+        old("/old/node /old/dist/cli/index.js agent-hook PostToolUse --host claude"),
+      ],
+    },
+  });
+  for (const scope of ["project", "user"] as const) {
+    const next = claudeHooksJson(cliBase, existing, scope)!;
+    const post = JSON.parse(next).hooks.PostToolUse as { matcher: string; hooks: { command: string }[] }[];
+    const ours = post.filter((e) => e.hooks.some((h) => h.command.includes(" agent-hook ")));
+    assert.equal(ours.length, 1, "exactly one managed PostToolUse entry");
+    assert.match(ours[0]!.matcher, /^Bash\|Grep\|Read\|Glob\|mcp__leina__memory_context\|.*mcp__leina__memory_session$/);
+    assert.ok(post.some((e) => e.hooks.some((h) => h.command === "my-linter")), "the user hook survives");
+    assert.equal(claudeHooksJson(cliBase, next, scope), null, "second run changes nothing");
+  }
 });
 
 test("(ch-3) CLAUDE_PROJECT_DIR wins root resolution; Devin var and cwd still work", () => {

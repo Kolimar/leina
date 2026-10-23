@@ -55,6 +55,7 @@ import { findConsentRoot, findGitToplevel, findHarnessRoot, resolveHookProjectRo
 import { type HookSource, hookSourceOf, runningHookHost, shouldDeferHook } from "../application/install/hook-scope.ts";
 import { claudeUserSettingsFile, devinUserConfigFile } from "../infrastructure/install/share-paths.ts";
 import { type HookHost, type HookScope, isHookHost, managedHookCommands } from "../application/install/hook-command.ts";
+import { MCP_MEMORY_TOOLS } from "../application/install/hooks-common.ts";
 
 // Running any of these `leina memory <sub>` CLI commands counts as "project memory
 // loaded" for the session. Detected by inspecting the exec tool's command line (there is no
@@ -485,15 +486,13 @@ export function runAgentGate(
     return;
   }
 
-  // Marker writes: PostToolUse on an exec that ran a leina memory command.
+  // Marker writes: PostToolUse on an exec that ran a leina memory command (or on a leina MCP
+  // memory tool).
   // - Load RE (`context|search|verified`): flip the per-session memory-loaded marker.
   // - Save RE (`save|session|update`): flip the per-session memory-saved marker.
   // Subcommand sets are disjoint — both checks are independent and idempotent.
   // Done BEFORE decideAgentGate so the decision sees an up-to-date markerExists.
-  if (event === "PostToolUse" && payload.tool_name === "exec") {
-    handleMemoryMarkerWrites(commandOf(payload), markerPath, saveMarkerPath);
-    return;
-  }
+  if (event === "PostToolUse" && handlePostToolUseMarkers(payload, markerPath, saveMarkerPath)) return;
 
   // SessionStart: a NEW session (startup/clear, or no source — Devin) resets the per-session
   // markers before injection runs: it starts as "not loaded, not saved", nudges unshown. A
@@ -572,6 +571,19 @@ function parseHookPayload(rawStdin: string, fallbackEvent?: string): AgentHookPa
 
 function commandOf(payload: AgentHookPayload): string {
   return typeof payload.tool_input?.command === "string" ? payload.tool_input.command : "";
+}
+
+// PostToolUse on an exec (memory markers from the command line) or on a leina MCP memory tool
+// (the same markers). True when the event was one of those.
+function handlePostToolUseMarkers(payload: AgentHookPayload, markerPath: string, saveMarkerPath: string): boolean {
+  if (payload.tool_name === "exec") {
+    handleMemoryMarkerWrites(commandOf(payload), markerPath, saveMarkerPath);
+    return true;
+  }
+  const mcpMemory = payload.tool_name === undefined ? undefined : MCP_MEMORY_TOOLS[payload.tool_name];
+  if (mcpMemory === undefined) return false;
+  writeMarker(mcpMemory === "load" ? markerPath : saveMarkerPath);
+  return true;
 }
 
 function handleMemoryMarkerWrites(postCmd: string, markerPath: string, saveMarkerPath: string): void {
