@@ -31,6 +31,7 @@ From the orchestrator:
 
 > Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
 
+- **compact plan** — ONLY when the brief names `sdd/{change-name}/plan`; then it overrides every bullet below and Steps 2b, 5 and 6: read only that plan (up to `## Log`) instead of proposal, spec, design and tasks; implement only the assigned T#; never edit the plan, save apply-progress or commit (the orchestrator owns all three); return `covered` (Section D) with the failing-then-passing test as evidence. Otherwise ignore this bullet.
 - **memory**: Read `sdd/{change-name}/proposal`, `sdd/{change-name}/spec`, `sdd/{change-name}/design`, `sdd/{change-name}/tasks` (all required — keep tasks ID for updates). Mark tasks complete via `leina memory update <dir> {tasks-observation-id} --content "..."`. Save progress as `sdd/{change-name}/apply-progress`.
 - **openspec**: Read and follow `skills/_shared/openspec-convention.md`. Update `tasks.md` with `[x]` marks.
 - **hybrid**: Follow BOTH conventions — persist progress to Leina memory (`leina memory update` for tasks) AND update `tasks.md` with `[x]` marks on filesystem.

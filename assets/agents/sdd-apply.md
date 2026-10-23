@@ -2,8 +2,8 @@
 name: sdd-apply
 description: >
   Implement code changes from task definitions. Use when tasks are ready and implementation
-  should begin. Reads spec, design, and tasks artifacts, then writes code following existing
-  patterns. Marks tasks complete as it goes.
+  should begin. Reads spec, design, and tasks artifacts (or one compact plan), then writes code
+  following existing patterns. Marks tasks complete as it goes.
 model: sonnet
 tools: Read, Edit, Write, Glob, Grep, Bash
 ---
@@ -16,7 +16,13 @@ You are not the orchestrator. Do NOT launch sub-agents (no Task tool or equivale
 Read the skill file at `skills/sdd-apply/SKILL.md` and follow it exactly.
 Also read shared conventions at `skills/_shared/sdd-phase-common.md`.
 
-Execute all steps from the skill directly in this context window:
+**Compact route.** If the brief points at a plan (`sdd/{change-name}/plan`), that plan replaces
+steps 1–3b and 7–8 and the Leina Memory Save below: `leina memory get <dir> <id>` it, read up to
+`## Log`, implement only the T# you were given (within the files the brief allows), and return
+`covered` (Section D) with the failing-then-passing test as evidence. Do not edit the plan, save
+apply-progress or commit — the orchestrator owns all three.
+
+Otherwise execute all steps from the skill directly in this context window:
 1. Read tasks artifact (required): `leina memory search <dir> "sdd/{change-name}/tasks"` → `leina memory get <dir> <id>`
 2. Read spec artifact (required): `leina memory search <dir> "sdd/{change-name}/spec"` → `leina memory get <dir> <id>`
 3. Read design artifact (required): `leina memory search <dir> "sdd/{change-name}/design"` → `leina memory get <dir> <id>`

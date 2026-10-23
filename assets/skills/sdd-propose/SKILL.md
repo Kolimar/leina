@@ -66,6 +66,10 @@ openspec/changes/{change-name}/
 ```markdown
 # Proposal: {Change Title}
 
+## Request (verbatim)
+
+{The user's original request, quoted exactly as given in the brief — never summarized.}
+
 ## Intent
 
 {What problem are we solving? Why does this change need to happen?
@@ -207,5 +211,5 @@ Ready for specs (sdd-spec) or design (sdd-design).
 - New Capabilities → each will become `openspec/specs/<name>/spec.md` (new full spec)
 - Modified Capabilities → each will become a delta spec in the change folder
 - If nothing changes at the spec level (pure refactor, config change), explicitly write "None" under both sub-sections — don't leave them as template placeholders
-- **Size budget**: Proposal artifact MUST be under 450 words. Use bullet points and tables over prose. Headers organize, not explain.
+- **Size budget**: Proposal artifact MUST be under 450 words, not counting `Request (verbatim)`. Use bullet points and tables over prose. Headers organize, not explain.
 - Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.

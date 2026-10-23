@@ -125,6 +125,7 @@ Each task MUST be:
 | **Actionable** | "Add `ValidateToken()` method to `AuthService`" | "Handle tokens" |
 | **Verifiable** | "Test: `POST /login` returns 401 without token" | "Make sure it works" |
 | **Small** | One file or one logical unit of work | "Implement the feature" |
+| **Traceable** | "… (Requirement: Token expiry)" — names the requirement it satisfies | A task no requirement asks for |
 
 ### Review Workload Forecast Rules
 

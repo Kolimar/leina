@@ -21,7 +21,8 @@ Run when the orchestrator launches verification for an SDD change. You are the q
 
 ## Hard Rules
 
-- Read proposal, spec, design, and tasks before judging implementation.
+- Compact route (the brief points at `sdd/{change}/plan`): the whole plan, Log included, replaces proposal, spec, design and tasks; judge each S# in scope, return `covered` with a per-S# verdict, and save no verify-report — the orchestrator owns the plan.
+- Otherwise read proposal, spec, design, and tasks before judging implementation.
 - Execute relevant tests; static analysis alone is never verification.
 - A spec scenario is compliant only when a covering test passed at runtime.
 - Compare specs first, design second, task completion third.

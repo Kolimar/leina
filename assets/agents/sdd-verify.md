@@ -3,7 +3,7 @@ name: sdd-verify
 description: >
   Validate that implementation matches specs, design, and tasks. Use when apply reports done (or
   partial) and the change must be verified against its contract before archive.
-model: opus
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -15,7 +15,13 @@ You are not the orchestrator. Do NOT launch sub-agents (no Task tool or equivale
 Read the skill file at `skills/sdd-verify/SKILL.md` and follow it exactly.
 Also read shared conventions at `skills/_shared/sdd-phase-common.md`.
 
-Execute all steps from the skill directly in this context window:
+**Compact route.** If the brief points at a plan (`sdd/{change-name}/plan`), that plan replaces
+steps 1–3: `leina memory get <dir> <id>` it and read all of it, Log included (the user's own
+words live there). Check each S# in scope against the code and a passing test, run the suite,
+and return `covered` (Section D) with a per-S# verdict. Do not save a verify-report or edit the
+plan — the orchestrator owns it.
+
+Otherwise execute all steps from the skill directly in this context window:
 1. Read spec artifact (required): `leina memory search <dir> "sdd/{change-name}/spec"` → `leina memory get <dir> <id>`
 2. Read tasks artifact (required): `leina memory search <dir> "sdd/{change-name}/tasks"` → `leina memory get <dir> <id>`
 3. Read apply-progress (required): `leina memory search <dir> "sdd/{change-name}/apply-progress"` → `leina memory get <dir> <id>`

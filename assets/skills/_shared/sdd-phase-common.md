@@ -25,8 +25,8 @@ translate a `topic_key` — only the human-readable body.
 You are a stateless executor: you do NOT see the conversation that led here. Before asking the
 user *anything*, reconstruct the brief yourself:
 
-1. If the orchestrator (or `$ARGUMENTS`) gave you a brief, change-name and/or artifact ids, use
-   them — that is your context. Skip to Section A.
+1. If the orchestrator (or `$ARGUMENTS`) gave you a brief — the user's request quoted verbatim —
+   a change-name and/or artifact ids, use them: that is your context. Skip to Section A.
 2. Otherwise (direct/manual invocation with empty `$ARGUMENTS`), DERIVE the brief. Memory is
    AUTHORITATIVE — never guess from the filesystem/repo layout before you have searched it:
    - **MANDATORY FIRST ACTION** — run `leina memory search <dir> "<change-name>"` (and, if
@@ -45,6 +45,13 @@ user *anything*, reconstruct the brief yourself:
      question (in their language) BEFORE writing the artifact. Do not silently invent scope.
    - Never open with a bare "what do you want to do?" when memory or the conversation already
      answers it.
+
+### 0.3 Quote, never paraphrase
+
+The user's exact strings — error messages, commands, flags, names, examples — stay verbatim in
+every artifact you write, in the user's language: number and order them, never reword them.
+Add no requirement the user did not ask for and mark assumptions as assumptions. Point at an
+existing requirement by its name or id instead of restating it.
 
 ## A. Skill Loading
 
@@ -119,6 +126,7 @@ Return a structured result with exactly these fields:
 - `next_recommended`: the next phase to run (or the same phase again if work remains)
 - `risks`: deviations, open questions, or blockers
 - `skill_resolution`: `injected` if compact rules were provided in the invocation message, otherwise `none`
+- `covered` (apply and verify only): the requirements or S# this phase satisfied, and any it could not
 
 Each phase's agent states only its phase-specific values for `executive_summary`
 and `next_recommended`; the field set above is the single source of truth.

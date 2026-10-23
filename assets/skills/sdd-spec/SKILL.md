@@ -215,6 +215,7 @@ Ready for design (sdd-design). If design already exists, ready for tasks (sdd-ta
 - Include both happy path AND edge case scenarios
 - Keep scenarios TESTABLE — someone should be able to write an automated test from each one
 - DO NOT include implementation details in specs — specs describe WHAT, not HOW
+- Quote the exact strings from the proposal's `Request (verbatim)` (messages, commands, examples) inside requirements and scenarios — never reword them
 - **MODIFIED requirements MUST be the FULL block** — copy entire requirement + all scenarios from main spec, then edit. Partial MODIFIED blocks lose content at archive time.
 - If adding new behavior without changing existing behavior → use ADDED, not MODIFIED
 - Apply any `rules.specs` from `openspec/config.yaml`
