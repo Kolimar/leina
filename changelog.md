@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- **`leina-sdd` routes every change before running phases.** *Direct*: understood in one read batch, no high-risk item, finishable from the request plus `git diff` — done inline, with no phases, subagents or artifacts. *Compact*: the resume test fails but no product or design decision is open — one plan artifact `sdd/{change}/plan` (Specs S#, Tasks T#, Log whose L1 is the user's request verbatim); `sdd-apply` runs only for a named reason and is handed the plan by reference. *Full*: an open product or design decision, or the user asks for it — the 8 phases. Six named high-risk items (unrebuildable data, security, contracts others consume, concurrency, delivery/CI, code no test covers) drive escalation; size never comes from file or line counts.
+- Phase briefs carry the user's request verbatim and phases quote the user's exact strings instead of paraphrasing (`sdd-propose` gains a `Request (verbatim)` section).
+- `sdd-verify` defaults to the sonnet model; the strongest model is used only for a named high-risk item.
+- The `AGENTS.md` protocol block written by `leina init` shrank from 8.9 KB to 5.0 KB (same rules, duplication removed, rarely used admin commands left to `--help`), guarded by a byte-budget test. Existing repos pick it up with `leina init` or `leina repair`.
+
 ## [3.0.0] — Unreleased
 
 3.0.0 ships the never-published 2.1.0 work (the task harness and a security review) together with a functional review of detection, agent ergonomics and performance. Several defaults, CLI outputs and MCP payloads changed — read *Upgrading from 2.x* first.

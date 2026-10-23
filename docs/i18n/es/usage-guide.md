@@ -146,7 +146,7 @@ Para cambios importantes — features nuevas, refactors grandes, migraciones —
 
 #### ¿Qué es SDD?
 
-**Spec-Driven Development** es una forma estructurada de encarar un cambio no trivial. En vez de tirarse a codear directamente, el cambio pasa por **ocho fases** ordenadas:
+**Spec-Driven Development** es una forma estructurada de encarar un cambio no trivial. En vez de tirarse a codear directamente, el cambio pasa por **ocho fases** ordenadas. `leina-sdd` primero enruta el cambio: uno **directo** (se entiende de una lectura, sin nada de alto riesgo) se resuelve en línea sin fases; uno **compacto** (sin decisión de producto o diseño abierta) recibe un único artefacto de plan, `sdd/<nombre-del-cambio>/plan`; solo un cambio **completo** (hay una decisión abierta, o lo pedís) corre las ocho:
 
 | Fase | Qué se hace |
 |---|---|

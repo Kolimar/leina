@@ -725,8 +725,8 @@ name collisions). Typechecks clean (`npx tsc --noEmit`); the CLI test suite
 3. ✅ `sdd` workflow — the design and tasks phases scope impact with `leina affected`
    before deciding, wired into the always-on protocol (`AGENTS.md`).
    Devin gets the SDD phases as custom subagent profiles (one AGENT.md per phase) and a
-   delegating skill per phase, plus a `leina-sdd` orchestrator skill that drives the
-   full flow — all installed globally by `leina activate`.
+   delegating skill per phase, plus a `leina-sdd` orchestrator skill that first routes each
+   change (direct / compact / full) and drives the full flow when needed — all installed globally by `leina activate`.
 4. Clustering / god-nodes for very large codebases.
 
 ## Contributing

@@ -5,6 +5,14 @@ Todos los cambios notables de este proyecto se documentarán en este archivo.
 El formato se basa en [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 y este proyecto sigue [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## Sin publicar
+
+### Cambiado
+- **`leina-sdd` enruta cada cambio antes de ejecutar fases.** *Directo*: se entiende en un solo lote de lecturas, sin ítem de alto riesgo y se termina con el pedido más `git diff` — se resuelve en línea, sin fases, subagentes ni artefactos. *Compacto*: falla la prueba de reanudación pero no hay decisión de producto o diseño abierta — un único artefacto de plan `sdd/{change}/plan` (Specs S#, Tasks T#, Log cuyo L1 es el pedido del usuario textual); `sdd-apply` solo corre por un motivo explícito y recibe el plan por referencia. *Completo*: hay una decisión de producto o diseño abierta, o el usuario lo pide — las 8 fases. Seis ítems de alto riesgo nombrados (datos irrecuperables, seguridad, contratos que consumen otros, concurrencia, entrega/CI, código que ningún test cubre) deciden la escalada; el tamaño nunca se deduce de la cantidad de archivos o líneas.
+- Los briefs de cada fase llevan el pedido del usuario textual y las fases citan sus cadenas exactas en lugar de parafrasearlas (`sdd-propose` suma la sección `Request (verbatim)`).
+- `sdd-verify` usa por defecto el modelo sonnet; el modelo más potente se usa solo ante un ítem de alto riesgo nombrado.
+- El bloque de protocolo de `AGENTS.md` que escribe `leina init` pasó de 8,9 KB a 5,0 KB (mismas reglas, sin duplicación, con los comandos de administración poco usados delegados a `--help`), protegido por un test de presupuesto en bytes. Los repos existentes lo reciben con `leina init` o `leina repair`.
+
 ## [3.0.0] — Sin publicar
 
 3.0.0 publica el trabajo de la 2.1.0, que nunca salió (el harness de tareas y una revisión de seguridad), junto con una revisión funcional de la detección, la ergonomía para el agente y el rendimiento. Cambiaron varios defaults, salidas de la CLI y payloads de MCP: leé primero *Actualizar desde 2.x*.

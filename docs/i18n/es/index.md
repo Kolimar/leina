@@ -669,8 +669,8 @@ checker real (el sidecar) puede seguir.
 3. ✅ Flujo de trabajo `sdd` — las fases de diseño y tareas acotan el impacto con
    `leina affected` antes de decidir, integrado en el protocolo siempre activo (`AGENTS.md`).
    Devin obtiene las fases de SDD como perfiles de subagente personalizados (un AGENT.md por
-   fase) y una skill delegadora por fase, más una skill orquestadora `leina-sdd` que conduce
-   el flujo completo — todo instalado globalmente por `leina activate`.
+   fase) y una skill delegadora por fase, más una skill orquestadora `leina-sdd` que primero enruta
+   cada cambio (directo / compacto / completo) y conduce el flujo completo cuando hace falta — todo instalado globalmente por `leina activate`.
 4. Clustering / god-nodes para codebases muy grandes.
 
 ## Contribuir
