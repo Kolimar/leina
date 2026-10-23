@@ -561,13 +561,19 @@ function expandHome(operand: string, home: string): string | undefined {
   return expanded.includes("$") ? undefined : expanded;
 }
 
+/** `p` in the form the rm checks compare: backslashes as `/`, a drive root (`C:\`) as `/C:/`. */
+function posixPath(p: string): string {
+  const slashed = p.replaceAll("\\", "/");
+  return /^[A-Za-z]:(?:\/|$)/.test(slashed) ? `/${slashed}` : slashed;
+}
+
 /** Why `rm -r <operand>` would destroy more than a build directory, or undefined. */
 function destructiveRmOperand(operand: string, dir: string, ctx: DestructiveContext): boolean {
-  const moved = expandHome(fromDir(dir, trimOperand(operand)), ctx.home);
+  const moved = expandHome(fromDir(dir, trimOperand(posixPath(operand))), ctx.home);
   if (moved === undefined) return false;
-  const abs = path.posix.resolve(ctx.cwd, moved);
-  const cwd = path.posix.resolve(ctx.cwd);
-  const home = path.posix.resolve(ctx.home);
+  const cwd = path.posix.resolve(posixPath(ctx.cwd));
+  const abs = path.posix.resolve(cwd, posixPath(moved));
+  const home = path.posix.resolve(posixPath(ctx.home));
   if (abs === home || /^\/[^/]+$/.test(abs) || abs === path.posix.join(cwd, ".git")) return true;
   return abs === "/" || cwd === abs || cwd.startsWith(`${abs}/`);
 }

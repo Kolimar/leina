@@ -163,6 +163,33 @@ describe("destructiveCommand — must pass", () => {
   }
 });
 
+// The repo root and home as Windows reports them (drive letter, backslashes).
+const WIN_CTX = { cwd: "D:\\a\\leina\\repo", home: "C:\\Users\\me" };
+
+describe("destructiveCommand — Windows paths", () => {
+  const blocked: [string, string][] = [
+    ["rm -rf ~", "rm -r ~"],
+    ["rm -rf $HOME/", "rm -r $HOME/"],
+    ["rm -rf .", "rm -r ."],
+    ["rm -rf ..", "rm -r .."],
+    ["rm -rf .git", "rm -r .git"],
+    ["cd .. && rm -rf repo", "rm -r repo"],
+    ["rm -rf 'D:\\a\\leina\\repo'", "rm -r D:\\a\\leina\\repo"],
+    ["rm -rf C:/Users/me", "rm -r C:/Users/me"],
+    ["rm -rf C:/", "rm -r C:/"],
+  ];
+  for (const [command, label] of blocked) {
+    it(`${JSON.stringify(command)} → ${label}`, () => {
+      assert.equal(destructiveCommand(command, WIN_CTX), label);
+    });
+  }
+  for (const command of ["rm -rf dist", "rm -rf ~/projects/x", "rm -rf C:/Users/me/tmp/x", "rm -rf 'D:\\a\\leina\\repo\\dist'"]) {
+    it(`${JSON.stringify(command)} passes`, () => {
+      assert.equal(destructiveCommand(command, WIN_CTX), undefined);
+    });
+  }
+});
+
 describe("destructiveCommand — recursion depth", () => {
   it("gives up past depth 3", () => {
     assert.equal(destructiveCommand("sh -c \"sh -c \\\"sh -c \\\\\\\"sh -c 'git reset --hard'\\\\\\\"\\\"\"", CTX), undefined);
